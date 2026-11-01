@@ -6,7 +6,7 @@
 
 本次只读复核：主库与 21 个业务图片仍在；旧 `data/qa`、`data/logs`、`logs`、迁移备份目录与 `data/paid-qa` 已不在原位置，不能算成本 Codex 清理成果。原三模块累计费用账本也缺失，后续付费验收因此停止，不能按零重建。账本此前核验的累计配置单价估算为 1.156008 元（含未知用量预留），不是供应商最终账单。
 
-仍需在本机确认并清理的候选根目录均位于 `C:\Users\lin\Desktop\kantoku-agent`：
+仍需在本机确认并清理的候选根目录均位于 `<项目根目录>`：
 
 - `tmp\pdfpages`、`tmp\shots`、`tmp\shots-after`、`tmp\headcheck`：旧渲染和截图中间文件。
 - `tmp` 顶层旧 `*.before.vue`、`*.patch`、预览 `*.png/*.html`、一次性取色/补丁脚本、`serve.log` 与 `vite.log`；不要递归删除整个 `tmp`，其中有活跃 SDK 暂存和其他协作者文件。
@@ -38,21 +38,21 @@
 
 | # | 绝对路径 | 大小 | 条目 | 内容与依据 |
 | --- | --- | --- | --- | --- |
-| 1 | `C:\Users\lin\Desktop\kantoku-agent\data\logs\` | **391 MB** | 43 个 | 已轮转的历史日志（`kantoku.<时间戳>_<pid>.log`），每个约 9.6 MB。日志是纯诊断输出，不是数据源 |
-| 2 | `C:\Users\lin\Desktop\kantoku-agent\data\qa\` | **359 MB** | 35 个 | 历史验收快照，日期 2026-10-03 ~ 10-09。由 `scripts/verify_*.py` 写入，含整仓源码副本（如 `p0-delivery`）与旧 SQLite。**从未登记到 runtime_files，因此永远不会被自动清理** |
-| 3 | `C:\Users\lin\Desktop\kantoku-agent\logs\` | **61 MB** | 7 个 | 同上，轮转日志 |
-| 4 | `C:\Users\lin\Desktop\kantoku-agent\data\backups\` | **48 MB** | 4 个 | `kantoku.pre-artifact-lifecycle-*.sqlite`、`kantoku.pre-runtime-policy-*.sqlite` 及其侧文件。**迁移前的一次性快照**，迁移早已完成 |
-| 5 | `C:\Users\lin\Desktop\kantoku-agent\.uv-cache\` | **31 MB** | — | uv 包管理器缓存，可重新下载 |
-| 6 | `C:\Users\lin\Desktop\kantoku-agent\tmp\pdfpages\` | **14 MB** | — | PDF 分页渲染的中间产物 |
-| 7 | `C:\Users\lin\Desktop\kantoku-agent\data\paid-qa\` | **13 MB** | 23 个 | QA 上下文/媒体快照（`context-live-*`、`semantic-media-live-*`）。QA 回放用的临时上下文，非业务数据 |
-| 8 | `C:\Users\lin\Desktop\kantoku-agent\data\kantoku.db.bak-20261006-1952` | **12 MB** | 1 个 | 2026-10-06 的手工数据库副本，已被之后的正式迁移备份取代 |
-| 9 | `C:\Users\lin\Desktop\kantoku-agent\data\quick-domain-delivery\` | **6.2 MB** | 2 个 | 离线交付验收产物 |
-| 10 | `C:\Users\lin\Desktop\kantoku-agent\cache\` | **5.1 MB** | — | `vite` 5.0 MB + `ruff`/`npm`/`uv`/`pytest` 缓存，全部可重建 |
-| 11 | `C:\Users\lin\Desktop\kantoku-agent\tmp\`（除 `pdfpages` 外） | **约 4 MB** | 约 45 个文件/目录 | 一次性调色/截图/补丁脚本与预览图：`*.before.vue`、`*.patch`、`stage_*.py`、`shot-*.png`、`composer-preview.*`、`vite.log`、`serve.log`、`tmp\shots\`、`tmp\shots-after\`、`tmp\headcheck\` |
-| 12 | `C:\Users\lin\Desktop\kantoku-agent\data\comic-live-acceptance.log`<br>`…\data\comic-live-acceptance-restarted.log` | **约 0.44 MB** | 2 个 | 2026-10-05 验收运行日志 |
+| 1 | `<项目根目录>\data\logs\` | **391 MB** | 43 个 | 已轮转的历史日志（`kantoku.<时间戳>_<pid>.log`），每个约 9.6 MB。日志是纯诊断输出，不是数据源 |
+| 2 | `<项目根目录>\data\qa\` | **359 MB** | 35 个 | 历史验收快照，日期 2026-10-03 ~ 10-09。由 `scripts/verify_*.py` 写入，含整仓源码副本（如 `p0-delivery`）与旧 SQLite。**从未登记到 runtime_files，因此永远不会被自动清理** |
+| 3 | `<项目根目录>\logs\` | **61 MB** | 7 个 | 同上，轮转日志 |
+| 4 | `<项目根目录>\data\backups\` | **48 MB** | 4 个 | `kantoku.pre-artifact-lifecycle-*.sqlite`、`kantoku.pre-runtime-policy-*.sqlite` 及其侧文件。**迁移前的一次性快照**，迁移早已完成 |
+| 5 | `<项目根目录>\.uv-cache\` | **31 MB** | — | uv 包管理器缓存，可重新下载 |
+| 6 | `<项目根目录>\tmp\pdfpages\` | **14 MB** | — | PDF 分页渲染的中间产物 |
+| 7 | `<项目根目录>\data\paid-qa\` | **13 MB** | 23 个 | QA 上下文/媒体快照（`context-live-*`、`semantic-media-live-*`）。QA 回放用的临时上下文，非业务数据 |
+| 8 | `<项目根目录>\data\kantoku.db.bak-20261006-1952` | **12 MB** | 1 个 | 2026-10-06 的手工数据库副本，已被之后的正式迁移备份取代 |
+| 9 | `<项目根目录>\data\quick-domain-delivery\` | **6.2 MB** | 2 个 | 离线交付验收产物 |
+| 10 | `<项目根目录>\cache\` | **5.1 MB** | — | `vite` 5.0 MB + `ruff`/`npm`/`uv`/`pytest` 缓存，全部可重建 |
+| 11 | `<项目根目录>\tmp\`（除 `pdfpages` 外） | **约 4 MB** | 约 45 个文件/目录 | 一次性调色/截图/补丁脚本与预览图：`*.before.vue`、`*.patch`、`stage_*.py`、`shot-*.png`、`composer-preview.*`、`vite.log`、`serve.log`、`tmp\shots\`、`tmp\shots-after\`、`tmp\headcheck\` |
+| 12 | `<项目根目录>\data\comic-live-acceptance.log`<br>`…\data\comic-live-acceptance-restarted.log` | **约 0.44 MB** | 2 个 | 2026-10-05 验收运行日志 |
 | 13 | `data\pytest-full-output.txt`、`data\pytest-targeted-output.txt`、`data\pytest-creation-mode-output.txt`、`data\pytest-failure-diagnostic.txt`、`data\frontend-build-output.txt`、`data\frontend-review-build.txt`、`data\frontend-test-output.txt`、`data\frontend-review-test.txt` | **约 72 KB** | 8 个 | 2026-10-05 的输出转存 |
-| 14 | `C:\Users\lin\Desktop\kantoku-agent\data\runtime.db` | **0 字节** | 1 个 | 空文件 |
-| 15 | `C:\Users\lin\Desktop\kantoku-agent\data\uv-cache\`、`.ruff_cache\` | 约 100 KB | — | 缓存 |
+| 14 | `<项目根目录>\data\runtime.db` | **0 字节** | 1 个 | 空文件 |
+| 15 | `<项目根目录>\data\uv-cache\`、`.ruff_cache\` | 约 100 KB | — | 缓存 |
 
 ## 三、必须保留（不要删）
 

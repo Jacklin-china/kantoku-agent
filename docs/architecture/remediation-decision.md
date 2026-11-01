@@ -36,7 +36,7 @@
 
 > 运行方式（务必用项目自带 venv）：
 > ```
-> cd C:\Users\lin\Desktop\kantoku-agent
+> cd <项目根目录>
 > .venv/Scripts/python.exe -m pytest tests/<file>.py -q --no-header
 > ```
 > 注意：不要加 `-p no:cacheprovider`（`tests/conftest.py:37` 依赖 pytest cache 插件，会 INTERNALERROR）。
