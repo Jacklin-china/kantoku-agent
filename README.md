@@ -164,8 +164,9 @@ npm run dev                               # http://127.0.0.1:5173
 
 ```bash
 uv run pytest                              # 后端离线测试
-cd frontend && npm test                    # 前端离线测试
-cd frontend && npx vue-tsc --noEmit        # 类型检查
+cd frontend
+npm test                                   # 前端离线测试
+npx vue-tsc --noEmit                       # 类型检查
 ```
 
 [GitHub Actions](https://github.com/Jacklin-china/kantoku-agent/actions) 检查前端测试与构建、
