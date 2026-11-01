@@ -712,7 +712,7 @@ html[data-tod='night'] .px-rail__nav-item { color: var(--sidebar-text); }
 }
 
 /* 3. 所有按钮：深蓝砖块 */
-#app button, #app .ui-button, #app [role="button"] {
+#app button, #app .ui-button, #app [role="button"]:not(.wb-region) {
   border: 3px solid #000 !important;
   border-radius: 0 !important;
   background: #243757 !important;

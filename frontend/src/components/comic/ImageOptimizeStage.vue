@@ -1726,14 +1726,14 @@ onBeforeUnmount(() => {
 .wb-plan-preview p, .wb-plan-preview small { display:block; margin:8px 0; }
 .wb-scope-confirm { display:block; padding:8px 0; }
 .wb-plan-preview button { margin:4px; }
-.wb-finding-category { display:block; color:var(--text-secondary); margin-bottom:6px; }
+.wb-finding-category { display:block; flex-basis:100%; color:var(--text-secondary); margin-bottom:6px; }
 .wb-main { padding:12px; border:3px solid var(--ink); background:var(--paper); color:var(--ink); box-shadow:5px 5px 0 #0009; }
 .wb-viewbar { gap:10px; padding-bottom:10px; border-bottom:3px solid var(--ink); }
 .wb-viewbar-left > span { color:var(--text-secondary); }
 .wb-canvas { border:3px solid var(--ink); background:#091329; }
 .wb-empty { color:#e2ebf9; }
 .wb-view-tools { border:3px solid var(--ink); border-radius:0; box-shadow:4px 4px 0 #0008; }
-.wb-panel { background:var(--paper); }
+.wb-panel { background:var(--paper); color:var(--ink); }
 .wb-panel-heading { margin:calc(-1 * var(--space-4)); margin-bottom:0; padding:12px 14px; border-bottom:3px solid var(--ink); background:var(--ink-2); color:var(--gold-light); }
 .wb-panel-tabs { gap:6px; }
 .wb-panel-tabs button { border-radius:0; }
