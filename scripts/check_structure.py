@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_TOP_LEVEL = {
-    ".git", ".idea", ".pytest_cache", ".ruff_cache", ".run", ".uv-cache",
+    ".git", ".github", ".idea", ".pytest_cache", ".ruff_cache", ".run", ".uv-cache",
     ".venv", ".vscode", ".workbuddy", "assets", "config", "data", "db", "docs",
     "logs", "cache", "artifacts", "tmp",
     "evals", "frontend", "scripts", "skills", "src", "tests",
