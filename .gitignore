@@ -2,6 +2,14 @@
 .env
 config/settings.yaml
 
+# 根目录个人求职资料（不影响项目文档和素材）
+/resume*.html
+/resume*.md
+/photo.png
+/*-Agent应用开发-*.pdf
+/证件照*.png
+/docs/interview/
+
 # python
 __pycache__/
 *.py[cod]

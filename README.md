@@ -3,11 +3,19 @@
 > 一个**本地优先的 AI 漫剧制作工作台**：把「创作对话 → 画面方案 → 生图指令 → 图片优化 →
 > 改图与版本比较 → 故事编排 → 导出材料 → 视频生成」串成一条可回溯的生产链路。
 >
-> 它不承诺一键爆款。目标是**提高首次可用率、减少定向返工**，并让每一单的成本与利润可核算：
-> 所有产物落本地 SQLite、每次调用留 trace、账单不明时标 `unknown` 而不是当 0。
+> 面向需要反复调整角色、画面和分镜的创作者，项目将对话、导演方案、提示词、图片和故事版本关联起来，
+> 减少在不同工具之间手动整理上下文的工作。运行记录和业务数据保存在本机；供应商未返回账单时保留 `unknown`。
 
 前端是 Vue 3 工作台（`frontend/`），后端是统一 Core Runtime（`src/kantoku/`），
 通过 `python -m kantoku serve` 同时提供 API、SSE 与生产工作台。
+
+**项目状态：本地优先的预览项目。** 当前为单机使用，不提供公网多人数据隔离；默认视频 Provider 是 Mock，
+不能生成真实成片。真实供应商调用需要自行配置密钥，可能产生费用。完整限制见[当前边界](#当前边界)。
+
+**个人职责与开发方式：** 由项目作者主导需求、产品方向和架构决策，借助 AI 辅助编写和修改代码，
+并结合实际运行和测试进行验证与迭代。
+
+**技术栈：** Python 3.11–3.12、FastAPI、SQLite、Vue 3、TypeScript、Vite、pytest。
 
 ## 现在能做什么
 
@@ -51,12 +59,20 @@ tests/             后端 pytest（离线可跑）
 docs/              工程、产品、架构文档
 ```
 
-四条规则：**Core 不知道业务**（不出现漫剧/商品等词）、**Domain 不复制 Core**、
-**Provider 只实现协议不决定交互**、**前端只调应用 API**。
+目标边界是 Core 保持业务无关、Domain 复用 Core、Provider 负责协议、前端调用应用 API。
+现有历史例外及兼容原因见[架构例外清单](docs/architecture/exceptions.md)。
+
+### 关键代码入口
+
+- [Agent 工具调用循环](src/kantoku/agent/loop.py)：接收消息并执行工具调用。
+- [图运行时](src/kantoku/core/runtime/graph.py)：工作流节点、执行状态与恢复机制。
+- [漫剧导演协调](src/kantoku/domains/comic/coordinator.py)：组织导演阶段和业务门禁。
+- [漫剧提示词编译](src/kantoku/domains/comic/prompts.py)：将上下文和约束整理为结构化提示词。
+- [Web API](src/kantoku/shells/fastapi_studio.py) 和 [前端源码](frontend/src/)：本机工作台的接口与交互。
 
 ## 快速开始
 
-需要 Python 3.11–3.12、[uv](https://docs.astral.sh/uv/)、Node 18+。
+需要 Python 3.11–3.12、[uv](https://docs.astral.sh/uv/)、Node.js 20.19.x 或 22.12 及以上版本（Vite 7 要求）。
 
 前后端分别开发：
 
@@ -112,8 +128,8 @@ cp config/.env.example .env               # 仅在本地填写密钥
 测试完全离线，不需要密钥、不产生费用：
 
 ```bash
-uv run pytest                              # 70 个测试文件 / 1321 个用例
-cd frontend && npm test                    # 15 个文件 / 233 个用例
+uv run pytest                              # 后端离线测试
+cd frontend && npm test                    # 前端离线测试
 cd frontend && npx vue-tsc --noEmit        # 类型检查
 ```
 
