@@ -1,7 +1,7 @@
 [project]
 name = "kantoku-agent"
 version = "0.0.1"
-description = "监督酱：AI 漫剧副导演 —— 桌面多模态 Agent（工具调用/视觉质检/记忆/成本台账）"
+description = "kantoku-agent：AI 漫剧副导演，本地创作工作台"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }

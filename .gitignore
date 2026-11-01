@@ -1,5 +1,10 @@
 # secrets & 本地配置（绝不提交）
 .env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
 config/settings.yaml
 
 # 根目录个人求职资料（不影响项目文档和素材）
@@ -8,6 +13,9 @@ config/settings.yaml
 /photo.png
 /*-Agent应用开发-*.pdf
 /证件照*.png
+/*简历*
+/*证件照*
+/*resume*
 /docs/interview/
 
 # python
@@ -36,6 +44,9 @@ node_modules/
 *.db-shm
 *.sqlite-wal
 *.sqlite-shm
+*.db
+*.sqlite
+*.sqlite3
 
 # 大体积演示视频（>10MB 不进 git，README 放链接）
 assets/demo/*.mp4

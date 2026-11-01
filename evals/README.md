@@ -1,7 +1,8 @@
 # evals · 评测集与报告
 
 - 评测集：`*.jsonl`，每行一个对象：`{"id", "input", "expect", "rubric"}`
-- 运行：M1 起提供 `uv run python scripts/run_eval.py --suite evals/storyboard.jsonl`
+- 分镜评测可运行 `uv run python scripts/run_eval.py --suite evals/storyboard.jsonl`；
+  默认会调用真实模型、可能产生费用，须先获得明确预算授权并检查配置。
 - 报告归档：`docs/evals/Mx-日期.md`；**里程碑打 tag 前必须跑一次**（docs/01 §6）
 
 图片工作台使用 `image-workbench.json` 和 `uv run --no-sync python -B scripts/run_eval.py --kind image-workbench`。此入口只读核验已采集的真实对照结果，不调用模型、不写运行文件；材料不足返回 `pending` 和非零退出码，不能将其称为质量通过。24 个图片槽位和 30 条机器起草需求都待人工确认，不是已经采集的真实素材；12 个改图组也未填写。用户当前没有这些材料，因此不能宣称首次改对率或返工轮次已经改善。
