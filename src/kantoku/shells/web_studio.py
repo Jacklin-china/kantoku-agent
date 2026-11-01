@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
 import json
 import mimetypes
@@ -17,6 +19,7 @@ import webbrowser
 from collections.abc import Callable
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -26,14 +29,9 @@ from uuid import uuid4
 from loguru import logger
 from pydantic import ValidationError
 
-from kantoku.adapters.commerce import (
-    CommerceLlmAdapter,
-    CoreProductImageCapability,
-    MockMarketplaceAdapter,
-    MockProductImageCapability,
-    MockSourceAdapter,
-    MockTranslationAdapter,
-)
+from kantoku.adapters import BalanceServiceMismatch, balance_snapshot
+from kantoku.adapters.deepseek_balance import account_balance
+from kantoku.adapters.volcengine_balance import account_balance as volcengine_balance
 from kantoku.capabilities.creative import (
     CreativeContext,
     CreativeDecision,
@@ -41,10 +39,11 @@ from kantoku.capabilities.creative import (
     creative_brief,
     plan_creative_turn,
 )
-from kantoku.capabilities.image import ConversationImageService
+from kantoku.capabilities.image import ConversationImageService, prepare_vision_image
 from kantoku.capabilities.video import MockVideoProvider, VideoService
+from kantoku.capabilities.video.xiaoyunque import XiaoyunqueVideoProvider
 from kantoku.capabilities.web_search import plan_web_search, search_web, visit_search_result
-from kantoku.config import ExternalJobPending, KantokuError, ToolError, get_settings
+from kantoku.config import ConfigError, ExternalJobPending, KantokuError, ToolError, get_settings
 from kantoku.config.logging_setup import redact_secrets
 from kantoku.config.observability import (
     current_run_id,
@@ -58,17 +57,21 @@ from kantoku.config.settings import (
     CONFIG_PATH,
     EXAMPLE_PATH,
     ROOT,
-    CommerceSettings,
     RuntimeSettings,
     VideoSettings,
+    managed_text_key_allowed,
+    save_managed_text_key,
 )
 from kantoku.core import budget
 from kantoku.core.approval import ApprovalService
+from kantoku.core.authentication import AuthenticationError, LocalAuthentication
 from kantoku.core.conversation_context import (
+    ConversationContext,
     ConversationSummary,
     FactCorrections,
     PreparedContext,
     SourceRef,
+    TaskStatusCorrections,
     TurnUnderstanding,
     token_size,
 )
@@ -84,7 +87,7 @@ from kantoku.core.conversations import (
     MessageType,
 )
 from kantoku.core.database import database_manager
-from kantoku.core.llm import chat, stream_chat, vision_chat
+from kantoku.core.llm import chat, reuse_llm_connections, stream_chat, vision_chat
 from kantoku.core.runtime.batch import BatchService
 from kantoku.core.runtime.graph import GraphRuntime, RuntimeContext
 from kantoku.core.runtime.models import (
@@ -131,6 +134,7 @@ from kantoku.domains.comic.models import (
     ComicAssetLockRequest,
     ComicAssetRef,
     ComicAssetVersionRequest,
+    ComicCodexTaskRequest,
     ComicExternalImageRequest,
     ComicImageAnalysisRequest,
     ComicImageCompareRequest,
@@ -183,10 +187,14 @@ from kantoku.domains.comic.prompts import (
 from kantoku.domains.comic.services import StudioComicServices
 from kantoku.domains.comic.stories import ComicStoryService
 from kantoku.domains.comic.storyboards import ComicStoryboardStore, plan_storyboard
+from kantoku.domains.comic.videos import (
+    VIDEO_WORKFLOW,
+    ComicVideoRequest,
+    ComicVideoState,
+    ComicVideoWorkspace,
+)
 from kantoku.domains.comic.workflow import WORKFLOW_ID as COMIC_WORKFLOW_ID
 from kantoku.domains.comic.workspace import ComicWorkspaceService
-from kantoku.domains.commerce import CommerceState, build_commerce_workflow
-from kantoku.domains.commerce.workflow import WORKFLOW_ID as COMMERCE_WORKFLOW_ID
 from kantoku.perception.qc import qc_image
 from kantoku.perception.report import calculate_qc_economics
 from kantoku.perception.review import (
@@ -218,6 +226,7 @@ from kantoku.tools.studio import (
 )
 
 STATIC = Path(__file__).with_name("web")
+COMMERCE_WORKFLOW_ID = "commerce.production.v1"  # Historical records only.
 _SAFE_TRACE = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 
 
@@ -449,6 +458,21 @@ def _image_result_summary(requirement: str, prompt: str, trace_id: str) -> str:
 
 
 _comic_single_attempt: ContextVar[bool] = ContextVar("comic_single_attempt", default=False)
+_vision_input_cache: ContextVar[dict | None] = ContextVar("vision_input_cache", default=None)
+
+
+@contextmanager
+def _reuse_vision_inputs():
+    """Keep derived images only for the lifetime of the current operation."""
+    cache: dict = {}
+    token = _vision_input_cache.set(cache)
+    try:
+        yield
+    finally:
+        _vision_input_cache.reset(token)
+        cache.clear()
+
+
 _comic_generation_deadline: ContextVar[float | None] = ContextVar(
     "comic_generation_deadline", default=None)
 
@@ -456,6 +480,14 @@ _comic_generation_deadline: ContextVar[float | None] = ContextVar(
 def request_mode_fallback(run: RunRecord) -> str:
     """投影失败时从Run 真实状态取创作模式，不猜测也不伪造。"""
     return str(run.state.get("execution_mode") or "professional")
+
+
+def _same_locked_text(left: str, right: str) -> bool:
+    """锁定设定的等价判定：忽略空白与引号差异，避免把排版差异当成风格变更。"""
+    def normalize(value: str) -> str:
+        text = re.sub(r"\s+", "", str(value or ""))
+        return text.replace("「", "").replace("」", "").replace("\"", "").replace("'", "").lower()
+    return normalize(left) == normalize(right)
 
 
 @contextmanager
@@ -479,6 +511,7 @@ class StudioApplication:
         configured = get_settings().storage.sqlite_path
         database_path = resolve_runtime_path(configured)
         self.runtime_store = RuntimeStore(database_path)
+        self.authentication = LocalAuthentication(database_path)
         self.comic_projects = ComicProjectStore(self.runtime_store.path)
         self.comic_assets = ComicAssetStore(self.comic_projects, self.runtime_store)
         self.comic_storyboards = ComicStoryboardStore(self.comic_projects, self.comic_assets)
@@ -504,36 +537,21 @@ class StudioApplication:
         settings = get_settings()
         self.runtime_settings = getattr(settings, "runtime", RuntimeSettings())
         video_settings = getattr(settings, "video", VideoSettings())
-        commerce_settings = getattr(settings, "commerce", CommerceSettings(data_mode="demo"))
-        self.commerce_settings = commerce_settings
-        video = VideoService(self.runtime_store, MockVideoProvider(), video_settings)
+        video = VideoService(self.runtime_store,
+            XiaoyunqueVideoProvider(video_settings, store=self.runtime_store)
+            if video_settings.provider == "xiaoyunque"
+            else MockVideoProvider(), video_settings)
+        self.comic_videos = ComicVideoWorkspace(self.comic_stories, video,
+                                               instance_id=self._instance_id)
+        self.runtime.register(self.comic_videos.workflow())
         image_provider = _provider()
         self.image_service = ConversationImageService(self.runtime_store, image_provider)
         self.runtime.register(build_comic_workflow(
             StudioComicServices(image_provider),
             video_service=video,
-            video_enabled=video_settings.enabled,
+            video_enabled=video_settings.enabled and video_settings.provider == "mock",
             creation_step=self._comic_fast_creation_step,
             director_review_request=self._comic_fast_director_review,
-        ))
-        commerce_llm = (
-            CommerceLlmAdapter() if commerce_settings.text_mode == "real" else None
-        )
-        translator = commerce_llm or MockTranslationAdapter()
-        product_image = (
-            CoreProductImageCapability(
-                image_provider,
-                max_fen=commerce_settings.real_image_acceptance_max_fen,
-            )
-            if commerce_settings.image_mode == "real"
-            else MockProductImageCapability()
-        )
-        self.runtime.register(build_commerce_workflow(
-            MockSourceAdapter(), MockMarketplaceAdapter(), self.skills,
-            translator,
-            product_image=product_image,
-            listing_writer=commerce_llm.draft if commerce_llm else None,
-            marketplace_name=commerce_settings.marketplace,
         ))
         self.approvals = ApprovalService(self.runtime_store, self.runtime)
         self.batches = BatchService(self.runtime_store, self.runtime)
@@ -803,6 +821,8 @@ class StudioApplication:
 
     def create_conversation(self, data: dict[str, Any]) -> dict[str, Any]:
         mode = InteractionMode(str(data.get("interaction_mode", "autonomous")))
+        if str(data.get("domain") or "").strip().lower() == "commerce":
+            raise ToolError("电商功能已停用，原始数据已保留")
         record = self.runtime_store.create_conversation(
             str(data.get("title", "新对话")), interaction_mode=mode,
             domain=str(data["domain"]) if data.get("domain") else None,
@@ -815,11 +835,32 @@ class StudioApplication:
         workspace_ids = (
             self.comic_workspace.conversation_ids() if domain in {None, "comic"} else set()
         )
-        return [
-            item.model_dump(mode="json")
-            for item in self.runtime_store.list_conversations(domain=domain, query=query)
-            if item.id not in workspace_ids
-        ]
+        retired_by_conversation: dict[str, list[RunRecord]] = {}
+        for run in self.runtime_store.list_runs(limit=100000, domain="commerce"):
+            owner = run.state.get("conversation_id")
+            if isinstance(owner, str):
+                retired_by_conversation.setdefault(owner, []).append(run)
+        result = []
+        for item in self.runtime_store.list_conversations(domain=domain, query=query):
+            if item.id in workspace_ids or item.domain == "commerce":
+                continue
+            payload = item.model_dump(mode="json")
+            retired = retired_by_conversation.get(item.id, [])
+            if retired:
+                retired_ids = {run.id for run in retired}
+                retired_messages = {run.state.get("message_id") for run in retired}
+                messages = self.runtime_store.list_conversation_messages(item.id)
+                visible = [message for message in messages
+                           if message.run_id not in retired_ids
+                           and message.id not in retired_messages]
+                if messages and not visible:
+                    continue
+                if any(message.id in retired_messages and message.content[:32] == item.title
+                       for message in messages):
+                    payload["title"] = next((message.content[:32] for message in visible
+                                             if message.role == MessageRole.USER), "对话")
+            result.append(payload)
+        return result
 
     def rename_conversation(self, conversation_id: str, title: str) -> dict[str, Any]:
         cleaned = title.strip()[:80]
@@ -836,7 +877,7 @@ class StudioApplication:
         conversation = self.runtime_store.get_conversation(conversation_id)
         if conversation.interaction_mode is not InteractionMode.AUTONOMOUS:
             raise ToolError("专业创作域不能在首页切换快捷模式")
-        if domain not in {None, "comic", "commerce", "studio"}:
+        if domain not in {None, "comic", "studio"}:
             raise ToolError("不支持的首页创作域快捷模式")
         if conversation.fast_domain_task_id:
             raise ToolError("当前快捷任务尚未结束，请等待结果或费用确认")
@@ -904,9 +945,18 @@ class StudioApplication:
                 self._media_poll_at[job.generation_request_id] = now
             self._recover_media_job(job)
         result = conversation.model_dump(mode="json")
+        related_runs = self.runtime_store.list_runs(conversation_id=conversation_id)
+        retired_runs = self.runtime_store.list_runs(
+            limit=100000, domain="commerce", conversation_id=conversation_id,
+        )
+        retired_ids = {run.id for run in retired_runs}
+        retired_messages = {run.state.get("message_id") for run in retired_runs}
+        if result.get("active_run_id") in retired_ids:
+            result["active_run_id"] = None
         result["messages"] = [
             item.model_dump(mode="json")
             for item in self.runtime_store.list_conversation_messages(conversation_id)
+            if item.run_id not in retired_ids and item.id not in retired_messages
         ]
         result["media_jobs"] = [
             job.model_dump(mode="json")
@@ -914,7 +964,7 @@ class StudioApplication:
         ]
         # Recover only explicit conversation bindings, never infer from project/title.
         result["related_run_ids"] = [
-            run.id for run in self.runtime_store.list_runs(conversation_id=conversation_id)
+            run.id for run in related_runs if run.id not in retired_ids
         ]
         return result
 
@@ -924,6 +974,8 @@ class StudioApplication:
         selected_domain: str | None,
     ) -> dict[str, Any]:
         """Bind an entry point to existing domain graphs, never a prompt-only chat."""
+        if domain == "commerce":
+            raise ToolError("电商功能已停用，原始数据已保留")
         index = hash((conversation.id, message_id)) % len(self._workflow_dispatch_locks)
         with self._workflow_dispatch_locks[index]:
             return self._create_conversation_workflow(
@@ -954,28 +1006,7 @@ class StudioApplication:
         guided = conversation.interaction_mode is InteractionMode.GUIDED
         identity = {"conversation_id": conversation.id, "message_id": message_id,
                     "trace_id": trace_id}
-        if domain == "commerce":
-            requested_mode = "demo" if not guided else str(
-                data.get("data_mode") or self.commerce_settings.data_mode,
-            )
-            if requested_mode not in {"demo", "production"}:
-                raise ToolError("电商数据模式无效")
-            if not guided and self.commerce_settings.image_mode != "mock":
-                raise ToolError("电商快速体验暂不支持自动执行真实付费生图")
-            state: dict[str, Any] = {
-                **identity, "requirement": requirement, "locale": "ru-RU",
-                "data_mode": requested_mode,
-                "execution_mode": "professional" if guided else "fast",
-            }
-            if not guided and self.commerce_settings.text_mode == "real":
-                total, unpriced = self._quick_creation_cost(
-                    0, text_calls=2 * (self.runtime_settings.max_reworks + 1), vision=False,
-                )
-                state.update(total_estimate_fen=total, unpriced_models=unpriced,
-                             confirmed=not unpriced and total <= int(
-                                 get_settings().budget.autonomous_image_auto_cny * 100,
-                             ))
-        elif domain == "comic":
+        if domain == "comic":
             count = _image_count(requirement)
             state = {
                 **identity, "project": conversation.title,
@@ -1009,8 +1040,8 @@ class StudioApplication:
                 state["prompt"] = _enhance_prompt(requirement, trace_id)
         else:
             raise ToolError("不支持的创作域", detail=domain)
-        coordinator = "ComicDirectorCoordinator" if state.get("quick_creation") else (
-            COMMERCE_WORKFLOW_ID if domain == "commerce" else COMIC_WORKFLOW_ID
+        coordinator = (
+            "ComicDirectorCoordinator" if state.get("quick_creation") else COMIC_WORKFLOW_ID
         )
         payload = {**identity, "selected_domain": selected_domain,
                    "execution_mode": state["execution_mode"],
@@ -2170,7 +2201,9 @@ class StudioApplication:
 
     def list_core_runs(self) -> list[dict[str, Any]]:
         """仅列专业 Run；旧首页误建的 Run 保留原记录但不再展示。"""
-        records = self.runtime_store.list_runs(interaction_mode=InteractionMode.GUIDED)
+        records = self.runtime_store.list_runs(
+            interaction_mode=InteractionMode.GUIDED, exclude_domain="commerce",
+        )
         if self._legacy_home_run_ids is None:
             self._legacy_home_run_ids = self._legacy_autonomous_run_ids(
                 self.runtime_store.list_runs(
@@ -2348,23 +2381,66 @@ class StudioApplication:
     @staticmethod
     def _comic_image_vision_model(messages: list[dict]) -> str:
         settings = get_settings()
-        bounded = []
+        bounded, prepared_messages = [], []
+        source_bytes, sent_bytes, count, cache_hits = 0, 0, 0, 0
+        started = time.monotonic()
         for message in messages:
             content = message["content"]
             if isinstance(content, list):
-                text_parts = []
+                text_parts, prepared_parts = [], []
                 for part in content:
                     if part["type"] == "image_url":
-                        encoded = part["image_url"]["url"].split(",", 1)[1]
+                        url = part["image_url"]["url"]
+                        header, separator, encoded = url.partition(",")
+                        if not separator or header not in {"data:image/png;base64",
+                                "data:image/jpeg;base64", "data:image/webp;base64"}:
+                            raise ToolError("视觉输入必须为已核验的本地图片内容")
                         if len(encoded) * 3 // 4 > settings.llm.vision_max_image_bytes + 2:
                             raise ToolError("图片超过视觉模型的配置容量")
+                        try:
+                            data = base64.b64decode(encoded, validate=True)
+                        except (ValueError, binascii.Error):
+                            raise ToolError("视觉输入的图片编码无效") from None
+                        cache = _vision_input_cache.get()
+                        cache_key = (hashlib.sha256(data).digest(), header,
+                                     settings.llm.vision_input_max_side,
+                                     settings.llm.vision_input_max_bytes)
+                        cached = cache.get(cache_key) if cache is not None else None
+                        if cached is None:
+                            prepared = prepare_vision_image(data, header[5:-7],
+                                max_side=settings.llm.vision_input_max_side,
+                                max_bytes=settings.llm.vision_input_max_bytes)
+                            prepared_url = (f"data:{prepared.mime_type};base64,"
+                                            + base64.b64encode(prepared.data).decode("ascii"))
+                            if cache is not None and len(cache) < 8:
+                                cache[cache_key] = (prepared, prepared_url)
+                        else:
+                            prepared, prepared_url = cached
+                            cache_hits += 1
+                        label = {"type": "text", "text": json.dumps({
+                            "visual_input": prepared.metadata}, ensure_ascii=False)}
+                        text_parts.append(label)
+                        prepared_parts.extend([label, {**part, "image_url": {
+                            **part["image_url"], "url": prepared_url}}])
+                        source_bytes += len(data)
+                        sent_bytes += len(prepared.data)
+                        count += 1
                     else:
                         text_parts.append(part)
+                        prepared_parts.append(part)
+                prepared_messages.append({**message, "content": prepared_parts})
                 content = text_parts
+            else:
+                prepared_messages.append(dict(message))
             bounded.append({"role": message["role"], "content": content})
         if token_size(bounded) > settings.runtime.context_token_budget:
             raise ToolError("图片分析必需上下文超过容量，请缩小范围")
-        return vision_chat(messages, response_format={"type": "json_object"},
+        logger.bind(component="comic.image.vision", model=settings.llm.model_vision).info(
+            "vision input prepared images={} source_bytes={} sent_bytes={} "
+            "preparation_ms={} cache_hits={}",
+            count, source_bytes, sent_bytes, round((time.monotonic() - started) * 1000),
+            cache_hits)
+        return vision_chat(prepared_messages, response_format={"type": "json_object"},
                            single_attempt=True).content or ""
 
     def comic_image_operation(self, project_id: str, kind: str, data: dict) -> dict:
@@ -2684,6 +2760,7 @@ class StudioApplication:
             "images": lambda: self.comic_story_images(owner),
             "versions": lambda: self.comic_story_versions(owner),
             "requests": lambda: self.comic_story_requests(owner),
+            "video": lambda: self.comic_videos.view(owner),
         }
         if action not in handlers:
             raise ToolError("故事接口不存在")
@@ -2702,6 +2779,16 @@ class StudioApplication:
             if run.workflow.startswith("comic.story.")]}
 
     def comic_story_operation(self, conversation_id, kind, data):
+        if kind == "video":
+            return self.submit_comic_video(conversation_id, data)
+        if kind == "video-query":
+            run = self.comic_videos._owned_run(conversation_id, str(data.get("run_id", "")))
+            if run.state["project_id"] != data.get("anchor_project_id"):
+                raise ToolError("视频任务不属于当前作品")
+            if not self.comic_videos.project(run)["can_query"]:
+                raise ToolError("原视频请求尚无可查询的供应商任务，请核对原请求")
+            self._enqueue_comic_video(run)
+            return self.comic_videos.project(self.runtime_store.get_run(run.id))
         schemas = {"save": ComicStorySaveRequest, "generate": ComicStoryGenerateRequest,
                    "review": ComicStoryMutation, "confirm": ComicStoryConfirmRequest,
                    "restore": ComicStoryRestoreRequest,
@@ -2733,6 +2820,163 @@ class StudioApplication:
             return handlers[kind](request, **inputs)
 
         return self._comic_media_action(project_id, "story." + kind, request, action)
+
+    def creative_balance(self):
+        """Query the account actually used by the current video provider."""
+        provider = self.comic_videos.capability.provider
+        if not isinstance(provider, XiaoyunqueVideoProvider):
+            return volcengine_balance()
+        if provider.settings.authentication != "access_key":
+            raise BalanceServiceMismatch("视频 API Key 对应的账户余额无法通过当前接口核实")
+        credentials = provider._credentials
+        if provider._client is not None:
+            try:
+                current = credentials if credentials is not None else (
+                    provider.settings.access_key(), provider.settings.secret_key())
+            except ConfigError:
+                raise BalanceServiceMismatch("无法核实当前视频服务账户，请重启后重试") from None
+            if provider._client_credentials is None or current != provider._client_credentials:
+                raise BalanceServiceMismatch("视频服务使用的账户与当前配置不一致，请重启后重试")
+            credentials = current
+        return volcengine_balance(credentials=credentials)
+
+    def provider_credentials_status(self):
+        """Expose credential presence, never credential values, to the signed-in owner."""
+        settings = get_settings()
+
+        def field(identifier, label, reader):
+            try:
+                configured = bool(reader())
+            except ConfigError:
+                configured = False
+            return {"id": identifier, "label": label, "configured": configured}
+
+        image = settings.image
+        image_fields = ([field("access_key", "Access Key ID", image.access_key),
+                         field("secret_key", "Secret Access Key", image.secret_key)]
+                        if image.provider == "volcengine-jimeng" else
+                        [field("api_key", "API Key", image.api_key)])
+        video = settings.video
+        provider = self.comic_videos.capability.provider
+        session_keys = getattr(provider, "_credentials", None)
+        if video.authentication == "access_key":
+            video_fields = [
+                field("access_key", "Access Key ID", lambda: session_keys[0]
+                      if session_keys else video.access_key()),
+                field("secret_key", "Secret Access Key", lambda: session_keys[1]
+                      if session_keys else video.secret_key()),
+            ]
+        else:
+            video_fields = [field("api_key", "API Key", video.api_key)]
+        text_name = getattr(settings.llm, "api_key_env", "")
+        try:
+            text_editable = (os.name == "nt" and text_name not in os.environ
+                             and managed_text_key_allowed(settings, text_name))
+        except AttributeError:
+            text_editable = False
+        return {"providers": [
+            {"id": "text", "label": "文字模型", "fields": [
+                field("api_key", "API Key", settings.llm.chat_api_key)],
+             "editable": text_editable},
+            {"id": "image", "label": "图片模型", "fields": image_fields},
+            {"id": "video", "label": "视频模型", "fields": video_fields,
+             "credentials_configurable": (
+                 isinstance(provider, XiaoyunqueVideoProvider)
+                 and video.authentication == "access_key"
+                 and provider._client is None and session_keys is None),
+             "session_credentials_configured": session_keys is not None},
+        ], "editable": False}
+
+    def save_provider_credentials(self, data):
+        """Save only the synchronous text credential; never return secret values."""
+        if data.get("provider") != "text" or not isinstance(data.get("fields"), dict):
+            raise ToolError("当前仅支持修改文字模型密钥")
+        fields = data["fields"]
+        if set(fields) != {"api_key"}:
+            raise ToolError("凭据格式不正确")
+        key = fields["api_key"]
+        if (not isinstance(key, str) or not 8 <= len(key) <= 512
+                or any(char.isspace() or ord(char) < 32 for char in key)):
+            raise ToolError("密钥格式不正确")
+        settings = get_settings()
+        name = settings.llm.api_key_env
+        if not managed_text_key_allowed(settings, name):
+            raise ToolError("此密钥与图片或视频服务共享，暂不能修改")
+        if name in os.environ:
+            raise ToolError("该密钥由系统环境变量管理，请先在本机更新环境变量")
+        with self.lock:
+            save_managed_text_key(name, key)
+        return {**self.provider_credentials_status(), "message": "文字模型密钥已保存"}
+
+    def configure_video_credentials(self, data):
+        """仅在当前进程保存用户输入的火山凭证，不写入故事、数据库或日志。"""
+        access_key = data.get("access_key")
+        secret_key = data.get("secret_key")
+        if (not isinstance(access_key, str) or not isinstance(secret_key, str)
+                or not 8 <= len(access_key) <= 512 or not 8 <= len(secret_key) <= 512
+                or any(char.isspace() for char in access_key + secret_key)):
+            raise ToolError("请填写完整的 Access Key ID 和 Secret Access Key")
+        provider = self.comic_videos.capability.provider
+        if not isinstance(provider, XiaoyunqueVideoProvider):
+            raise ToolError("请先启用小云雀视频服务")
+        if provider.settings.authentication != "access_key":
+            raise ToolError("当前视频服务没有使用 Access Key 认证")
+        with self.lock:
+            current = provider._credentials
+            if current is not None and current != (access_key, secret_key):
+                raise ToolError("当前工作台已使用其他视频凭据，请重启后重新设置")
+            if provider._client is not None and current is None:
+                raise ToolError("视频服务已在运行，请重启后再设置凭据")
+            provider._credentials = (access_key, secret_key)
+        return {"configured": True}
+
+    def submit_comic_video(self, conversation_id, data):
+        request = ComicVideoRequest.model_validate(data)
+        if request.conversation_id != conversation_id:
+            raise ToolError("视频请求与当前故事不一致")
+        self.comic_stories.anchor_for(conversation_id, request.anchor_project_id)
+        lock = self._workflow_dispatch_locks[hash((conversation_id, request.content_sha256,
+                                                  request.scope, request.shot_id)) % 64]
+        with lock:
+            if saved := self.comic_videos.saved_request(request):
+                run = self.comic_videos._owned_run(conversation_id, saved["run_id"])
+                return self.comic_videos.project(run)
+            anchor, snapshot = self.comic_videos.prepare(request)
+            state = ComicVideoState(conversation_id=conversation_id, project_id=anchor,
+                request_id=request.request_id, request=request.model_dump(mode="json"),
+                snapshot=snapshot, input_sha256=value_hash({"request": request.model_dump(
+                    mode="json"), "snapshot": snapshot}), instance_id=self._instance_id,
+                trace_id=current_trace_id() or f"trace-{uuid4().hex[:12]}")
+            run = self.runtime.create(VIDEO_WORKFLOW, state)
+            try:
+                self.comic_videos.bind_request(request, run)
+            except Exception:
+                self.runtime.cancel(run.id)
+                raise
+        self._enqueue_comic_video(run)
+        return self.comic_videos.project(self.runtime_store.get_run(run.id))
+
+    def _enqueue_comic_video(self, run):
+        """复用原有有限 Worker；同一 Run 的查询不并发执行。"""
+        def execute():
+            try:
+                with request_trace(run.state["trace_id"]):
+                    self.runtime.resume(run.id)
+            except Exception as error:
+                public_error(error, component="comic.video.worker", run_id=run.id)
+
+        with self._media_futures_lock:
+            previous = self._media_futures.get(run.id)
+            if previous and not previous.done():
+                return
+            future = self.runner.submit(execute)
+            self._media_futures[run.id] = future
+
+        def finished(_future):
+            with self._media_futures_lock:
+                if self._media_futures.get(run.id) is _future:
+                    self._media_futures.pop(run.id, None)
+        future.add_done_callback(finished)
 
     def get_comic_context(
         self, project_id: str, *, task: str | None = None, version: int | None = None,
@@ -2986,16 +3230,21 @@ class StudioApplication:
         degraded = []
 
         def interpret_turn(messages):
-            correcting_facts = f'"{FactCorrections.__name__}"' in messages[0]["content"]
+            correcting_context = any(f'"{schema.__name__}"' in messages[0]["content"]
+                                     for schema in (FactCorrections, TaskStatusCorrections))
             try:
                 raw = self._conversation_context_model(messages)
                 if (workspace and _comic_generation_deadline.get() is not None
-                        and not correcting_facts):
+                        and not correcting_context):
                     schema = TurnUnderstanding if '"TurnUnderstanding"' in messages[0][
                         "content"] else ConversationSummary
                     try:
                         schema.model_validate_json(raw)
                     except ValidationError as invalid:
+                        if ConversationContext._task_status_positions(invalid):
+                            # The shared parser can correct this one received field
+                            # without losing the already valid source selection.
+                            return raw
                         raise ToolError("上下文模型返回结构无效，原始消息保留", detail=json.dumps([
                             {"path": item["loc"], "type": item["type"]} for item in
                             invalid.errors(include_input=False, include_context=False,
@@ -3003,7 +3252,7 @@ class StudioApplication:
                         ], ensure_ascii=False)) from None
                 return raw
             except Exception as error:
-                if correcting_facts:
+                if correcting_context:
                     raise
                 if not workspace or _comic_generation_deadline.get() is None:
                     raise
@@ -3399,6 +3648,7 @@ class StudioApplication:
                                 sources=[SourceRef(kind="run", id=owner.id,
                                                    version=current.version)]),
                             model_call=self._comic_constraint_model, cutoff=utc_now(),
+                            vision_model_call=self._comic_image_vision_model,
                             budget=get_settings().runtime.context_token_budget)
                         references = dict(current.reference_context)
                         if not continuity or continuity.get("new_context"):
@@ -3665,6 +3915,7 @@ class StudioApplication:
                 image_continuity = self.comic_workspace.image_continuity(
                     project_id, request.task, resolution,
                     model_call=self._comic_constraint_model, cutoff=user_turn.created_at,
+                    vision_model_call=self._comic_image_vision_model,
                     budget=get_settings().runtime.context_token_budget)
                 if image_continuity and image_continuity.get("new_context"):
                     resolution.sources = []
@@ -3674,6 +3925,8 @@ class StudioApplication:
             memory.remember(request.conversation_id, prepared_context, user_turn.id)
             retained = {}
             retained_director_fields = {}
+            # 每个导演叶子由哪个来源写入；同一来源同时列出粗粒度设定与它自己的叶子不是冲突。
+            retained_director_sources = {}
             bible_sources = {}
             retained_assets = []
             previous_constraints = list(snapshot.creative_brief.semantic_constraints)
@@ -3747,10 +4000,12 @@ class StudioApplication:
                     if field in retained:
                         raise ToolError("多个来源指定了同一设定，请明确选择")
                     if field in leaves:
-                        if field in retained_director_fields:
+                        claimed = retained_director_sources.get(field)
+                        if claimed is not None and claimed != reference.id:
                             raise ToolError("多个来源指定了同一字段，请明确选择")
                         value = leaves[field]
                         retained_director_fields[field] = value
+                        retained_director_sources[field] = reference.id
                         retained[field] = value if isinstance(value, str) else json.dumps(
                             value, ensure_ascii=False)
                         continue
@@ -3766,6 +4021,7 @@ class StudioApplication:
                                 "style_context": "style_boundary"}[field]
                         if defaults[field] and not workspace:
                             retained_director_fields[f"director_plan.{leaf}"] = defaults[field]
+                            retained_director_sources[f"director_plan.{leaf}"] = reference.id
                     camera_fields = {
                         field: set(CINEMATOGRAPHY_LEAVES.get(field, frozenset()))
                         for field in CINEMATOGRAPHY_LEAVES}
@@ -3773,13 +4029,18 @@ class StudioApplication:
                         camera_fields.update(camera_style={"camera_language"},
                                              lighting={"lighting"})
                     for leaf in camera_fields.get(field, set()):
-                        if f"cinematography.{leaf}" in retained_director_fields:
-                            raise ToolError("来源中的摄影字段重叠，请明确选择")
-                        retained_director_fields[f"cinematography.{leaf}"] = getattr(
+                        path = f"cinematography.{leaf}"
+                        claimed = retained_director_sources.get(path)
+                        if claimed is not None:
+                            if claimed != reference.id:
+                                raise ToolError("来源中的摄影字段重叠，请明确选择")
+                            continue
+                        retained_director_fields[path] = getattr(
                             camera, leaf) if camera else {
                                 "camera_language": spec.camera_language,
                                 "color_relationship": spec.color_language,
                                 "lighting": spec.lighting}[leaf]
+                        retained_director_sources[path] = reference.id
                 if reference.fields:
                     if baseline is None:
                         baseline = spec
@@ -3795,6 +4056,7 @@ class StudioApplication:
                 fields = self.comic_workspace.continuity_fields(
                     workspace["work_id"], image_continuity)
                 retained_director_fields.clear()
+                retained_director_sources.clear()
                 # 图片基准优先于模型漏选的继承字段，局部变更不释放整类设定。
                 for section in BIBLE_SOURCE_KEYS:
                     source = image_continuity.get("prompt_source")
@@ -4067,24 +4329,25 @@ class StudioApplication:
         if turn_context:
             creative_context["workspace_turn"] = turn_context
             creative_context["input_message_id"] = turn_context["input_message_id"]
-        result = self.comic_director.execute(DirectorCoordinatorRequest(
-            snapshot=snapshot, assets=assets, task=task,
-            execution_mode=request.creation_mode, storyboard=storyboard, shot=shot,
-            prior_spec=prior_spec, previous_run_id=source_id, rerun_from=rerun_from,
-            stage_edits=request.stage_edits, conversation_id=request.conversation_id,
-            worker_instance_id=self._instance_id,
-            trace_id=trace_id, creative_context=creative_context,
-            review_draft=prior_spec if request.review_current else None,
-            generation_mode=(previous.state.get("generation_mode")
-                             if request.resume_run_id else review_mode or "FIRST_GENERATION"
-                             if request.review_current else "FIRST_GENERATION"
-                             if request.independent_plan else "USER_EDIT"
-                             if lock or request.stage_edits else
-                             "NEW_CONTEXT" if creative_context.get("fork_created") else
-                             "FIRST_GENERATION"),
-            creative_context_lock=lock or {},
-            reference_context=reference_context,
-        ))
+        with reuse_llm_connections():
+            result = self.comic_director.execute(DirectorCoordinatorRequest(
+                snapshot=snapshot, assets=assets, task=task,
+                execution_mode=request.creation_mode, storyboard=storyboard, shot=shot,
+                prior_spec=prior_spec, previous_run_id=source_id, rerun_from=rerun_from,
+                stage_edits=request.stage_edits, conversation_id=request.conversation_id,
+                worker_instance_id=self._instance_id,
+                trace_id=trace_id, creative_context=creative_context,
+                review_draft=prior_spec if request.review_current else None,
+                generation_mode=(previous.state.get("generation_mode")
+                                 if request.resume_run_id else review_mode or "FIRST_GENERATION"
+                                 if request.review_current else "FIRST_GENERATION"
+                                 if request.independent_plan else "USER_EDIT"
+                                 if lock or request.stage_edits else
+                                 "NEW_CONTEXT" if creative_context.get("fork_created") else
+                                 "FIRST_GENERATION"),
+                creative_context_lock=lock or {},
+                reference_context=reference_context,
+            ))
         current_director_version = self.comic_projects.get(project_id).project.director_version
         if (lock and (changes or recovery) and current_director_version is not None
                 and current_director_version != lock["director_version"]):
@@ -4535,9 +4798,25 @@ class StudioApplication:
                 task_type, run.started_at.isoformat(), expected_project_version,
                 expected_version, storyboard_id or "-", shot_id or "-",
             )
+            task_started = time.monotonic()
             try:
                 progress("planning", "request_validated")
-                result = action(progress)
+                with reuse_llm_connections(), _reuse_vision_inputs():
+                    result = action(progress)
+                if task_type == "image.edit":
+                    state.update(self.runtime_store.get_run(run.id).state)
+                    if result.get("edit_status") in {
+                            "needs_clarification", "needs_scope_confirmation",
+                            "review_unavailable"}:
+                        state.update(task_status=result["edit_status"],
+                            last_completed_step=result["review_diagnostics"]["stage"],
+                            image_edit_resolution=result,
+                            review_diagnostics=result["review_diagnostics"])
+                        self.runtime_store.update_run(run.id, status=ExecutionStatus.WAITING,
+                            state=state, current_node=task_type)
+                        self.runtime_store.append_event(run.id, RuntimeEventType.NODE_PROGRESS,
+                            node_id=task_type, payload={"edit_status": result["edit_status"]})
+                        return result
                 if result.get("review_blocked"):
                     state.update(task_status="needs_review", last_completed_step="director_review")
                     self.runtime_store.update_run(
@@ -4553,6 +4832,14 @@ class StudioApplication:
                     story = result.get("story") or {}
                     state.update(story_id=story.get("story_id"),
                                  story_version=story.get("version"), story_result=result)
+                    if result.get("generation_status") == "needs_revision":
+                        state.update(task_status="needs_revision",
+                                     last_completed_step="story_review")
+                        self.runtime_store.update_run(run.id, status=ExecutionStatus.WAITING,
+                            state=state, current_node=task_type)
+                        self.runtime_store.append_event(run.id, RuntimeEventType.NODE_PROGRESS,
+                            node_id=task_type, payload={"generation_status": "needs_revision"})
+                        return result
                 entity = result.get("storyboard", result.get("story", result)) or {}
                 saved_storyboard_id = entity.get("storyboard_id", storyboard_id)
                 saved_shot_id = entity.get("shot_id", shot_id)
@@ -4612,7 +4899,7 @@ class StudioApplication:
                 )
                 return result
             except Exception as error:
-                if task_type.startswith("story."):
+                if task_type.startswith("story.") or task_type == "image.edit":
                     state.update(self.runtime_store.get_run(run.id).state)
                 failure = public_error(
                     error, component=f"comic.{task_type.split('.')[0]}",
@@ -4638,6 +4925,9 @@ class StudioApplication:
                     payload={"error_id": failure["error_id"]},
                 )
                 raise
+            finally:
+                logger.info("task elapsed action={} duration_ms={}", task_type,
+                            round((time.monotonic() - task_started) * 1000))
 
     def create_comic_storyboard(self, project_id: str, data: dict[str, Any]) -> dict[str, Any]:
         request = ComicStoryboardCreateRequest.model_validate(data)
@@ -4834,6 +5124,11 @@ class StudioApplication:
                 if source := continuity.get("prompt_source"):
                     locked_bibles.update({"source:" + path: source["artifact_id"]
                                           for path in fields})
+                    scope_fields = self.comic_projects.preserved_prompt_scope(source)
+                    for path, evidence in scope_fields.items():
+                        if path in fields and fields[path] == evidence["value"]:
+                            locked_bibles["scope:" + path] = json.dumps(
+                                evidence, ensure_ascii=False)
             if lock:
                 owner = self._comic_director_owner(shot.project_id, request.conversation_id,
                                                    director.version)
@@ -4844,15 +5139,17 @@ class StudioApplication:
                         owner.state.get("task") or "",
                         set(owner.state.get("creative_context", {}).get("edit_scopes", []))))
             progress("generating", "context_selected")
+            reused_context = (locked_bibles if locked_bibles else
+                              self.comic_prompts.reused_context(current_shot, director)) \
+                if request.complete_prompt else None
             compile_inputs = dict(
                 snapshot=snapshot, director=director, storyboard=storyboard,
                 shot=current_shot, assets=assets, model_target=model_target,
                 allow_advisory=self.comic_projects.advisory_authorized(director),
                 allow_unavailable=self.comic_projects.human_director_confirmed(director),
                 complete_prompt=request.complete_prompt,
-                reused_context=(locked_bibles if locked_bibles else
-                                self.comic_prompts.reused_context(current_shot, director))
-                if request.complete_prompt else None,
+                reused_context=reused_context,
+                preserved_scope=self.comic_prompts.preserved_scope(reused_context or {}),
             )
             if snapshot.creative_brief.constraint_contract_version == 2:
                 compile_inputs["on_constraint_diagnostics"] = lambda audit: (
@@ -4936,14 +5233,26 @@ class StudioApplication:
                             detail=repaired_error.detail,
                         ) from repaired_error
                     raise
-            for field, label in (("character_context", "人物设定"),
-                                 ("world_context", "世界设定"), ("style_context", "视觉风格")):
-                if field in locked_bibles and getattr(draft, field) != locked_bibles[field]:
-                    raise ToolError(
-                        f"{label}与已锁定设定冲突，请沿用当前设定修订导演方案；"
-                        f"如需改变{label}，请在对话中明确要求更换。",
-                        detail=f"module=comic.context affected_field={field}",
-                    )
+            # 锁定设定（人物/世界/风格）应当沿用已确认设定，但「逐字相等」不能当作闸门：
+            # 同一作品里各镜头的 Prompt 来自不同导演方案版本，让新镜头原样复现上一版某段的
+            # 每一个字在结构上做不到；旧实现因此把用户卡死在
+            # 「视觉风格与已锁定设定冲突，请沿用当前设定修订导演方案」上，同一镜头反复重试都失败。
+            # 现在锁定语义由两处保证：编译输入带 reused_context，以及编译器自身的语义核验；
+            # 这里只把偏离如实记录（日志 + 返回值），既不阻断用户，也不改写已核验的正文。
+            # 真的想换视觉风格，走导演方案修订，锁会随之更新。
+            diverged_context = [
+                {"field": field, "label": label}
+                for field, label in (("character_context", "人物设定"),
+                                     ("world_context", "世界设定"),
+                                     ("style_context", "视觉风格"))
+                if field in locked_bibles
+                and not _same_locked_text(getattr(draft, field), locked_bibles[field])
+            ]
+            if diverged_context:
+                logger.warning(
+                    "prompt_context_diverged trace_id={} project_id={} shot_id={} fields={}",
+                    current_trace_id(), shot.project_id, shot_id,
+                    [item["field"] for item in diverged_context])
             if continuity and request.complete_prompt:
                 self.comic_workspace.require_continuity(binding["work_id"], continuity)
             progress("checking", "prompt_compiled")
@@ -4954,8 +5263,12 @@ class StudioApplication:
                 shot_id, draft, expected_project_version=request.expected_project_version,
                 expected_shot_version=request.expected_shot_version,
                 model_target=model_target, compiler_version=compiler.version, run_id=run_id,
+                reused_context=reused_context,
             )
             result = self.comic_prompts.payload(prompt)
+            if diverged_context:
+                # 不阻断，但要说实话：这几段没有逐字沿用锁定设定。
+                result["context_diverged"] = diverged_context
             if lock is not None:
                 sources = dict(lock["bible_sources"])
                 for field in BIBLE_SOURCE_KEYS:
@@ -4979,6 +5292,12 @@ class StudioApplication:
             expected_version=request.expected_shot_version,
             conversation_id=request.conversation_id if request.image_mode == "external" else None,
         )
+
+    def export_comic_codex_task(self, shot_id: str, data: dict[str, Any]) -> dict:
+        request = ComicCodexTaskRequest.model_validate(data)
+        index = hash((shot_id, "prompt.codex_task")) % len(self._workflow_dispatch_locks)
+        with self._workflow_dispatch_locks[index]:
+            return self.comic_prompts.export_codex_task(shot_id, request)
 
     def confirm_comic_prompt(self, shot_id: str, data: dict[str, Any]) -> dict[str, Any]:
         """只冻结用户查看的 Prompt 修订；不创建生图审批或付费任务。"""
@@ -5083,6 +5402,7 @@ class StudioApplication:
                 expected_project_version=request.expected_project_version,
                 expected_shot_version=request.expected_shot_version,
                 expected_prompt_version=request.expected_prompt_version,
+                generation_task_id=request.generation_task_id,
             )
 
         return self._comic_tracked_action(
@@ -5335,6 +5655,8 @@ class StudioApplication:
     def create_core_run(self, data: dict[str, Any]) -> dict[str, Any]:
         """根据 shell 选择 Domain Pack；Core 本身没有领域分支。"""
         domain = str(data.get("domain", "")).strip().lower()
+        if domain == "commerce":
+            raise ToolError("电商功能已停用，原始数据已保留")
         if domain == "comic":
             if "creative_request" in data.get("state", {}):
                 return self._start_comic_workspace_creation(data["state"])
@@ -5342,12 +5664,6 @@ class StudioApplication:
                 return self._start_comic_project_production(data["state"])
             state = ComicState.model_validate(data.get("state", data))
             run = self.runtime.start(COMIC_WORKFLOW_ID, state)
-        elif domain == "commerce":
-            raw_state = dict(data.get("state", data))
-            raw_state.setdefault("max_reworks", self.runtime_settings.max_reworks)
-            raw_state.setdefault("data_mode", self.commerce_settings.data_mode)
-            state = CommerceState.model_validate(raw_state)
-            run = self.runtime.start(COMMERCE_WORKFLOW_ID, state)
         else:
             raise ToolError("不支持的 Domain Pack", detail=domain)
         return self._run_payload(run.id)
@@ -5512,19 +5828,13 @@ class StudioApplication:
     ) -> dict[str, Any]:
         """Create a visible Run immediately and execute it on the bounded worker pool."""
         domain = str(data.get("domain", "")).strip().lower()
+        if domain == "commerce":
+            raise ToolError("电商功能已停用，原始数据已保留")
         interaction_mode = InteractionMode(str(data.get("interaction_mode", "guided")))
         if domain == "comic":
             state = ComicState.model_validate(data.get("state", data))
             run = self.runtime.create(
                 COMIC_WORKFLOW_ID, state, interaction_mode=interaction_mode,
-            )
-        elif domain == "commerce":
-            raw_state = dict(data.get("state", data))
-            raw_state.setdefault("max_reworks", self.runtime_settings.max_reworks)
-            raw_state.setdefault("data_mode", self.commerce_settings.data_mode)
-            state = CommerceState.model_validate(raw_state)
-            run = self.runtime.create(
-                COMMERCE_WORKFLOW_ID, state, interaction_mode=interaction_mode,
             )
         else:
             raise ToolError("不支持的 Domain Pack", detail=domain)
@@ -5563,6 +5873,14 @@ class StudioApplication:
 
     def resume_core_run(self, run_id: str) -> dict[str, Any]:
         """从最后 checkpoint 恢复 Run。"""
+        run = self.runtime_store.get_run(run_id)
+        if run.domain == "commerce":
+            raise ToolError("电商功能已停用，原始数据已保留")
+        if run.workflow == VIDEO_WORKFLOW:
+            if not self.comic_videos.project(run)["can_query"]:
+                raise ToolError("视频请求只能查询原供应商任务，不能重新提交")
+            self._enqueue_comic_video(run)
+            return self._run_payload(run_id)
         run = self.runtime.resume(run_id)
         return self._run_payload(run.id)
 
@@ -5588,9 +5906,10 @@ class StudioApplication:
         return [
             item.model_dump(mode="json")
             for item in self.runtime_store.list_artifacts(
-                run_id, type=artifact_type, domain=domain,
+                run_id, type=artifact_type, domain=domain, exclude_domain="commerce",
                 lifecycle_state=ArtifactLifecycle(lifecycle_state) if lifecycle_state else None,
-            ) if item.run_id is not None
+            ) if item.run_id is not None and not item.source.startswith("commerce.")
+            and not str(item.metadata.get("schema_name", "")).startswith("commerce.")
         ]
 
     def get_core_artifact(self, artifact_id: str) -> dict[str, Any]:
@@ -5627,9 +5946,10 @@ class StudioApplication:
         if not path.is_file():
             raise ToolError("产物文件不可用")
         expected_hash = artifact.metadata.get("sha256")
-        if (artifact.type == ArtifactType.IMAGE and expected_hash
+        if (artifact.type in {ArtifactType.IMAGE, ArtifactType.VIDEO} and expected_hash
                 and hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash):
-            raise ToolError("图片文件内容与保存的版本不一致，请核对原文件")
+            label = "图片" if artifact.type == ArtifactType.IMAGE else "视频"
+            raise ToolError(f"{label}文件内容与保存的版本不一致，请核对原文件")
         return path
 
     def list_core_events(self, run_id: str, after: int = 0) -> list[dict[str, Any]]:
@@ -5648,11 +5968,13 @@ class StudioApplication:
         return [
             item.model_dump(mode="json")
             for item in self.runtime_store.list_approvals()
+            if self.runtime_store.get_run(item.run_id).domain != "commerce"
         ]
 
     def list_core_skills(self) -> list[dict[str, Any]]:
         """返回文件化 Skill metadata，不泄露机器绝对路径。"""
-        return [item.model_dump(mode="json") for item in self.skills.list()]
+        return [item.model_dump(mode="json") for item in self.skills.list()
+                if item.domain != "commerce"]
 
     def decide_core_approval(
         self, approval_id: str, action: str, data: dict[str, Any]
@@ -5668,6 +5990,8 @@ class StudioApplication:
         except KeyError:
             raise ToolError("审批操作无效", detail=action) from None
         approval_before = self.runtime_store.get_approval(approval_id)
+        if self.runtime_store.get_run(approval_before.run_id).domain == "commerce":
+            raise ToolError("电商功能已停用，原始数据已保留")
         if approval_before.request.get("kind") == "director_review":
             if decision is ApprovalDecision.REQUEST_REVISION and not str(
                 data.get("response", data).get("revision_instruction", "")
@@ -5714,6 +6038,8 @@ class StudioApplication:
     def create_core_batch(self, data: dict[str, Any]) -> dict[str, Any]:
         """创建同一 Workflow 的通用 Batch。"""
         workflow_id = str(data.get("workflow", "")).strip()
+        if workflow_id == COMMERCE_WORKFLOW_ID:
+            raise ToolError("电商功能已停用，原始数据已保留")
         workflow = self.runtime.workflow(workflow_id)
         raw_items = data.get("items")
         if not isinstance(raw_items, list) or not raw_items:
@@ -5790,8 +6116,15 @@ class StudioApplication:
         self.runner.submit(worker)
 
 
-def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
-    """只绑定回环地址；校验 Host 和会话令牌，收费操作只接受同源 JSON。"""
+def make_server(app: StudioApplication, port: int = 0) -> Any:
+    """Create the default FastAPI server on the loopback interface."""
+    from kantoku.shells.fastapi_studio import StudioFastAPIServer
+
+    return StudioFastAPIServer(app, port)
+
+
+def make_legacy_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
+    """Retain the previous loopback server as an explicit rollback option."""
 
     closing = threading.Event()
 
@@ -5811,8 +6144,10 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
                 self.send_header(
-                    "Access-Control-Allow-Headers", "Content-Type, X-Studio-Token, X-Trace-ID",
+                    "Access-Control-Allow-Headers",
+                    "Content-Type, X-Studio-Token, X-Trace-ID, X-Kantoku-Login",
                 )
+                self.send_header("Access-Control-Allow-Credentials", "true")
                 self.send_header(
                     "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS",
                 )
@@ -5834,9 +6169,13 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
             failure = getattr(error, "_kantoku_public_failure", None)
             if failure is None:
                 failure = public_error(error, **context)
+            if isinstance(error, AuthenticationError):
+                failure = {**failure, "safe_message": str(error)}
             self.json_reply(status, {**failure, "error": failure["safe_message"]})
 
-        def reply(self, status: int, body: bytes, media_type: str) -> None:
+        def reply(
+            self, status: int, body: bytes, media_type: str, *, cookie: str | None = None,
+        ) -> None:
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", media_type)
@@ -5845,11 +6184,14 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("Cross-Origin-Resource-Policy", "same-origin")
                 self.send_header("X-Trace-ID", current_trace_id() or "-")
+                if cookie is not None:
+                    self.send_header("Set-Cookie", cookie)
                 self._cors()
                 self.send_header(
                     "Content-Security-Policy",
                     "default-src 'self'; "
-                    "img-src 'self' blob:; style-src 'self'; script-src 'self'; "
+                    "img-src 'self' blob: data:; media-src 'self' blob:; "
+                    "style-src 'self'; script-src 'self'; "
                     "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
                 )
                 self.end_headers()
@@ -5876,6 +6218,8 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
             deadline = time.time() + 600
             while time.time() < deadline and not closing.is_set():
                 try:
+                    if not self.has_user_session():
+                        return
                     events = app.list_core_events(run_id, cursor)
                     for event in events:
                         cursor = max(cursor, int(event["sequence"]))
@@ -5901,11 +6245,26 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
                     self.wfile.flush()
                     return
 
-        def json_reply(self, status: int, body: object) -> None:
+        def json_reply(self, status: int, body: object, *, cookie: str | None = None) -> None:
             self.reply(
                 status,
                 json.dumps(body, ensure_ascii=False).encode(),
                 "application/json; charset=utf-8",
+                cookie=cookie,
+            )
+
+        def user_cookie(self) -> str:
+            try:
+                cookies = SimpleCookie()
+                cookies.load(self.headers.get("Cookie", ""))
+                morsel = cookies.get("kantoku_session")
+                return morsel.value if morsel else ""
+            except CookieError:
+                return ""
+
+        def has_user_session(self) -> bool:
+            return not app.authentication.registered() or app.authentication.valid_session(
+                self.user_cookie()
             )
 
         def allowed(self, *, session: bool) -> bool:
@@ -5916,7 +6275,10 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
             if self.headers.get("Sec-Fetch-Site") == "cross-site":
                 return False
             origin = self.headers.get("Origin")
-            if origin is not None and origin not in {f"http://{host}", *self.DEV_ORIGINS}:
+            if origin is not None and origin not in {
+                f"http://{host}", f"http://localhost:{self.server.server_port}",
+                *self.DEV_ORIGINS,
+            }:
                 return False
             return not session or secrets.compare_digest(
                 self.headers.get("X-Studio-Token", ""),
@@ -5931,7 +6293,7 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
             needs_session = request_path.startswith(
                 ("/api/", "/media/", "/comic/projects")
             ) and not (
-                request_path == "/api/session"
+                request_path in {"/api/session", "/api/auth/status"}
                 or (
                     request_path.startswith("/api/runs/")
                     and request_path.endswith("/events/stream")
@@ -5940,9 +6302,17 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
             if not self.allowed(session=needs_session):
                 self.json_reply(403, {"error": "请从本机工作台入口访问"})
                 return
+            if (
+                request_path.startswith(("/api/", "/media/", "/comic/projects"))
+                and request_path != "/api/auth/status"
+                and not self.has_user_session()
+            ):
+                self.json_reply(401, {"error": "请先登录"})
+                return
             try:
                 app_routes = {
                     "/",
+                    "/account",
                     "/workspace",
                     "/runs",
                     "/approvals",
@@ -5967,6 +6337,35 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
                         html.replace("__TOKEN__", app.token).encode(),
                         "text/html; charset=utf-8",
                     )
+                elif request_path == "/api/account/provider-credentials":
+                    if not app.authentication.valid_session(self.user_cookie()):
+                        self.json_reply(401, {"error": "请先登录"})
+                    else:
+                        self.json_reply(200, app.provider_credentials_status())
+                elif request_path == "/api/account/creative-balance":
+                    if not app.authentication.valid_session(self.user_cookie()):
+                        self.json_reply(401, {"error": "请先登录"})
+                    else:
+                        self.json_reply(200, balance_snapshot(app.creative_balance, "火山引擎"))
+                elif request_path == "/api/account/text-balance":
+                    if not app.authentication.valid_session(self.user_cookie()):
+                        self.json_reply(401, {"error": "请先登录"})
+                    else:
+                        self.json_reply(200, balance_snapshot(account_balance, "DeepSeek"))
+                elif request_path == "/api/account/profile":
+                    if not app.authentication.valid_session(self.user_cookie()):
+                        self.json_reply(401, {"error": "请先登录"})
+                    else:
+                        self.json_reply(200, {
+                            **app.authentication.profile(),
+                            "session_started_at": app.authentication.session_started_at(
+                                self.user_cookie()),
+                        })
+                elif request_path == "/api/auth/status":
+                    self.json_reply(200, {
+                        "registered": app.authentication.registered(),
+                        "authenticated": self.has_user_session(),
+                    })
                 elif request_path == "/api/session":
                     self.json_reply(200, {"token": app.token})
                 elif request_path == "/api/state":
@@ -6024,6 +6423,8 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
                         self.json_reply(200, app.comic_story_versions(conversation_id))
                     elif parts[5] == "requests":
                         self.json_reply(200, app.comic_story_requests(conversation_id))
+                    elif parts[5] == "video":
+                        self.json_reply(200, app.comic_videos.view(conversation_id))
                     else:
                         self.json_reply(404, {"error": "故事接口不存在"})
                 elif request_path.startswith(("/api/comic/projects/", "/comic/projects/")):
@@ -6263,17 +6664,64 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
 
         @traced_request
         def do_POST(self) -> None:
+            request_path = urlsplit(self.path).path
+            if request_path in {"/api/auth/register", "/api/auth/login"}:
+                if (
+                    not self.allowed(session=False)
+                    or self.headers.get("X-Kantoku-Login") != "1"
+                    or self.headers.get("Content-Type", "").split(";")[0] != "application/json"
+                ):
+                    self.json_reply(403, {"error": "请求验证失败"})
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= 1024:
+                        raise AuthenticationError("请求格式不正确")
+                    payload = json.loads(self.rfile.read(length))
+                    if (
+                        not isinstance(payload, dict)
+                        or not isinstance(payload.get("username"), str)
+                        or not isinstance(payload.get("password"), str)
+                    ):
+                        raise AuthenticationError("请求格式不正确")
+                    token = (
+                        app.authentication.register(payload["username"], payload["password"])
+                        if request_path.endswith("register")
+                        else app.authentication.login(payload["username"], payload["password"])
+                    )
+                    self.json_reply(200, {"authenticated": True}, cookie=(
+                        f"kantoku_session={token}; Path=/; HttpOnly; SameSite=Strict; "
+                        "Max-Age=2592000"
+                    ))
+                except AuthenticationError as error:
+                    failure = public_error(error, component="authentication")
+                    self.json_reply(400, {**failure, "error": str(error)})
+                except (ValueError, OSError) as error:
+                    self.error_reply(400, error)
+                except Exception as error:
+                    self.error_reply(503, error)
+                return
             if not self.allowed(session=True):
                 self.json_reply(403, {"error": "会话验证失败，请刷新页面"})
                 return
+            if not self.has_user_session():
+                self.json_reply(401, {"error": "请先登录"})
+                return
+            if request_path == "/api/auth/logout":
+                app.authentication.revoke_session(self.user_cookie())
+                self.json_reply(200, {"authenticated": False}, cookie=(
+                    "kantoku_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
+                ))
+                return
             try:
-                request_path = urlsplit(self.path).path
                 length = int(self.headers.get("Content-Length", "0"))
                 # File import alone accepts a larger body; existing routes keep their limit.
                 maximum = 7 * 1024 * 1024 if re.fullmatch(
                     r"/api/comic/(?:shots/[^/]+/external-image|projects/[^/]+/images|images/[^/]+/restore-file)",
                     request_path,
                 ) else 65536
+                if request_path == "/api/account/profile":
+                    maximum = 710000
                 if re.fullmatch(
                     r"/api/comic/(?:conversations|works)/[^/]+/story/[^/]+", request_path):
                     maximum = 1024 * 1024
@@ -6286,7 +6734,36 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
                     raise ToolError("请求格式不合法")
                 parts = request_path.strip("/").split("/")
                 comic_parts = request_path.removeprefix("/api").strip("/").split("/")
-                if request_path == "/api/comic/works":
+                if request_path == "/api/account/provider-credentials":
+                    if not app.authentication.valid_session(self.user_cookie()):
+                        self.json_reply(401, {"error": "请先登录"})
+                    else:
+                        self.json_reply(200, app.save_provider_credentials(data))
+                elif request_path == "/api/account/profile":
+                    if not app.authentication.valid_session(self.user_cookie()):
+                        self.json_reply(401, {"error": "请先登录"})
+                    elif not isinstance(data.get("nickname"), str) or not isinstance(
+                        data.get("remove_avatar", False), bool
+                    ):
+                        raise AuthenticationError("资料格式不正确")
+                    else:
+                        self.json_reply(200, app.authentication.update_profile(
+                            data["nickname"], data.get("avatar"),
+                            remove_avatar=data.get("remove_avatar", False)))
+                elif request_path == "/api/account/password":
+                    if not app.authentication.valid_session(self.user_cookie()):
+                        self.json_reply(401, {"error": "请先登录"})
+                    elif not isinstance(data.get("old_password"), str) or not isinstance(
+                        data.get("new_password"), str
+                    ):
+                        raise AuthenticationError("请求格式不正确")
+                    else:
+                        app.authentication.change_password(
+                            data["old_password"], data["new_password"], self.user_cookie())
+                        self.json_reply(200, {"updated": True})
+                elif request_path == "/api/video/credentials":
+                    self.json_reply(200, app.configure_video_credentials(data))
+                elif request_path == "/api/comic/works":
                     self.json_reply(201, app.comic_workspace.create(data))
                 elif request_path == "/api/comic/works/legacy-import":
                     self.json_reply(200, app.comic_workspace.import_legacy(data, app.comic_stories))
@@ -6363,6 +6840,9 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
                         and parts[4:] == ["prompt", "compile"]:
                     self.json_reply(201, app.compile_comic_prompt(parts[3], data))
                 elif len(parts) == 6 and parts[:3] == ["api", "comic", "shots"] \
+                        and parts[4:] == ["prompt", "codex-task"]:
+                    self.json_reply(200, app.export_comic_codex_task(parts[3], data))
+                elif len(parts) == 6 and parts[:3] == ["api", "comic", "shots"] \
                         and parts[4:] == ["prompt", "confirm"]:
                     self.json_reply(200, app.confirm_comic_prompt(parts[3], data))
                 elif len(parts) == 5 and parts[:3] == ["api", "comic", "shots"] \
@@ -6405,6 +6885,8 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
                     data["_trace_id"] = trace_id
                     try:
                         for event_name, payload in app.stream_conversation(parts[2], data):
+                            if not self.has_user_session():
+                                break
                             encoded = json.dumps(payload, ensure_ascii=False)
                             self.wfile.write(
                                 f"event: {event_name}\ndata: {encoded}\n\n".encode()
@@ -6450,6 +6932,9 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
         def do_PUT(self) -> None:
             if not self.allowed(session=True):
                 self.json_reply(403, {"error": "会话验证失败"})
+                return
+            if not self.has_user_session():
+                self.json_reply(401, {"error": "请先登录"})
                 return
             try:
                 request_path = urlsplit(self.path).path
@@ -6509,6 +6994,9 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
             if not self.allowed(session=True):
                 self.json_reply(403, {"error": "会话验证失败"})
                 return
+            if not self.has_user_session():
+                self.json_reply(401, {"error": "请先登录"})
+                return
             try:
                 parts = urlsplit(self.path).path.strip("/").split("/")
                 length = int(self.headers.get("Content-Length", "0"))
@@ -6529,6 +7017,9 @@ def make_server(app: StudioApplication, port: int = 0) -> ThreadingHTTPServer:
         def do_DELETE(self) -> None:
             if not self.allowed(session=True):
                 self.json_reply(403, {"error": "会话验证失败"})
+                return
+            if not self.has_user_session():
+                self.json_reply(401, {"error": "请先登录"})
                 return
             try:
                 parts = urlsplit(self.path).path.strip("/").split("/")
@@ -6594,7 +7085,7 @@ def _port_owner_pid(port: int) -> int | None:
     return None
 
 
-def serve(*, port: int = 8000, open_browser: bool = True) -> int:
+def serve(*, port: int = 8000, open_browser: bool = True, legacy_http: bool = False) -> int:
     """Start the local API, SSE endpoint and production frontend."""
     os.chdir(ROOT)
     if port and _port_already_serving(port):
@@ -6608,6 +7099,7 @@ def serve(*, port: int = 8000, open_browser: bool = True) -> int:
             f"多实例会互相抢答请求。{hint}。"
         )
         return 2
+    startup_started = time.monotonic()
     settings = get_settings()
     config_path = CONFIG_PATH if CONFIG_PATH.exists() else EXAMPLE_PATH
     logger.bind(component="startup").info(
@@ -6616,9 +7108,13 @@ def serve(*, port: int = 8000, open_browser: bool = True) -> int:
         settings.image.model,
     )
     app = StudioApplication()
+    logger.bind(component="startup").info("phase=application_ready elapsed_ms={}",
+        round((time.monotonic() - startup_started) * 1000))
     try:
         maintenance = get_runtime_paths().start_maintenance()
-        server = make_server(app, port)
+        logger.bind(component="startup").info("phase=maintenance_background_ready elapsed_ms={}",
+            round((time.monotonic() - startup_started) * 1000))
+        server = make_legacy_server(app, port) if legacy_http else make_server(app, port)
     except Exception:
         app.runner.close()
         if "maintenance" in locals():
@@ -6626,6 +7122,8 @@ def serve(*, port: int = 8000, open_browser: bool = True) -> int:
         database_manager.checkpoint_all()
         raise
     url = f"http://127.0.0.1:{server.server_port}"
+    logger.bind(component="startup").info("phase=http_ready elapsed_ms={}",
+        round((time.monotonic() - startup_started) * 1000))
 
     def provider_status(*credentials: Callable[[], str]) -> str:
         try:
@@ -6680,8 +7178,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="监督酱浏览器工作台")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--legacy-http", action="store_true")
     args = parser.parse_args()
-    serve(port=args.port, open_browser=not args.no_browser)
+    serve(port=args.port, open_browser=not args.no_browser, legacy_http=args.legacy_http)
 
 
 if __name__ == "__main__":

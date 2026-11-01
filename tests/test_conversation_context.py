@@ -7,7 +7,7 @@ import json
 import pytest
 
 from kantoku.config import ToolError
-from kantoku.core.conversation_context import ConversationContext, token_size
+from kantoku.core.conversation_context import ConversationContext, TurnUnderstanding, token_size
 from kantoku.core.conversations import MessageRole, MessageType
 from kantoku.core.runtime.models import ArtifactType
 from kantoku.core.runtime.store import RuntimeStore
@@ -26,6 +26,95 @@ def message(store, conversation, content, role=MessageRole.USER):
 def decision(**changes):
     return {"action": "chat", "relation": "recall", "goal": "回答当前问题",
             "sources": [], "tasks": [], "reads": [], **changes}
+
+
+@pytest.mark.parametrize("invalid_status", ["other-progress", {"private-output": "secret"}])
+def test_task_status_correction_preserves_valid_selection_and_every_other_field(
+    store, invalid_status,
+):
+    conversation = store.create_conversation()
+    original = message(store, conversation, "保留原对象，只修改位置")
+    source = {"id": original.id, "kind": "message"}
+    tasks = [{"task_id": str(index), "goal": "已有目标", "status": status,
+              "facts": [], "open_items": []}
+             for index, status in enumerate(["completed", "withdrawn", "pending", invalid_status])]
+    tasks[3]["facts"] = [{"value": original.content, "source": source,
+                          "origin": "user_request", "status": "active"}]
+    raw = decision(action="create", relation="revise", goal=original.content,
+                   current_task_id="3", tasks=tasks, sources=[source])
+    calls = []
+
+    def model(messages):
+        calls.append(messages)
+        if '"TaskStatusCorrections"' in messages[0]["content"]:
+            payload = json.loads(messages[1]["content"])
+            assert [item["task_index"] for item in payload["tasks"]] == [3]
+            assert "status" not in payload["tasks"][0]["task"]
+            assert "private-output" not in json.dumps(messages)
+            return json.dumps({"corrections": [{"task_index": 3, "status": "active"}]})
+        return json.dumps(raw)
+
+    memory = ConversationContext(store, budget=18000, summary_budget=2000, recall_budget=6000)
+    prepared = memory.prepare(conversation.id, original.content, model_call=model)
+    actual = prepared.understanding
+    assert len(calls) == 2
+    assert actual.action == "create" and actual.relation == "revise"
+    assert actual.current_task_id == "3" and actual.sources[0].id == original.id
+    for index, task in enumerate(actual.tasks):
+        expected = {**tasks[index], "status": "active"} if index == 3 else tasks[index]
+        assert task.model_dump(mode="json")["facts"] == [
+            {**fact, "source": actual.sources[0].model_dump(mode="json")}
+            for fact in expected["facts"]]
+        assert task.status == expected["status"]
+        assert task.task_id == expected["task_id"] and task.goal == expected["goal"]
+    assert prepared.degraded == ["task_status_corrected"]
+    assert [row.id for row in store.list_conversation_messages(conversation.id)] == [original.id]
+
+
+@pytest.mark.parametrize("invalid", [
+    "unrelated", "duplicate", "missing", "bad_status", "rewrite", "timeout", "mixed"])
+def test_task_status_correction_is_bounded_and_preserves_strict_validation(store, invalid):
+    conversation = store.create_conversation()
+    original = message(store, conversation, "继续当前任务")
+    task = {"task_id": "x", "goal": original.content, "status": "unrecognised"}
+    if invalid == "mixed":
+        task["goal"] = {"private-output": "secret"}
+    calls = []
+
+    def model(messages):
+        calls.append(messages)
+        if '"TaskStatusCorrections"' not in messages[0]["content"]:
+            return json.dumps(decision(tasks=[task]))
+        if invalid == "timeout":
+            raise TimeoutError("offline correction transport unknown")
+        patch = {"task_index": 9 if invalid == "unrelated" else 0,
+                 "status": "unknown" if invalid == "bad_status" else "active"}
+        if invalid == "rewrite":
+            patch["facts"] = []
+        return json.dumps({"corrections": [] if invalid == "missing" else
+                           [patch, patch] if invalid == "duplicate" else [patch]})
+
+    memory = ConversationContext(store, budget=18000, summary_budget=2000, recall_budget=6000)
+    with pytest.raises((ToolError, TimeoutError)) as caught:
+        memory.prepare(conversation.id, original.content, model_call=model)
+    assert caught.value.__context__ is None
+    assert len(calls) == (1 if invalid == "mixed" else 2)
+    assert store.list_artifacts(conversation_id=conversation.id, include_internal=True) == []
+
+
+def test_summary_task_status_correction_uses_the_same_contract():
+    from kantoku.core.conversation_context import ConversationSummary
+
+    raw = {"overview": "已有进度", "tasks": [{"task_id": "x", "goal": "已有目标",
+             "status": "invalid", "facts": [], "open_items": ["等待确认"]}], "sources": []}
+    calls = []
+    def call(messages, *, stage):
+        calls.append(stage)
+        return json.dumps({"corrections": [{"task_index": 0, "status": "pending"}]})
+    parsed = ConversationContext._parse(ConversationSummary, json.dumps(raw), call=call)
+    assert calls == ["task_status_correction"]
+    assert parsed.tasks[0].status == "pending"
+    assert parsed.overview == raw["overview"] and parsed.tasks[0].open_items == ["等待确认"]
 
 
 def test_paging_and_ranges_cannot_escape_conversation(store):
@@ -182,6 +271,47 @@ def test_summary_overflow_has_bounded_recompression_without_losing_raw_records(
         assert store.list_artifacts(conversation_id=conversation.id, include_internal=True) == []
     assert [row.content for row in store.list_conversation_messages(conversation.id)] == [
         row.content for row in rows]
+
+
+@pytest.mark.parametrize("reference", ["source", "read", "fact"])
+def test_known_message_cannot_be_misread_as_a_run(store, reference):
+    conversation = store.create_conversation()
+    original = message(store, conversation, "保持人物的红色衣服，只改变动作")
+    incoming = message(store, conversation, "继续调整动作")
+    calls, reads = [], []
+    def model(messages):
+        calls.append(messages)
+        wrong = {"kind": "run", "id": original.id, "version": 1}
+        return json.dumps(decision(
+            sources=[wrong] if reference == "source" else [],
+            reads=[{"kind": "run", "id": original.id}] if reference == "read" else [],
+            tasks=[{"task_id": "x", "goal": incoming.content, "status": "active", "facts": [
+                {"value": original.content, "source": wrong, "origin": "user_request"}]}]
+                if reference == "fact" else []))
+    memory = ConversationContext(store, budget=6000, summary_budget=700, recall_budget=1000)
+    result = memory.prepare(
+        conversation.id, incoming.content, through_message_id=incoming.id,
+        model_call=model, reader=lambda *args: reads.append(args))
+    assert len(calls) == 1 and reads == []
+    assert "source_kind_corrected" in result.degraded
+    assert result.evidence[original.id]["kind"] == "message"
+    if reference == "source":
+        assert result.understanding.sources[0].kind == "message"
+        assert result.understanding.sources[0].version is None
+    assert [row.content for row in store.list_conversation_messages(conversation.id)] == [
+        original.content, incoming.content]
+
+
+@pytest.mark.parametrize("known", [[], [
+    {"id": "same-id", "kind": "message"}, {"id": "same-id", "kind": "run"},
+], [{"id": "same-id", "kind": "run", "version": 1}]])
+def test_source_type_correction_never_guesses_identity_or_rewrites_real_revision(known):
+    understanding = TurnUnderstanding.model_validate(decision(sources=[
+        {"id": "same-id", "kind": "run", "version": 2}]))
+    degraded = []
+    ConversationContext._canonical_source_kinds(understanding, known, degraded)
+    assert understanding.sources[0].kind == "run" and understanding.sources[0].version == 2
+    assert not degraded
 
 
 def test_oversized_input_stops_before_call_and_retains_raw_history(store):

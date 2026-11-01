@@ -126,6 +126,8 @@ def selected_fast_domain(conversation: ConversationRecord, data: dict[str, Any])
         raise ToolError("快捷创作域无效")
     if domain == "visual":
         domain = "studio"
+    if domain == "commerce":
+        raise ToolError("电商功能已停用，原始数据已保留")
     if domain is not None and domain not in {"comic", "commerce", "studio"}:
         raise ToolError("快捷创作域无效")
     mode = data.get("execution_mode")

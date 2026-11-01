@@ -165,6 +165,14 @@ test('document, report, listing, json and video artifacts never reach the asset 
   } finally { view.unmount() }
 })
 
+test('retired commerce images are hidden without removing other assets', async () => {
+  const view = await mount([artifact('commerce-image', 'image', 'commerce'), artifact('comic-image', 'image')])
+  try {
+    assert.deepEqual(view.ids(), ['comic-image'])
+    assert.ok(!view.select('按领域筛选').options.some(option => option.value === 'commerce'))
+  } finally { view.unmount() }
+})
+
 test('single-type dropdown selections keep the matching category highlighted', async () => {
   const view = await mount()
   try {
@@ -556,16 +564,6 @@ test('document and report details include every nested value instead of a five-r
       assert.ok(!clipboardText.includes('结构化内容'))
     } finally { view.unmount() }
   }
-})
-
-test('legacy commerce documents and listings use the existing domain renderers', async () => {
-  const view = await mountCard({ ...artifact('legacy-document', 'document'), source: 'commerce.requirement', metadata: { mock: true, payload: { requirement: '旧版本的完整商品需求', locale: 'ru-RU' } } })
-  try {
-    assert.ok(view.text().includes('旧版本的完整商品需求'))
-    await view.click('查看详情')
-    assert.ok(content(view.dialog()).includes('目标语言 ru-RU'))
-    assert.ok(view.text().includes('模拟数据（Mock）'))
-  } finally { view.unmount() }
 })
 
 test('a response arriving after the detail closes is revoked and cannot reopen the result', async () => {

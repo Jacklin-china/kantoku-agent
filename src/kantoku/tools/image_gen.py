@@ -285,6 +285,7 @@ def prepare_image_reservation(
     est_fen: int | None = None,
     reference_urls: Sequence[str] = (),
     seed: int | None = None,
+    input_identity: str | None = None,
 ) -> ReservationRequest:
     """校验一镜并生成带指纹的预算请求，不联网、不修改台账。"""
     if not isinstance(prompt, str) or not prompt.strip():
@@ -311,6 +312,7 @@ def prepare_image_reservation(
             "prompt": prompt.strip(),
             "reference_urls": [url.strip() for url in reference_urls],
             "seed": seed,
+            **({"input_identity": input_identity} if input_identity is not None else {}),
         }
         fingerprint = hashlib.sha256(
             json.dumps(
@@ -353,6 +355,7 @@ def gen_image(
     est_fen: int | None = None,
     reference_urls: Sequence[str] = (),
     seed: int | None = None,
+    input_identity: str | None = None,
 ) -> ImageGenerationResult:
     """生成单张图；重复调用复用确定结果，未知请求不会重新提交。"""
     request = prepare_image_reservation(
@@ -366,6 +369,7 @@ def gen_image(
         est_fen=est_fen,
         reference_urls=reference_urls,
         seed=seed,
+        input_identity=input_identity,
     )
     client_request_id = request.reservation_id
     reservation = reserve(**request.model_dump())

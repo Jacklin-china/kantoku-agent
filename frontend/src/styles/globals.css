@@ -4,12 +4,14 @@ body {
   min-height: 100vh;
   background: var(--canvas);
   color: var(--text-primary);
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
   font-size: var(--font-body);
   font-weight: var(--weight-regular);
   line-height: var(--line-body);
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: unset;
+  font-smooth: never;
 }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }

@@ -52,13 +52,27 @@ class FactCorrections(BaseModel):
     corrections: list[FactCorrection] = Field(max_length=360)
 
 
+TaskStatus = Literal["active", "pending", "completed", "withdrawn"]
+
+
 class TaskProgress(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_id: str
     goal: str = Field(max_length=1000)
-    status: Literal["active", "pending", "completed", "withdrawn"]
+    status: TaskStatus
     facts: list[MemoryFact] = Field(default_factory=list, max_length=30)
     open_items: list[str] = Field(default_factory=list, max_length=20)
+
+
+class TaskStatusCorrection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_index: int = Field(ge=0)
+    status: TaskStatus
+
+
+class TaskStatusCorrections(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    corrections: list[TaskStatusCorrection] = Field(min_length=1, max_length=12)
 
 
 class HistoryRead(BaseModel):
@@ -127,15 +141,58 @@ class ConversationContext:
         self.allowed_actions = allowed_actions
 
     @staticmethod
-    def _parse(schema, raw):
+    def _task_status_positions(error: ValidationError) -> set[int]:
+        """Only task status literals qualify; mixed or nested fact errors stay strict."""
+        failures = error.errors(include_input=False, include_context=False, include_url=False)
+        if not failures or any(item["type"] != "literal_error" or len(item["loc"]) != 3
+                or item["loc"][0] != "tasks" or type(item["loc"][1]) is not int
+                or item["loc"][2] != "status" for item in failures):
+            return set()
+        return {item["loc"][1] for item in failures}
+
+    @staticmethod
+    def _parse(schema, raw, *, call=None, request="", degraded=None):
         try:
             return schema.model_validate_json(raw)
         except ValidationError as error:
+            positions = ConversationContext._task_status_positions(error) if (
+                call is not None and schema in (TurnUnderstanding, ConversationSummary)) else set()
             failures = [{"path": item["loc"], "type": item["type"]} for item in
                         error.errors(include_input=False, include_context=False,
                                      include_url=False)[:20]]
+        if not positions:
             raise ToolError("上下文模型返回结构无效，原始消息保留",
                             detail=json.dumps(failures, ensure_ascii=False)) from None
+        # Correct outside the validation exception handler: a failed follow-up
+        # must not chain private invalid output into the transport traceback.
+        payload = json.loads(raw)
+        tasks = [{"task_index": index, "task": TaskProgress.model_validate({
+            **payload["tasks"][index], "status": "pending"}).model_dump(
+                mode="json", exclude={"status"})} for index in sorted(positions)]
+        correction_raw = call([
+            {"role": "system", "content": (
+                "仅纠正指定任务的进度状态，每个 task_index 恰好一次。"
+                "active 表示正在处理，pending 表示尚待处理，completed 表示已经完成，"
+                "withdrawn 表示用户已撤回。依据当前请求及任务目标、事实和未完成项判断。"
+                "不得改写任务、事实、来源、动作或增加任务；不输出思维链。只返回 JSON：" +
+                json.dumps(TaskStatusCorrections.model_json_schema(), ensure_ascii=False))},
+            {"role": "user", "content": json.dumps({
+                "current_request": request, "current_task_id": payload.get(
+                    "current_task_id"), "tasks": tasks}, ensure_ascii=False)},
+        ], stage="task_status_correction")
+        corrections = ConversationContext._parse(TaskStatusCorrections, correction_raw)
+        applied = set()
+        for patch in corrections.corrections:
+            if patch.task_index not in positions or patch.task_index in applied:
+                raise ToolError("任务状态纠正超出指定范围，原请求保留")
+            payload["tasks"][patch.task_index]["status"] = patch.status
+            applied.add(patch.task_index)
+        if applied != positions:
+            raise ToolError("任务状态纠正不完整，原请求保留")
+        parsed = schema.model_validate(payload)
+        if degraded is not None and "task_status_corrected" not in degraded:
+            degraded.append("task_status_corrected")
+        return parsed
 
     @staticmethod
     def _message(item) -> dict:
@@ -282,7 +339,10 @@ class ConversationContext:
                         {"previous_summary": compressed.model_dump(), "messages": []}
                         if attempt else compact_input, ensure_ascii=False)},
                 ], stage="summary")
-                compressed = self._parse(ConversationSummary, raw)
+                compressed = self._parse(ConversationSummary, raw, call=call,
+                                         request=request, degraded=degraded)
+                self._canonical_source_kinds(compressed,
+                    [*[self._message(item) for item in history], *(candidates or [])], degraded)
                 if token_size(compressed.model_dump()) <= self.summary_budget:
                     break
             if token_size(compressed.model_dump()) > self.summary_budget:
@@ -482,7 +542,10 @@ class ConversationContext:
                     if "context_truncated" not in degraded:
                         degraded.append("context_truncated")
                 raw = call(model_messages, stage=f"understanding:{attempt + 1}")
-                understanding = self._parse(TurnUnderstanding, raw)
+                understanding = self._parse(TurnUnderstanding, raw, call=call,
+                                            request=request, degraded=degraded)
+                self._canonical_source_kinds(understanding, [
+                    *[self._message(item) for item in readable], *candidates], degraded)
                 if understanding.action not in self.allowed_actions:
                     raise ToolError("上下文动作未在当前入口注册，原请求保留")
                 required = [*understanding.sources, *(fact.source
@@ -647,6 +710,30 @@ class ConversationContext:
                                summary.id if summary else None,
                                through_message_id or (history[-1].id if history else None),
                                total, degraded, dict(budget_diagnostics))
+
+    @staticmethod
+    def _canonical_source_kinds(understanding, known, degraded):
+        """Correct a type label only for one already-scoped, unambiguous identity."""
+        kinds = {}
+        for item in known:
+            kinds.setdefault(item["id"], set()).add(item["kind"])
+        references = [*understanding.sources, *(fact.source
+            for task in understanding.tasks for fact in task.facts)]
+        for reference in [*references, *getattr(understanding, "reads", [])]:
+            choices = kinds.get(reference.id, set())
+            if len(choices) != 1:
+                continue
+            kind = next(iter(choices))
+            actual = ("messages" if isinstance(reference, HistoryRead) and kind == "message"
+                      else kind)
+            if reference.kind == actual:
+                continue
+            reference.kind = actual
+            if isinstance(reference, SourceRef) and kind == "message":
+                # Messages have no Run/Artifact revision; never rewrite a real version.
+                reference.version = None
+            if "source_kind_corrected" not in degraded:
+                degraded.append("source_kind_corrected")
 
     def _read_history(self, read: HistoryRead, readable: list, reader: Callable | None) -> list:
         if read.kind != "messages":

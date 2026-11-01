@@ -853,6 +853,7 @@ class ComicPromptContext(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
     labels: ClassVar[dict[str, str]]
+    section: ClassVar[str]
     frame_terms: ClassVar[str] = (
         r"景别|机位|构图|镜头方向|主光方向|光线方向|仰拍|俯拍|低角度|低机位|平视|"
         r"远景|中景|近景|特写|前景|后景|竖幅|横幅|侧脸|剪影辨识|"
@@ -885,13 +886,17 @@ class ComicPromptContext(BaseModel):
     def validate_scope(self, info: ValidationInfo) -> ComicPromptContext:
         values = self.model_dump()
         if (not any(value.strip() for value in values.values())
-                and not (info.context or {}).get("semantic_scope")):
+                and not (info.context or {}).get("semantic_scope")
+                and not all((info.context or {}).get("preserved_scope", {}).get(
+                    f"{self.section}.{name}") == value for name, value in values.items())):
             raise ValueError("Context 不能全部为空")
         for name, value in values.items():
             if "\n" in value or "\r" in value:
                 raise ValueError(f"{name} 必须是单项描述，不能夹入其他字段")
             if (not (info.context or {}).get("semantic_scope")
-                    and not isinstance(self, ShotPromptContext) and self.shot_field(value)):
+                    and not isinstance(self, ShotPromptContext) and self.shot_field(value)
+                    and (info.context or {}).get("preserved_scope", {}).get(
+                        f"{self.section}.{name}") != value):
                 raise ValueError(f"{name} 包含镜头信息，请移入 Shot Context")
         return self
 
@@ -902,7 +907,8 @@ class ComicPromptContext(BaseModel):
         )
 
     @classmethod
-    def from_text(cls, text: str, *, semantic_scope: bool = False) -> ComicPromptContext:
+    def from_text(cls, text: str, *, semantic_scope: bool = False,
+                  preserved_scope: dict[str, str] | None = None) -> ComicPromptContext:
         names = {label: name for name, label in cls.labels.items()}
         values = {}
         for line in text.splitlines():
@@ -910,12 +916,14 @@ class ComicPromptContext(BaseModel):
             if not separator or label not in names or names[label] in values:
                 raise ValueError(f"{cls.__name__} 字段标题不合法或重复")
             values[names[label]] = value.strip()
-        return cls.model_validate(values, context={"semantic_scope": semantic_scope})
+        return cls.model_validate(values, context={"semantic_scope": semantic_scope,
+                                                  "preserved_scope": preserved_scope or {}})
 
 
 class CharacterPromptContext(ComicPromptContext):
     """持续角色身份，不含当镜头行为、姿态或摄影。"""
 
+    section = "character_context"
     labels = {"identity": "身份", "appearance": "外貌", "age": "年龄",
               "clothing": "服装", "fixed_features": "固定特征"}
     identity: str = Field(default="", max_length=300, validate_default=True)
@@ -927,11 +935,14 @@ class CharacterPromptContext(ComicPromptContext):
     @field_validator("identity")
     @classmethod
     def require_legacy_identity(cls, value: str, info: ValidationInfo) -> str:
-        if not value.strip() and not (info.context or {}).get("semantic_scope"):
+        if (not value.strip() and not (info.context or {}).get("semantic_scope")
+                and (info.context or {}).get("preserved_scope", {}).get(
+                    "character_context.identity") != value):
             raise ValueError("身份不能为空")
         return value.strip()
 
 class WorldPromptContext(ComicPromptContext):
+    section = "world_context"
     labels = {"location": "地点", "time": "时间", "world_setting": "世界观",
               "environment": "环境"}
     location: str = Field(default="", max_length=600)
@@ -941,6 +952,7 @@ class WorldPromptContext(ComicPromptContext):
 
 
 class StylePromptContext(ComicPromptContext):
+    section = "style_context"
     labels = {"art_style": "艺术风格", "photographic_style": "摄影风格",
               "color": "色彩", "materials": "材质"}
     art_style: str = Field(default="", max_length=600)
@@ -950,6 +962,7 @@ class StylePromptContext(ComicPromptContext):
 
 
 class ShotPromptContext(ComicPromptContext):
+    section = "shot_context"
     labels = {"action": "动作", "pose": "姿态", "composition": "构图", "camera": "镜头",
               "lighting_changes": "光影变化", "literal_text": "指定文字"}
     action: str = Field(default="", max_length=600)
@@ -978,10 +991,12 @@ class ComicPromptContexts(BaseModel):
 
     @classmethod
     def from_sections(cls, sections: dict[str, str], *,
-                      semantic_scope: bool = False) -> ComicPromptContexts:
+                      semantic_scope: bool = False,
+                      preserved_scope: dict[str, str] | None = None) -> ComicPromptContexts:
         return cls.model_validate({name: cls.model_fields[name].annotation.from_text(
-            text, semantic_scope=semantic_scope).model_dump() for name, text in sections.items()},
-            context={"semantic_scope": semantic_scope})
+            text, semantic_scope=semantic_scope, preserved_scope=preserved_scope).model_dump()
+            for name, text in sections.items()}, context={"semantic_scope": semantic_scope,
+                                                       "preserved_scope": preserved_scope or {}})
 
     def sections(self) -> dict[str, str]:
         return {name: getattr(self, name).render() for name in ComicPromptContexts.model_fields}
@@ -995,6 +1010,7 @@ class ComicPromptDraft(BaseModel):
     director_summary: BriefText
     positive_prompt: BriefText
     negative_prompt: str = Field(default="", max_length=4000)
+    execution_prompt: str = Field(default="", max_length=16000)
     context_version: Literal["image-bibles-1"] | None = None
     character_context: str = Field(default="", max_length=2000)
     world_context: str = Field(default="", max_length=2000)
@@ -1017,6 +1033,7 @@ class ImageContinuityChange(BaseModel):
         for leaf in body.annotation.model_fields
     ]})
     quote: str = Field(min_length=1, max_length=1000)
+    element_ids: list[str] = Field(default_factory=list, max_length=128)
 
     @field_validator("quote")
     @classmethod
@@ -1035,12 +1052,33 @@ class ImageContinuityChange(BaseModel):
         return value
 
 
+class VisualChange(BaseModel):
+    """Object/attribute permission; independent of Prompt section placement."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    entity_id: str | None = Field(default=None, max_length=100)
+    new_object_key: str | None = Field(default=None, max_length=100)
+    target: str = Field(min_length=1, max_length=300)
+    attributes: list[str] = Field(min_length=1, max_length=20)
+    quote: str = Field(min_length=1, max_length=1000)
+    operation: Literal["change", "design", "add"] = "change"
+
+    @field_validator("attributes")
+    @classmethod
+    def attribute_names(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)) or any(
+                not re.fullmatch(r"[a-z][a-z_]{0,49}", item) for item in values):
+            raise ValueError("属性须使用不重复的语义标识")
+        return values
+
+
 class ImageContinuityDecision(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     candidate_id: str | None = None
     changes: list[ImageContinuityChange] = Field(default_factory=list, max_length=30)
     new_context_quote: str | None = Field(default=None, max_length=1000)
     question: str | None = Field(default=None, max_length=300)
+    visual_changes: list[VisualChange] | None = Field(default=None, max_length=128)
+    required_elements: list[str] | None = Field(default=None, max_length=128)
 
     @field_validator("candidate_id")
     @classmethod
@@ -1071,6 +1109,38 @@ class ImageContinuityDecision(BaseModel):
         if self.new_context_quote is not None and self.changes:
             raise ValueError("独立画面不能同时释放已有图片的修改字段")
         return self
+
+
+class VisualElementObservation(BaseModel):
+    """A visible property of one subject; model descriptions are observations, not user facts."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    element_id: str | None = Field(default=None, max_length=100)
+    target: str = Field(min_length=1, max_length=300)
+    field: str = Field(json_schema_extra={"enum": [
+        f"{section}.{leaf}" for section, body in ComicPromptContexts.model_fields.items()
+        for leaf in body.annotation.model_fields
+    ]})
+    observation: str = Field(default="", max_length=1000)
+    visibility: Literal["visible", "occluded", "absent", "uncertain"]
+    comparison: Literal["consistent", "changed", "unknown"] = "unknown"
+    authorization_quote: str | None = Field(default=None, max_length=1000)
+    change_satisfied: bool | None = None
+    entity_id: str | None = Field(default=None, max_length=100)
+    entity_key: str | None = Field(default=None, max_length=100)
+    attribute: str | None = Field(default=None, pattern=r"^[a-z][a-z_]{0,49}$")
+    kind: Literal["subject", "prop", "environment", "style"] | None = None
+
+    @field_validator("field")
+    @classmethod
+    def require_prompt_leaf(cls, value: str) -> str:
+        return ImageContinuityChange.prompt_leaf(value)
+
+
+class VisualContinuityObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    elements: list[VisualElementObservation] = Field(max_length=128)
+    limitations: list[str] = Field(default_factory=list, max_length=20)
+    contract: Literal["visual-elements-1", "visual-elements-2"] = "visual-elements-1"
 
 
 class ComicPromptArtifact(ComicPromptDraft):
@@ -1141,6 +1211,7 @@ class ComicExternalImageRequest(BaseModel):
     conversation_id: BriefItem
     filename: ProjectText
     data_url: str = Field(min_length=1, max_length=7_000_000)
+    generation_task_id: ProjectText | None = None
 
 
 class ImageVersionRef(BaseModel):
@@ -1171,6 +1242,11 @@ class ComicMediaMutation(BaseModel):
     expected_project_version: int = Field(ge=1)
 
 
+class ComicCodexTaskRequest(ComicMediaMutation):
+    expected_prompt_version: int = Field(ge=1)
+    expected_shot_version: int = Field(ge=1)
+
+
 class ComicImageImportRequest(ComicMediaMutation):
     filename: ProjectText
     data_url: str = Field(min_length=1, max_length=7_000_000)
@@ -1191,6 +1267,14 @@ class ComicImageImportRequest(ComicMediaMutation):
 class ComicImageSelectionRequest(ComicMediaMutation):
     version: int = Field(ge=1)
     expected_selection_version: int = Field(ge=0)
+    accepted_visual_changes: list[VisualChange] = Field(default_factory=list, max_length=128)
+
+    @model_serializer(mode="wrap")
+    def legacy_selection_wire(self, handler):
+        value = handler(self)
+        if not self.accepted_visual_changes:
+            value.pop("accepted_visual_changes", None)
+        return value
 
 
 class ReferenceBinding(BaseModel):
@@ -1226,6 +1310,15 @@ class ImageFinding(BaseModel):
     suggested_change: BriefItem
     confidence: float = Field(ge=0, le=1)
     uncertainty: str = Field(default="", max_length=500)
+    category: Literal["clear_deviation", "optional_improvement", "uncertain"] = "uncertain"
+    target: str = Field(default="", max_length=300)
+    attribute: str = Field(default="", max_length=100)
+    evidence: list[BriefItem] = Field(default_factory=list, max_length=8)
+    goal: str = Field(default="", max_length=1000)
+    expected_benefit: str = Field(default="", max_length=1000)
+    preserve: list[BriefItem] = Field(default_factory=list, max_length=20)
+    risk: str = Field(default="", max_length=1000)
+    risk_level: Literal["low", "medium", "high", "unknown"] = "unknown"
     region: list[float] | None = Field(default=None, min_length=4, max_length=4,
         description="按显示方向，以图片左上为原点的归一化 [x1,y1,x2,y2]；"
                     "无法可靠定位或整图建议返回 null，不猜测位置。")
@@ -1239,12 +1332,27 @@ class ImageFinding(BaseModel):
         return self
 
 
+class ImageDetailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    bounds: list[float] = Field(min_length=4, max_length=4)
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("bounds")
+    @classmethod
+    def valid_bounds(cls, value):
+        if not (0 <= value[0] < value[2] <= 1 and 0 <= value[1] < value[3] <= 1):
+            raise ValueError("细节坐标须按图片显示方向归一化")
+        return value
+
+
 class ImageAnalysisOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     summary: BriefItem
     findings: list[ImageFinding] = Field(max_length=50)
     protected_features: list[BriefItem] = Field(max_length=50)
     limitations: list[BriefItem] = Field(max_length=20)
+    recommendation: Literal["retain", "consider_edit", "uncertain"] = "retain"
+    detail_regions: list[ImageDetailRequest] = Field(default_factory=list, max_length=3)
 
     @model_validator(mode="after")
     def unique_findings(self) -> ImageAnalysisOutput:
@@ -1272,10 +1380,12 @@ class ImageComparisonCheck(BaseModel):
 class ImageComparisonOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     summary: BriefItem
-    changes: list[ImageComparisonCheck] = Field(max_length=101)
+    changes: list[ImageComparisonCheck] = Field(max_length=201)
     preservation: list[ImageComparisonCheck] = Field(max_length=100)
     other_observations: list[BriefItem] = Field(max_length=20)
     limitations: list[BriefItem] = Field(max_length=20)
+    new_problems: list[BriefItem] = Field(default_factory=list, max_length=20)
+    recommendation: Literal["retain_before", "consider_after", "uncertain"] = "uncertain"
 
 
 class ComicImageAnalysisRequest(ComicMediaMutation):
@@ -1324,12 +1434,13 @@ class ImageEditScope(BaseModel):
     regions: list[ImageEditRegion] = Field(default_factory=list, max_length=50)
     whole_finding_ids: list[ProjectText] = Field(default_factory=list, max_length=50)
     instruction_target: ImageInstructionTarget | None = None
+    region_semantics: Literal["strict", "locator"] = "strict"
 
     @model_serializer(mode="wrap")
     def serialize_scope(self, handler: Any) -> dict:
         """Unset additions do not change legacy request or confirmation fingerprints."""
         result = handler(self)
-        for name in ("whole_finding_ids", "instruction_target"):
+        for name in ("whole_finding_ids", "instruction_target", "region_semantics"):
             if name not in self.model_fields_set:
                 result.pop(name)
         return result
@@ -1354,12 +1465,59 @@ class ImageEditScope(BaseModel):
         return self
 
 
+class ImageEditPlanItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    item_id: ProjectText
+    requirement_ids: list[ProjectText] = Field(min_length=1, max_length=101)
+    object_id: ProjectText
+    target: BriefItem
+    attribute: ProjectText
+    desired_state: BriefItem
+    operation: Literal["modify", "preserve"]
+    preserve: list[BriefItem] = Field(default_factory=list, max_length=20)
+    edit_bounds: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    scope_reason: str = Field(default="", max_length=1000)
+    within_scope_alternative: str = Field(default="", max_length=1000)
+
+    @field_validator("edit_bounds")
+    @classmethod
+    def normalized_bounds(cls, value):
+        return ImageDetailRequest.valid_bounds(value) if value is not None else None
+
+
+class ImageEditPlanIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    requirement_ids: list[ProjectText] = Field(min_length=1, max_length=101)
+    reason: BriefItem
+
+
+class ImageEditPlanOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    items: list[ImageEditPlanItem] = Field(max_length=101)
+    questions: list[ImageEditPlanIssue] = Field(default_factory=list, max_length=20)
+
+
+class ImagePlanConfirmation(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    run_id: ProjectText
+    fingerprint: ProjectText
+    accepted_item_ids: list[ProjectText] = Field(default_factory=list, max_length=101)
+
+
 class ComicImageEditRequest(ComicImageAnalysisRequest):
     analysis_artifact_id: ProjectText | None = None
     selected_finding_ids: list[ProjectText] = Field(default_factory=list, max_length=50)
     instruction: str = Field(default="", max_length=4000)
     edit_scope: ImageEditScope | None = None
     round_id: ProjectText | None = None
+    plan_confirmation: ImagePlanConfirmation | None = None
+
+    @model_serializer(mode="wrap")
+    def legacy_edit_wire(self, handler):
+        result = handler(self)
+        if "plan_confirmation" not in self.model_fields_set:
+            result.pop("plan_confirmation", None)
+        return result
 
     @model_validator(mode="after")
     def explicit_changes(self) -> ComicImageEditRequest:
@@ -1470,6 +1628,7 @@ class ComicStoryGenerateRequest(ComicStoryMutation):
     instruction: str = Field(default="", max_length=4000)
     images: list[ImageVersionRef] = Field(min_length=1, max_length=8)
     draft: ComicStoryDraft | None = None
+    candidate_run_id: ProjectText | None = None
 
     @model_validator(mode="after")
     def unique_images(self) -> ComicStoryGenerateRequest:
@@ -1505,6 +1664,16 @@ STORY_FINDING_CODES = frozenset({
 })
 
 
+class ComicStoryTimingBeat(BaseModel):
+    """公开执行节拍的时间估计，引用当前字段，不是模型私有推理。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    field: Literal["action", "transition"]
+    evidence: str = Field(min_length=1, max_length=1000,
+        description="本镜 field 指定的当前 action 或 transition 内逐字原文；必填，不得概括")
+    seconds: float = Field(ge=0, le=60, allow_inf_nan=False)
+
+
 class ComicStoryFinding(BaseModel):
     """核验发现：必须能指到具体镜头与字段，并给出可执行的修改建议。"""
 
@@ -1516,9 +1685,12 @@ class ComicStoryFinding(BaseModel):
         "transition", "image",
     ]
     message: str = Field(min_length=1, max_length=2000)
-    evidence: str = Field(min_length=1, max_length=4000)
+    evidence: str = Field(default="", max_length=4000)
+    evidence_id: str | None = Field(default=None, min_length=1, max_length=200)
+    related_fields: list[str] = Field(default_factory=list, max_length=20)
     code: str = Field(default="other", max_length=64)
     suggestion: str = Field(default="", max_length=2000)
+    timing_plan: list[ComicStoryTimingBeat] = Field(default_factory=list, max_length=20)
 
     @field_validator("code", mode="before")
     @classmethod
@@ -1531,3 +1703,23 @@ class ComicStoryReviewOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     status: Literal["pass", "warning", "needs_revision"]
     findings: list[ComicStoryFinding] = Field(default_factory=list, max_length=100)
+
+
+class ComicStoryFindingAudit(BaseModel):
+    """核对现稿及固定来源的公开反证，不能凭一句 pass 撤销真实问题。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    finding: int = Field(ge=1, le=100)
+    verdict: Literal["retain", "stale_current_quote", "already_satisfied"]
+    field_id: str = Field(default="", max_length=200)
+    claimed_quote: str = Field(default="", max_length=1000)
+    current_quote: str = Field(default="", max_length=4000)
+    supporting_quotes: dict[str, Annotated[str, Field(min_length=1, max_length=4000)]] = Field(
+        default_factory=dict, max_length=20)
+    corrected_suggestion: str = Field(default="", max_length=2000)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class ComicStoryFindingAudits(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    checks: list[ComicStoryFindingAudit] = Field(max_length=100)

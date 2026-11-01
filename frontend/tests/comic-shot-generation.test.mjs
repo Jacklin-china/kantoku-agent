@@ -10,6 +10,7 @@ import { renderToString } from '@vue/server-renderer'
 const compile = code => ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
 const moduleUrl = code => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 const { shotGeneration, externalShotPrompt, finalImagePrompt, promptVersionDiff, imagePromptReferences, readPromptReference, copyPromptDelivery } = await import(moduleUrl(compile(readFileSync(new URL('../src/domains/comic/shotGeneration.ts', import.meta.url), 'utf8'))))
+const { directorProductionSteps } = await import(moduleUrl(compile(readFileSync(new URL('../src/domains/comic/directorPresentation.ts', import.meta.url), 'utf8'))))
 const component = readFileSync(new URL('../src/components/ComicShotGeneration.vue', import.meta.url), 'utf8')
 const importerCode = compile(compileScript(parse(readFileSync(new URL('../src/components/comic/ComicImageImport.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'image-import', inlineTemplate: true }).content)
@@ -32,6 +33,17 @@ const completePrompt = overrides => ({ artifact_id: 'prompt-artifact', version: 
   shot_version: 2, director_spec_version: 3, context_version: 'image-bibles-1', character_context: '身份：人物',
   world_context: '地点：山巅', style_context: '艺术风格：动画', shot_context: '动作：静立',
   positive_prompt: '人物静立山巅', negative_prompt: '文字水印', ...overrides })
+
+test('current execution text wins over audit text and local delivery remains unverified', async () => {
+  const prompt = completePrompt({ execution_prompt: '当前镜头：人物转身，保持原面容。禁止文字水印', final_prompt: '旧版长正文' })
+  assert.equal(finalImagePrompt(prompt), prompt.execution_prompt)
+  const html = await renderToString(createSSRApp(ShotView, { run: null, disabled: false,
+    imageMode: 'external', externalPrompt: prompt }))
+  assert.match(html, /复制 Codex 工作任务/)
+  assert.match(html, /待实际出图验收/)
+  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  assert.doesNotMatch(workspace, /粘贴到同机 Codex 即可，无需逐张附图/)
+})
 
 test('only the generating Shot renders a loader; every navigation page remains free of image loaders', async () => {
   const runs = [run('run1', 'shot1'), run('run2', 'shot2', 'completed', 'other-project')]
@@ -101,7 +113,7 @@ test('the workflow does not report a stale project prompt ready for the current 
   const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const selector = workspace.slice(workspace.indexOf('function externalPromptForShot('), workspace.indexOf('const comparison = computed'))
   const steps = workspace.slice(workspace.indexOf('const productionSteps = computed'), workspace.indexOf('const activeRun = computed'))
-  const state = { computed, externalShotPrompt, spec: ref({ version: 3 }), workExecutions: ref([]),
+  const state = { computed, externalShotPrompt, directorProductionSteps, spec: ref({ version: 3 }), workExecutions: ref([]),
     project: ref({ project: { project_id: 'project' }, creative_brief: { version: 2 } }),
     shots: ref([{ shot_id: 'shot1', storyboard_id: 'board', version: 2 }]), selectedShot: ref('shot1'),
     boards: ref([{ storyboard_id: 'board', version: 1, director_spec_version: 3 }]),
@@ -338,6 +350,56 @@ function workspaceHandler(name, nextName, state) {
   return new Function('state', `const {${Object.keys(state).filter(key => key !== name).join(',')}}=state; const conversationEpoch=1, workSelectionEpoch=1; let disposed=false; ${body}; return ${name}`)(state)
 }
 
+test('Codex handoff copies one saved task and retains it when clipboard access fails', async () => {
+  const prompt = completePrompt()
+  for (const rejects of [false, true]) {
+    const requests = [], copied = []
+    const state = compileState({ copyingPrompt: ref(''), copiedPrompt: ref(''),
+      promptCopyFeedback: ref(''), promptCopyError: ref(''),
+      navigator: { clipboard: { async writeText(text) {
+        copied.push(text)
+        if (rejects) throw new Error('Clipboard denied')
+      } } },
+      async exportComicCodexTask(id, body) {
+        requests.push({ id, body })
+        return { task_id: 'task', handoff_text: 'Read the saved local task.json', reference_count: 2,
+          materials_directory: 'C:/work-materials' }
+      } })
+    const copy = workspaceHandler('copyCodexTask', 'downloadPromptReference', state)
+    await copy(prompt)
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].body.expected_prompt_version, 1)
+    assert.equal(requests[0].body.expected_shot_version, 2)
+    assert.equal(requests[0].body.conversation_id, 'conversation')
+    assert.deepEqual(copied, ['Read the saved local task.json'])
+    assert.equal(state.copyingPrompt.value, '')
+    if (rejects) {
+      assert.equal(state.promptCopyFeedback.value, 'Read the saved local task.json')
+      assert.match(state.error.value, /Clipboard denied/)
+    } else {
+      assert.match(state.promptCopyFeedback.value, /2 张参考图/)
+      assert.match(state.promptCopyFeedback.value, /Codex 本机工作模式.*C:\/work-materials/)
+      assert.match(state.promptCopyFeedback.value, /实际出图尚待验收/)
+      assert.equal(state.error.value, '')
+    }
+  }
+})
+
+test('late Codex task exports cannot write the clipboard or feedback after navigation', async () => {
+  let release
+  const state = compileState({ copyingPrompt: ref(''), copiedPrompt: ref(''),
+    promptCopyFeedback: ref(''), promptCopyError: ref(''),
+    navigator: { clipboard: { async writeText() { assert.fail('A foreign task must not copy') } } },
+    exportComicCodexTask: () => new Promise(resolve => { release = resolve }) })
+  const copy = workspaceHandler('copyCodexTask', 'downloadPromptReference', state)
+  const pending = copy(completePrompt())
+  state.project.value = { project: { project_id: 'another-project', current_version: 1 } }
+  release({ handoff_text: 'old task', reference_count: 1 })
+  await pending
+  assert.equal(state.promptCopyFeedback.value, '')
+  assert.equal(state.copiedPrompt.value, '')
+})
+
 test('a compile failure stays in its shot, preserves the saved prompt, and only an explicit retry submits again', async () => {
   const saved = completePrompt()
   let calls = 0
@@ -355,6 +417,26 @@ test('a compile failure stays in its shot, preserves the saved prompt, and only 
   assert.equal(state.preparingShot.value, '')
   await prepare()
   assert.equal(calls, 2)
+})
+
+test('saved prompt and version history are available while workspace refresh is still pending', async () => {
+  let releaseRefresh
+  const saved = completePrompt({ artifact_id: 'parallel-prompt' })
+  let historyLoaded = false
+  const state = compileState({
+    async compileComicPrompt() { return saved },
+    async refresh() { return new Promise(resolve => { releaseRefresh = resolve }) },
+    async loadPrompts() { historyLoaded = true },
+  })
+  const pending = workspaceHandler('compilePrompt', 'viewImagePrompt', state)()
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(state.promptPreview.value, saved)
+  assert.equal(historyLoaded, true)
+  assert.equal(state.compiling.value, true)
+  releaseRefresh()
+  await pending
+  assert.equal(state.compiling.value, false)
 })
 
 test('a saved compile result survives refresh failure and does not open over another selected shot', async () => {
@@ -542,7 +624,8 @@ test('prompt API cancellation is distinct from a successfully empty list', async
   const boards = service.slice(service.indexOf('export async function getComicStoryboards('), service.indexOf('export function createComicStoryboard('))
   const shots = service.slice(service.indexOf('export async function getComicShots('), service.indexOf('export async function getDirectorVersions('))
   for (const result of [null, { versions: [], prompts: [], storyboards: [], shots: [] }]) {
-    const api = new Function('coreGet', `${compile((first + second + boards + shots).replaceAll('export ', ''))}; return { getComicPromptVersions, getProjectPrompts, getComicStoryboards, getComicShots }`)(async () => result)
+    // 展示型读取走 cachedGet（短时缓存版本），沙箱里两者等价注入同一份桩数据。
+    const api = new Function('coreGet', 'cachedGet', `${compile((first + second + boards + shots).replaceAll('export ', ''))}; return { getComicPromptVersions, getProjectPrompts, getComicStoryboards, getComicShots }`)(async () => result, async () => result)
     assert.deepEqual(await api.getComicPromptVersions('shot1'), result === null ? null : [])
     assert.deepEqual(await api.getProjectPrompts('project'), result === null ? null : [])
     assert.deepEqual(await api.getComicStoryboards('project'), result === null ? null : [])

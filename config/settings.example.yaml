@@ -30,6 +30,9 @@ llm:
   vision_extra_body: {thinking: {type: disabled}}
   vision_max_tokens: 4096      # 图片观察和两图检查返回结构化报告；限制单次输出
   vision_max_image_bytes: 10485760
+  vision_timeout_s: 60         # 视觉请求独立等待时间；不重试结果未知的调用
+  vision_input_max_side: 2048  # 传输副本最长边，原图和归一化坐标保持
+  vision_input_max_bytes: 1048576 # 单图传输副本上限；原始导入文件不改写
 
   # ── 降级位：跨供应商才是真降级（08 风险登记册 R4）──────────────────
   fallback_base_url: https://open.bigmodel.cn/api/paas/v4
@@ -133,14 +136,26 @@ runtime:
   context_recall_tokens: 6000  # 有界历史读取与版本来源
 
 video:
-  enabled: false               # 默认关闭；本轮仅提供显式 Mock Provider
+  enabled: false               # 默认关闭；开通小云雀并完成配置后才启用
   provider: mock
   model: mock-video-v1
   timeout_s: 30
-  retry: 1                     # Provider 网络层重试，不与 Workflow retry 叠乘
+  retry: 1                     # 历史兼容字段；小云雀提交与查询不隐式重试
   estimated_fen: 1
   max_fen: 1
   output_dir: artifacts/videos
+  # 小云雀：provider=xiaoyunque，model=pippit_iv2v_v20_cvtob_with_vinput
+  # 先按正式服务价格配置保守 estimated_fen / max_fen，再确认 pricing_confirmed。
+  pricing_confirmed: false
+  access_key_env: VOLC_ACCESS_KEY
+  secret_key_env: VOLC_SECRET_KEY
+  authentication: access_key  # 可选 api_key；密钥仅从 api_key_env 指定的环境变量读取
+  api_key_env: VOLC_VISUAL_API_KEY
+  tos_bucket: ""              # 可选：对象存储桶；自动上传参考图片并生成短期私有链接
+  tos_region: cn-beijing      # 存储桶所在地域，必须与实际地域一致
+  # 原图 SHA-256 → 用户自有火山存储的 HTTPS 地址；提交前核验公网字节与原图一致。
+  # 本模块不自动公开本地图片，不开放本地文件服务器；不得填写其他图片的 URL。
+  reference_urls: {}
 
 vtuber:
   base_url: ws://localhost:12393  # Open-LLM-VTuber 后端地址，W10 可选

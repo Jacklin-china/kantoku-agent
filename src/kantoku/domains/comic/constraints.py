@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -19,6 +20,35 @@ from .models import ComicPromptContexts, CreativeConstraint
 ModelCall = Callable[[list[dict[str, str]]], str]
 CONSTRAINT_CONTRACT = "creative-constraints-2"
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class EditCorrectionBudget:
+    """一次改图请求共享一次内容纠正，不能在各阶段重新分配额度。"""
+
+    used_at: str | None = None
+
+    def claim(self, stage: str, error: ToolError) -> bool:
+        if self.used_at is not None or not correctable_edit_error(error):
+            return False
+        self.used_at = stage
+        return True
+
+    def receipt(self) -> dict:
+        return {"used": self.used_at is not None, "stage": self.used_at}
+
+
+def correctable_edit_error(error: ToolError) -> bool:
+    """只纠正已经收到的公开结果；传输、容量、真实歧义不重发。"""
+    if getattr(error, "edit_status", None) == "needs_clarification":
+        return False
+    detail = error.detail or ""
+    return detail == "module=prompt.compiler mode=edit" or any(
+        detail == "module=comic.constraints stage=" + stage
+        or detail.startswith("module=comic.constraints stage=" + stage + " ")
+        for stage in ("normalize", "normalize_review", "source", "literal_source",
+                      "source_evidence_path", "coverage", "prompt_review", "evidence_path",
+                      "exact", "edit_coverage", "edit_resolution"))
 
 
 class ConstraintSource(BaseModel):
@@ -117,6 +147,36 @@ def normalize_constraints(
     previous_evidence: list[dict] | None = None,
     edit_basis: dict | None = None,
     review_model_call: ModelCall | None = None,
+    correction: EditCorrectionBudget | None = None,
+) -> tuple[list[CreativeConstraint], dict]:
+    """复用原提取/独立审核；图像编辑只允许共享额度内的一次纠正。"""
+    arguments = dict(previous=previous, on_diagnostics=on_diagnostics,
+        previous_evidence=previous_evidence, edit_basis=edit_basis,
+        review_model_call=review_model_call)
+    failure = None
+    try:
+        return _normalize_constraints(facts, model_call=model_call, **arguments)
+    except ToolError as error:
+        if edit_basis is None or correction is None or not correction.claim("normalize", error):
+            raise
+        # 只交回固定诊断；非法响应和未核验候选不进入纠正请求。
+        failure = {"stage": "requirement_extraction", "detail": error.detail,
+                   "action": "重新忠实提取全部原文，保持各项授权对象与范围；不要补造要求"}
+
+    def corrected_call(messages):
+        messages = [dict(item) for item in messages]
+        messages[0]["content"] += "\n本次是唯一一次提取纠正：" + json.dumps(
+            failure, ensure_ascii=False)
+        return model_call(messages)
+
+    return _normalize_constraints(facts, model_call=corrected_call, **arguments)
+
+
+def _normalize_constraints(
+    facts: list[MemoryFact | ConstraintSource], *, previous: list[CreativeConstraint],
+    model_call: ModelCall, on_diagnostics: Callable[[dict], None] | None = None,
+    previous_evidence: list[dict] | None = None, edit_basis: dict | None = None,
+    review_model_call: ModelCall | None = None,
 ) -> tuple[list[CreativeConstraint], dict]:
     """只接受已核验的当前任务用户原文；同来源同原文复用归一化结果。"""
     facts = [fact for fact in facts if fact.origin == "user_request"]
@@ -160,6 +220,11 @@ def normalize_constraints(
     payload = [
         {"quote": fact.value, "source_ref": fact.source.model_dump(mode="json")} for fact in pending
     ]
+    if edit_basis is not None:
+        for source in payload:
+            source["edit_targets"] = [item for item in edit_basis["authorized_requirements"]
+                if item["source"]["kind"] in {"manual_region", "manual_supplement"}
+                and source["quote"] == item["requirement"]]
     proposals = _parse(
         model_call(
             [
@@ -180,6 +245,9 @@ def normalize_constraints(
                     "source_quote 可以包含指定说明，literal_value 必须是其中的连续原文。"
                     "semantic 的 literal_value=null，requirement 可忠实改写或留 null 沿用引用。"
                     "普通要求 verification=semantic。纠正后的当前事实优先，不恢复已撤回内容。"
+                    + ("edit_targets 是当前原文实际绑定的对象范围；代词结合该绑定理解，"
+                       "不要因框内要求被提取为宽泛 target 而扩大成整图要求。"
+                       if edit_basis is not None else "") +
                     "没有视觉要求可返回空列表。只返回 JSON："
                     + json.dumps(ConstraintProposals.model_json_schema(), ensure_ascii=False),
                 },
@@ -265,6 +333,8 @@ def normalize_constraints(
                     + ("同时在编译前确定 edit_basis 中的新旧要求关系。"
                        "authorized_requirements 是本轮唯一改变授权，"
                        "target/regions 是用户明确的范围。"
+                       "存在 unified_plan 时使用已确认的实际范围，不用 locator_scope 的旧范围"
+                       "覆盖它。operation=preserve 只保护原状，不产生修改或范围扩大；"
                        "区域原文中的‘这个/这里/它’指向该要求 target.region_ids 绑定的选区，"
                        "结合实际原图与归一化坐标识别对象，不因代词没有再次命名就判范围缺失。"
                        "不能将框内主体替换误解为全图主体替换；框内有多个可能对象、图像不足"
@@ -278,6 +348,9 @@ def normalize_constraints(
                        "指出对应需求并返回 scope_valid=false；不要默认扩大范围。"
                        "inherited_constraint_replacements 是该版本已确认的目标，不能恢复旧目标。"
                        "scope_issues 只关联已存在的 authorized_requirements 编号。"
+                       "仅真实对象歧义或用户要求彼此互斥才写 scope_issues，reason 应说明"
+                       "需要用户选择什么。提取遗漏、证据编号或候选范围错误属于系统提取"
+                       "问题，在 findings 中指出，不把它们转成要求用户改写原文的 scope_issues。"
                        "没有替代关系必须明确返回 constraint_replacements=[]。"
                        if edit_basis is not None else "") + "只返回 JSON："
                     + json.dumps(review_schema, ensure_ascii=False),
@@ -319,7 +392,9 @@ def normalize_constraints(
     if isinstance(review, ImageEditExtractionReview):
         original = [CreativeConstraint.model_validate(item)
                     for item in edit_basis["historical_constraints"]]
-        issues = _edit_replacement_issues(review.constraint_replacements, original, edit_basis)
+        replacement_issues = _edit_replacement_issues(
+            review.constraint_replacements, original, edit_basis)
+        issues = list(replacement_issues)
         known = {item["requirement_id"] for item in edit_basis["authorized_requirements"]}
         issues += [{"code": "scope_invalid" if set(item.requirement_ids) <= known
                     else "protocol_invalid", **item.model_dump(mode="json")}
@@ -328,6 +403,10 @@ def normalize_constraints(
             error = ToolError("本轮修改对象或替代范围未能确定，请查看对应要求",
                               detail="module=comic.constraints stage=edit_resolution")
             error.review_issues = issues
+            if not replacement_issues and review.scope_issues and all(
+                    item.requirement_ids and set(item.requirement_ids) <= known
+                    for item in review.scope_issues):
+                error.edit_status = "needs_clarification"
             raise error
     _require_review(review, created, {item.constraint_id: item.source_quote for item in created})
     result = {item.constraint_id: item for item in [*retained, *created]}
@@ -564,6 +643,12 @@ def verify_prompt_constraints(
                            "选中发现项和用户本次指令授权的内容，其他观察不能自动变成修改；"
                            "要求保留未授权改变的特征。与有效约束冲突时不能放行。"
                            "若有 edit_scope，核对整图/局部模式、每个区域的坐标和修改要求；"
+                           "如 edit_context 有 unified_plan，locator_scope 只是定位依据；"
+                           "实际授权按 edit_scope 与每项 authorized_requirements 的目标范围。"
+                           "已确认的人工整图目标也有整图授权，不受 locator_scope 中旧定位框或"
+                           "instruction_target 限制。operation=preserve 只保护原状，按原定位"
+                           "依据识别，不产生编辑范围或要求扩大修改。"
+                           "人工覆盖的 AI 项不再执行，同属性新目标不能在负向被旧状态禁止。"
                            "不能把局部修改扩展到区域外。"
                            "mixed 模式逐条核对：whole_finding_ids 对应建议才有整图授权；"
                            "局部建议、各区要求始终限制在关联区域。user_instruction 必须遵循"

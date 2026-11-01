@@ -18,7 +18,7 @@ defineProps<{
   copying?: boolean
   copyFeedback?: string
 }>()
-const emit = defineEmits<{ retry: []; resume: []; editPrompt: []; changeModel: []; viewPrompt: []; copyPrompt: []; copyText: []; upload: [file: File]; preview: [media: { url: string; filename: string }] }>()
+const emit = defineEmits<{ retry: []; resume: []; editPrompt: []; changeModel: []; viewPrompt: []; copyPrompt: []; copyText: []; copyCodexTask: []; upload: [file: File]; preview: [media: { url: string; filename: string }] }>()
 </script>
 <template>
   <div v-if="imageMode === 'external'" class="shot-generation" :data-media-status="externalImageUrl ? 'image_uploaded' : preparing ? 'preparing_prompt' : externalPrompt ? 'awaiting_external_image' : 'prompt_pending'">
@@ -28,6 +28,7 @@ const emit = defineEmits<{ retry: []; resume: []; editPrompt: []; changeModel: [
       <p role="status">{{ uploading ? '正在导入外部图片…' : externalImageUrl ? '外部图片已导入资产库' : '等待外部图片' }}</p>
       <div class="draft-actions">
         <button class="ui-button sm" @click="emit('viewPrompt')">查看完整 Prompt</button>
+        <button class="ui-button sm" title="本机资料交付，待实际出图验收" :disabled="copying" @click="emit('copyCodexTask')">复制 Codex 工作任务</button>
         <button class="ui-button sm" :disabled="copying" @click="emit('copyPrompt')">{{ Array.isArray(externalPrompt.reference_attachments) && externalPrompt.reference_attachments.length ? '复制图文' : '复制生图 Prompt' }}</button>
         <template v-if="Array.isArray(externalPrompt.reference_attachments) && externalPrompt.reference_attachments.length"><button class="ui-button quiet sm" :disabled="copying" @click="emit('copyText')">仅复制文字</button><button class="ui-button quiet sm" @click="emit('viewPrompt')">查看参考图</button></template>
         <button class="ui-button quiet sm" :disabled="disabled || uploading" @click="emit('editPrompt')">修改 Prompt</button>

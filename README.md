@@ -38,7 +38,7 @@ Conversation → Unified Agent Orchestrator → Action / Plan
 ```
 src/kantoku/
 ├── core/          Run / Workflow / Node / Artifact / Memory / Runtime Event / 文件台账
-├── domains/       comic（漫剧）、commerce（商品图）
+├── domains/       comic（漫剧）
 ├── capabilities/  image / video / creative / web_search —— 跨域共享的唯一入口
 ├── adapters/      外部平台协议适配
 ├── shells/        web_studio（API + SSE + 工作台）、cli、image_cli、qc_cli
@@ -58,6 +58,26 @@ docs/              工程、产品、架构文档
 
 需要 Python 3.11–3.12、[uv](https://docs.astral.sh/uv/)、Node 18+。
 
+前后端分别开发：
+
+- **PyCharm 后端**：打开项目根目录 `kantoku-agent/`，将 Python 解释器设为项目的 `.venv`，运行共享配置 `Kantoku Backend`，或在根目录终端执行 `python -m kantoku serve`。后端源码位于 `src/kantoku/`，项目根目录还提供后端需要的 `config/`、`skills/` 和数据库配置。
+- **VS Code 前端**：单独打开 `frontend/` 文件夹，在其终端执行 `npm install`（首次）和 `npm run dev`。开发页面为 `http://127.0.0.1:5173`，默认连接后端 `http://127.0.0.1:8000`；请同时启动后端。
+
+`frontend/src/` 是唯一前端源码。`src/kantoku/shells/web/` 是同一份前端构建出的静态页面，供后端单独启动时使用，不在其中手工修改前端。运行数据和历史记录不因开发工具分开而移动。
+
+### 本机账号
+
+首次打开工作台可以创建用户名和密码，也可以选择暂时继续使用原有本机工作台。
+创建账号后，该设备原有项目和历史由这个账号使用；本阶段只支持一个本机账号，
+不提供手机号、微信、邮箱登录或多人数据隔离。用户名为 3–32 位中文、字母、数字、
+下划线或短横线，密码为 8–128 个字符。
+
+成功登录后，本机浏览器会保留最长 30 天的登录状态；正常重启后端不会要求重新登录。
+选择侧栏“退出登录”、清除浏览器数据或登录状态过期后，需要再次输入用户名和密码。
+目前没有找回密码功能，请妥善保存密码；登录状态只在本机浏览器有效，不是联网账号。
+注册前系统会对原数据库执行一致性备份，不移动或删除现有项目、历史及素材。
+本机服务器仍只监听回环地址；此功能不应当作公网部署或多人访问的安全方案。
+
 ```bash
 # 后端：API + SSE + 生产工作台
 uv sync
@@ -71,6 +91,11 @@ cd frontend
 npm install
 npm run dev                               # http://127.0.0.1:5173
 ```
+
+后端默认使用 FastAPI。启动后可在本机打开 `http://127.0.0.1:8000/docs` 查看和测试接口；
+创建账号后需先在工作台登录。测试页面使用本地资源及原有会话保护，写入和生成接口会实际执行，
+应使用隔离测试环境验证。需要临时回退到原 HTTP 服务时，可执行
+`python -m kantoku serve --legacy-http`；关闭旧服务后才能用同一端口重新启动。
 
 配置与密钥（不要提交）：
 
@@ -111,7 +136,7 @@ cd frontend && npx vue-tsc --noEmit        # 类型检查
 
 - **供应商账单未验收**：成本台账在供应商不返回金额时保留 `unknown` 并等待对账，
   不会把估算冒充实扣；预算上限只覆盖已接入的生图账目，不含文本、配音与视频。
-- **Commerce 领域是 Mock 链路**：不代表真实电商平台对接完成。
+- **Commerce 功能已移除**：不能创建或继续执行电商任务；原始数据保留，不再在界面展示。
 - **视频能力只有 Mock Provider**：返回的是 `mock://video/...` 逻辑产物，没有真实渲染、
   没有真实计费；接入真实视频服务前不得把结果称为成片。
 - **画面质量需人工验收**：结构化校验与 Prompt 锚点校验通过，不等于成片可用。

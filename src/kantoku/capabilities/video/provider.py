@@ -10,6 +10,10 @@ from kantoku.config import ToolError
 from .models import VideoGenerationRequest, VideoGenerationResult
 
 
+class VideoPreparationError(ToolError):
+    """准备素材失败，供应商视频请求尚未发送。"""
+
+
 class VideoProvider(Protocol):
     """未来真实视频供应商必须实现的端口。"""
 

@@ -1,0 +1,2211 @@
+/* ==========================================================================
+   Kantoku · Mario Pixel Kit（关卡工作台 v2）
+   ---------------------------------------------------------------------------
+   这一层在 main.ts 里最后加载，取代此前三套互相打架的皮肤：
+     style.css 的旧浅色体系 → pixel.css 的 #app !important 强刷 → 页面 scoped 覆盖
+   设计原则（对应「不拥挤 + 核心可读 + 主题贴合 + 有动效」四点要求）：
+     1. 边宽只有三档：容器 4 / 控件 3 / 分隔 2。投影只有三档：浮层 6 / 卡 4 / 控件 3。
+     2. 一个页面只允许一层「纸」：舞台是深色关卡底，内容全部落在纸卡上，不再层层套框。
+     3. 所有颜色走 tokens，本文件不出现新的十六进制色值。
+     4. 动效一律用 steps() 制造帧感；按下 = 下沉，悬停 = 抬起，选中 = 弹跳一次。
+   ========================================================================== */
+
+/* ---------- 像素字：Zpix（12px 网格，自托管，共 966KB） ----------
+   只在 12 的整数倍上使用（12 / 24 / 36），否则像素格会落在半像素上发虚。
+   这个字体只有一个字重，任何 font-weight 合成粗体都会把网格揉烂，
+   所以凡是用到它的地方必须显式写 font-weight: 400。 */
+@font-face {
+  font-family: 'Zpix';
+  src: url('../assets/fonts/zpix.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* 像素字族：缺失字形会逐字回落到界面字体，不会整段变成等宽乱码 */
+  --mk-font-pixel: 'Zpix', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 弱化文字：占位符、禁用态，纸底上仍保持可辨认 */
+  --mk-text-dim: #8a7f6a;
+  /* 正文保留可读字体：长段中文用像素字会牺牲「核心内容看得清」 */
+  --mk-font-read: var(--font-ui);
+  /* 边宽阶梯 */
+  --mk-bw-panel: 4px;
+  --mk-bw-control: 3px;
+  --mk-bw-rule: 2px;
+  /* 投影阶梯（无模糊） */
+  --mk-depth-float: 6px;
+  --mk-depth-card: 4px;
+  --mk-depth-control: 3px;
+  /* 节奏 */
+  --mk-gap-xl: 28px;
+  --mk-gap-lg: 20px;
+  --mk-gap-md: 14px;
+  --mk-gap-sm: 8px;
+  /* 动效 */
+  --mk-step: steps(4, end);
+  --mk-t-fast: 90ms;
+  --mk-t-mid: 160ms;
+  --mk-t-slow: 260ms;
+  /* 关卡舞台（深色，衬托纸卡） */
+  --mk-stage-1: #12213f;
+  --mk-stage-2: #0c1730;
+  --mk-stage-line: #2b4370;
+  --mk-stage-text: #dbe6fb;
+  --mk-stage-dim: #93a7cb;
+}
+
+/* ---------- 0. 光标与选区：像素味从指针开始 ---------- */
+@media (pointer: fine) {
+  body,
+  .kantoku-shell,
+  button,
+  a {
+    cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' shape-rendering='crispEdges'><path d='M4 2h3v2h3v2h3v2h2v2h2v2h2v2h-2v2h-2v2h-2v2h-3v-4h-3v-4H4z' fill='%23FFFDF5' stroke='%23141414' stroke-width='2'/></path></svg>") 4 2, auto;
+  }
+  button:not(:disabled),
+  a,
+  [role='button'] {
+    cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' shape-rendering='crispEdges'><path d='M8 2h2v2h2v2h2v2h2v2h2v2h-2v2h-2v2h-2v-4h-2v-4H8z' fill='%23F8C000' stroke='%23141414' stroke-width='2'/></svg>") 8 2, pointer;
+  }
+}
+
+::selection {
+  background: var(--gold);
+  color: var(--ink);
+}
+
+/* ==========================================================================
+   1. 按钮：一块能按下去的砖
+   ========================================================================== */
+.ui-button,
+.px-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mk-gap-sm);
+  min-height: 34px;
+  padding: 8px 14px 7px;
+  border: var(--mk-bw-control) solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 700 12px/1 var(--font-mono);
+  letter-spacing: .08em;
+  text-align: center;
+  text-decoration: none;
+  box-shadow: var(--mk-depth-control) var(--mk-depth-control) 0 var(--ink);
+  transform: translate(0, 0);
+  transition: transform var(--mk-t-fast) steps(2, end),
+              box-shadow var(--mk-t-fast) steps(2, end),
+              background var(--mk-t-mid) steps(3, end),
+              color var(--mk-t-mid) steps(3, end);
+}
+
+.ui-button:hover:not(:disabled),
+.px-btn:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: calc(var(--mk-depth-control) + 1px) calc(var(--mk-depth-control) + 1px) 0 var(--ink);
+  background: var(--gold-light);
+}
+
+.ui-button:active:not(:disabled),
+.px-btn:active:not(:disabled) {
+  transform: translate(var(--mk-depth-control), var(--mk-depth-control));
+  box-shadow: 0 0 0 var(--ink);
+}
+
+.ui-button:focus-visible,
+.px-btn:focus-visible {
+  outline: var(--mk-bw-control) solid var(--gold);
+  outline-offset: 2px;
+}
+
+.ui-button.primary,
+.ui-button.is-gold,
+.px-btn.is-gold {
+  background: var(--gold);
+  color: var(--ink);
+}
+
+.ui-button.primary:hover:not(:disabled),
+.ui-button.is-gold:hover:not(:disabled) {
+  background: var(--gold-light);
+}
+
+.ui-button.quiet,
+.px-btn.is-paper {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.ui-button.quiet:hover:not(:disabled) {
+  background: var(--paper);
+}
+
+.ui-button.danger,
+.px-btn.is-danger {
+  background: var(--brick);
+  color: var(--paper);
+}
+
+.ui-button:disabled,
+.px-btn:disabled {
+  opacity: .45;
+  box-shadow: none;
+  transform: none;
+  cursor: not-allowed;
+  filter: grayscale(.35);
+}
+
+.ui-button.sm,
+.px-btn--mini {
+  min-height: 28px;
+  padding: 6px 10px 5px;
+  font-size: 11px;
+  box-shadow: var(--mk-bw-rule) var(--mk-bw-rule) 0 var(--ink);
+}
+
+/* 主操作在深色舞台上要自己发光，不能被背景吃掉 */
+.mk-stage .ui-button.primary {
+  background: var(--gold);
+  color: var(--ink);
+}
+
+/* ==========================================================================
+   2. 卡片：纸卡只有一种
+   ========================================================================== */
+.mk-card,
+.px-sheet {
+  position: relative;
+  border: var(--mk-bw-panel) solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--mk-depth-card) var(--mk-depth-card) 0 rgba(0, 0, 0, .45);
+}
+
+.mk-card__hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mk-gap-md);
+  padding: 10px 16px;
+  border-bottom: var(--mk-bw-control) solid var(--ink);
+  background: var(--ink-2);
+  color: var(--gold-light);
+  font: 700 11px/1.2 var(--font-mono);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.mk-card__hd small {
+  color: #b6b1a3;
+  font-weight: 400;
+  letter-spacing: .1em;
+}
+
+.mk-card__bd {
+  padding: 18px 20px;
+  line-height: 1.7;
+}
+
+/* 分节标题：一条虚线延伸，替代「再加一个框」 */
+.mk-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--mk-gap-md);
+  margin: var(--mk-gap-lg) 0 var(--mk-gap-md);
+  color: var(--text-secondary);
+  font: 700 11px/1 var(--font-mono);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+
+.mk-rule::after {
+  content: '';
+  flex: 1;
+  height: 3px;
+  background: repeating-linear-gradient(90deg, var(--paper-3) 0 6px, transparent 6px 12px);
+}
+
+/* ==========================================================================
+   4. 舞台与面板：一个页面只允许一层纸
+   ========================================================================== */
+.mk-stage {
+  color: var(--mk-stage-text);
+  background:
+    linear-gradient(var(--mk-stage-1) 0%, var(--mk-stage-2) 100%) no-repeat,
+    var(--mk-stage-2);
+}
+
+.mk-stage a { color: var(--gold-light); }
+
+/* 段落说明不再做成按钮外观：只留左侧一条色带。
+   颜色跟随容器（inherit），深色舞台与纸卡上都能读，不需要两套规则。 */
+.pane-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: auto;
+  margin: var(--mk-gap-sm) 0;
+  padding: 10px 14px;
+  border: 0;
+  border-left: var(--mk-bw-panel) solid var(--gold);
+  background: rgba(127, 127, 127, .09);
+  color: inherit;
+  font-size: var(--font-meta);
+  line-height: 1.6;
+  opacity: .92;
+  box-shadow: none;
+}
+
+.pane-note .ui-button { margin-left: auto; opacity: 1; }
+
+/* ==========================================================================
+   5. 输入：一个能敲的方块
+   ---------------------------------------------------------------------------
+   此前只有 .mk-field 被美化过，而真正在用的裸 input / select / textarea 一直是
+   浏览器默认样式 —— 白底、细边、圆角、系统字体，「太板正」最大的一块就在这。
+   这层把它们全部换成长在纸上的像素方块：硬墨边 + 底部沉影 + 自绘像素箭头。
+   ========================================================================== */
+#app input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='color']),
+#app select,
+#app textarea {
+  width: 100%;
+  max-width: 100%;
+  padding: 8px 11px;
+  border: var(--mk-bw-control) solid var(--ink) !important;
+  border-radius: 0;
+  /* 当前主题里 --paper 就是纸卡底色，字段必须压深一档才看得出是"凹进去的槽"。
+     旧层 pixel.css 用 `background: var(--paper) !important` 强刷过，这里必须同样带
+     !important 才能盖住，否则字段永远和卡片同色。 */
+  background: var(--paper-2) !important;
+  color: var(--ink) !important;
+  font: 400 12px/1.75 var(--mk-font-pixel);
+  /* pixel.css 用 `font-family: var(--font-mono) !important` 锁死了输入框字体，
+     简写里的字体永远输给它，所以必须单独再写一遍带 !important 的声明。 */
+  font-family: var(--mk-font-pixel) !important;
+  letter-spacing: .02em;
+  box-shadow: inset 0 -3px 0 var(--paper-3), var(--mk-depth-control) var(--mk-depth-control) 0 rgba(20, 20, 20, .3) !important;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: background-color var(--mk-t-fast) var(--mk-step),
+    box-shadow var(--mk-t-fast) var(--mk-step);
+}
+
+/* 聚焦 = 方块被点亮，不描一圈圆角光晕 */
+#app input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):focus,
+#app select:focus,
+#app textarea:focus {
+  outline: none;
+  background: var(--paper) !important;
+  box-shadow: inset 0 -3px 0 var(--gold), var(--mk-depth-control) var(--mk-depth-control) 0 var(--ink) !important;
+}
+
+#app input::placeholder,
+#app textarea::placeholder {
+  color: var(--mk-text-dim);
+  opacity: 1;
+}
+
+#app input:disabled,
+#app select:disabled,
+#app textarea:disabled {
+  background: var(--paper-3) !important;
+  color: var(--text-secondary) !important;
+  box-shadow: none !important;
+  border-color: var(--mk-text-dim) !important;
+  cursor: not-allowed;
+}
+
+#app textarea {
+  resize: vertical;
+  min-height: 56px;
+  line-height: 1.85;
+}
+
+/* 下拉框自绘像素箭头：三级阶梯三角，和全站的硬边语汇一致 */
+#app select {
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='10' shape-rendering='crispEdges'><path d='M0 1h12v2H0zM2 3h8v2H2zM4 5h4v2H4zM5 7h2v2H5z' fill='%23141414'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  cursor: pointer;
+}
+
+#app select option {
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 12px/1.6 var(--mk-font-pixel);
+}
+
+/* 字段名压在控件上方：把文字节点和控件分成两行，控件才能吃满整行宽度 */
+#app label:not(.board-picker):has(> textarea),
+#app label:not(.board-picker):has(> select),
+#app label:not(.board-picker):has(> input:not([type='checkbox']):not([type='radio'])) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  font: 400 11px/1.4 var(--mk-font-pixel);
+  letter-spacing: .08em;
+  color: var(--text-secondary);
+}
+
+/* 分镜选择是「标签 + 控件」同一行，不能跟着上面变竖排 */
+#app .board-picker {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  /* 父级是 flex 行，默认 min-width:auto 会按最长选项撑开，整行被顶到面板外 */
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#app .board-picker > span {
+  flex: 0 0 auto;
+}
+
+/* 分镜下拉要吃掉剩余宽度，但不能把整行撑爆 */
+#app .board-picker > select {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+/* 复选框也是砖，只是小一号 */
+#app input[type='checkbox'],
+#app input[type='radio'] {
+  width: 16px;
+  height: 16px;
+  border: var(--mk-bw-rule) solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+#app input[type='checkbox']:checked,
+#app input[type='radio']:checked {
+  background: var(--gold);
+  box-shadow: inset 0 0 0 2px var(--paper);
+}
+
+.mk-field input,
+.mk-field select,
+.mk-field textarea {
+  width: 100%;
+  border: var(--mk-bw-control) solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: inset 0 -3px 0 var(--paper-3);
+}
+
+/* 折叠面板的手柄也做成铁牌，默认的三角会破坏像素感 */
+#app details > summary {
+  padding: 6px 2px;
+  font: 400 11px/1.5 var(--mk-font-pixel);
+  letter-spacing: .06em;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+#app details > summary::-webkit-details-marker {
+  display: none;
+}
+
+#app details > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 12px;
+  color: var(--gold);
+  transition: transform var(--mk-t-fast) var(--mk-step);
+}
+
+#app details[open] > summary::before {
+  content: '▾';
+}
+
+/* ==========================================================================
+   6. 导演关卡流水线：左侧轨道节点（就地展开）+ 右侧审核栏
+   ---------------------------------------------------------------------------
+   参考原型 .dirGrid / .pipeline / .pnode：节点是一条纵向关卡轨道，
+   选中节点在自己的位置展开成表单（左标签 / 右取值），右侧 322px 常驻审核。
+   「不板正」的落点：轨道虚线段、编号方块内高光、轻微倾斜的状态贴纸、
+   悬停整体偏移 2px、展开卡片的金色描边与一角"胶带"。
+   ========================================================================== */
+.dir-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 322px;
+  grid-template-areas:
+    "pipe audit"
+    "footer footer";
+  align-items: start;
+  gap: var(--mk-gap-md);
+}
+
+.pipe-col { grid-area: pipe; }
+
+@media (max-width: 1120px) {
+  .dir-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "pipe"
+      "audit"
+      "footer";
+  }
+}
+
+.pipe-col {
+  grid-area: pipe;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-gap-sm);
+  min-width: 0;
+}
+
+.pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- 单个节点：轨道 + 方盒 ---- */
+.pnode {
+  display: flex;
+  align-items: stretch;
+  gap: 9px;
+}
+
+.pnode__rail {
+  display: flex;
+  flex: 0 0 32px;
+  flex-direction: column;
+  align-items: center;
+  width: 32px;
+}
+
+.pnode__blk {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  margin-top: 3px;
+  place-items: center;
+  border: var(--mk-bw-control) solid var(--ink);
+  background: var(--paper-3);
+  color: #6a6252;
+  font: 700 11px/1 var(--font-mono);
+  box-shadow: var(--mk-bw-control) var(--mk-bw-control) 0 rgba(0, 0, 0, .45);
+  transition: transform var(--mk-t-fast) steps(2, end);
+}
+
+.pnode__cord {
+  flex: 1;
+  width: 4px;
+  min-height: 10px;
+  margin: 3px 0;
+  background: repeating-linear-gradient(180deg, #31456f 0 5px, transparent 5px 10px);
+}
+
+.pnode:last-child .pnode__cord { display: none; }
+
+/* 三种状态：已完成（砖）、进行中（金币闪）、只读/未开始（铁） */
+.pnode.is-done .pnode__blk {
+  background: var(--brick);
+  color: var(--gold-light);
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, .22), var(--mk-bw-control) var(--mk-bw-control) 0 rgba(0, 0, 0, .45);
+}
+
+.pnode.is-done .pnode__cord { background: var(--brick-dark); }
+
+.pnode.is-open .pnode__blk {
+  background: var(--gold);
+  color: var(--ink);
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, .55), var(--mk-bw-control) var(--mk-bw-control) 0 var(--ink);
+  animation: mk-blink 1.6s steps(2, end) infinite;
+}
+
+.pnode.is-lock .pnode__blk { background: var(--ink-3); color: var(--gold-light); }
+
+/* ---- 节点方盒 ---- */
+.pnode__box {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 7px 12px 8px;
+  border: var(--mk-bw-panel) solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--mk-depth-float) var(--mk-depth-float) 0 rgba(0, 0, 0, .5);
+  transition: transform var(--mk-t-fast) steps(2, end), box-shadow var(--mk-t-fast) steps(2, end);
+}
+
+.pnode:hover .pnode__box {
+  transform: translate(-2px, -2px);
+  box-shadow: calc(var(--mk-depth-float) + 2px) calc(var(--mk-depth-float) + 2px) 0 rgba(0, 0, 0, .55);
+}
+
+.pnode.is-open .pnode__box {
+  transform: none;
+  box-shadow: var(--mk-depth-float) var(--mk-depth-float) 0 var(--gold);
+}
+
+.pnode.is-lock .pnode__box { background: var(--paper-2); }
+
+/* 展开节点左上角贴一块"胶带"，让卡片不像表格 */
+.pnode.is-open .pnode__box::before {
+  content: '';
+  position: absolute;
+  top: -9px;
+  left: 18px;
+  width: 34px;
+  height: 8px;
+  border: 2px solid var(--ink);
+  background: var(--gold-light);
+  transform: rotate(-3deg);
+}
+
+/* ---- 盒头 ---- */
+.pnode__hd {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.pnode__hd strong {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+
+/* 节点头是深蓝门牌（pixel 层把 #app button 统一刷成砖），
+   所以里面的提示字必须走浅色，深褐压深蓝等于看不见。 */
+#app .pnode__hd { padding: 8px 10px !important; }
+
+.pnode__cnt {
+  margin-left: auto;
+  color: #a9bad8;
+  font: 700 10px/1 var(--font-mono);
+  letter-spacing: .1em;
+  white-space: nowrap;
+}
+
+.pnode__cnt::after { content: ' ▾'; }
+.pnode.is-open .pnode__cnt::after { content: ' ▴'; }
+
+.pnode__sum {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnode.is-open .pnode__sum { display: none; }
+
+/* ---- 展开体：左标签 / 右取值，两列铺开 ---- */
+.pnode__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 3px dashed var(--paper-3);
+  animation: mk-drop var(--mk-t-mid) steps(3, end) 1;
+}
+
+/* 状态贴纸：轻微倾斜，悬停扶正 —— 这是"不要板正"的主要落点 */
+.mk-sticker {
+  display: inline-block;
+  padding: 2px 7px 1px;
+  border: 2px solid var(--ink);
+  background: var(--paper-2);
+  color: var(--text-secondary);
+  font: 700 10px/1.35 var(--font-mono);
+  letter-spacing: .06em;
+  white-space: nowrap;
+  transform: rotate(-1.5deg);
+  transition: transform var(--mk-t-mid) steps(2, end);
+}
+
+.mk-sticker:hover { transform: rotate(0deg); }
+.mk-sticker.is-gold { background: var(--gold); color: var(--ink); }
+.mk-sticker.is-grass { background: var(--grass); color: #04250a; }
+.mk-sticker.is-brick { background: var(--brick); color: var(--paper); }
+.mk-sticker:nth-child(even) { transform: rotate(1.5deg); }
+
+/* 方案目录卡：它是「翻到某一节」的入口卡，不是按钮。
+   pixel 层把 #app button 一律刷成深蓝砖，卡里的深褐预览字压上去几乎读不出来，
+   这里把它拉回纸卡，并放开被 clamp 成两行的正文。 */
+#app .pnode__body .plan-entry {
+  padding: 10px 12px !important;
+  border: 3px solid var(--ink) !important;
+  background: var(--paper) !important;
+  color: var(--ink) !important;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, .35) !important;
+  text-align: left;
+}
+
+#app .pnode__body .plan-entry:hover {
+  background: var(--paper-2) !important;
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, .4) !important;
+}
+
+#app .pnode__body .plan-entry .plan-entry-header strong {
+  color: var(--ink) !important;
+  font-size: 12.5px;
+}
+
+#app .pnode__body .plan-entry .plan-entry-arrow { color: var(--brick) !important; }
+
+#app .pnode__body .plan-entry .plan-entry-preview {
+  color: var(--text-secondary) !important;
+  font-size: 11.5px;
+  line-height: 1.55;
+  -webkit-line-clamp: 3;
+}
+
+/* ---- 右栏：审核 / 硬约束 / 状态与产物 ---- */
+.audit-col {
+  grid-area: audit;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.audit-col .audit-sheet { box-shadow: var(--mk-depth-float) var(--mk-depth-float) 0 rgba(0, 0, 0, .5); }
+
+/* 审核卡：墨线纸卡，标题条是铁牌 */
+.audit-sheet {
+  border: var(--mk-bw-panel) solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.audit-sheet > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: var(--mk-bw-control) solid var(--ink);
+  background: var(--ink-2);
+  color: var(--gold-light);
+  font: 700 11px/1.2 var(--font-mono);
+  letter-spacing: .12em;
+}
+
+.audit-sheet > header small { color: #b6b1a3; font-weight: 400; letter-spacing: .08em; }
+
+/* 空态：整张卡压成一行。右栏不再用整块空白占位，有内容才展开。 */
+.audit-sheet.is-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 0 12px;
+  border-width: var(--mk-bw-control);
+  background: var(--paper-2);
+  box-shadow: none;
+}
+
+.audit-sheet.is-empty > header {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 10px;
+  letter-spacing: .16em;
+}
+
+.audit-sheet.is-empty > header small {
+  color: var(--text-muted);
+  font-size: 9.5px;
+  letter-spacing: .08em;
+}
+
+/* 审核「没问题」是一个结论，不是空数据。
+   给它一个带勾的通过态，而不是留一行像没接上的灰字。 */
+.audit-quiet {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 12px 9px 10px;
+  border-left: 3px dashed var(--paper-3);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.audit-quiet__mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--text-muted);
+  color: var(--text-muted);
+  font: 800 10px/1 var(--font-mono);
+}
+
+.audit-quiet.is-pass { color: var(--grass-dark); }
+.audit-quiet.is-pass .audit-quiet__mark {
+  border-color: var(--grass-dark);
+  background: var(--grass);
+  color: #04250a;
+}
+
+.audit-sheet.is-quiet.is-pass { border-left: 6px solid var(--grass); }
+
+.audit-oneline {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px dashed var(--paper-3);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audit-body { padding: 12px 14px; line-height: 1.65; color: var(--ink); }
+.audit-body p { margin: 0; }
+.audit-body ul { margin: 0; padding: 0; }
+.audit-body dl { margin: 0; }
+.audit-body dl div { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 2px dashed var(--paper-3); }
+.audit-body dl div:last-child { border-bottom: 0; }
+.audit-body dt { color: var(--text-secondary); }
+.audit-body dd { margin: 0; font-weight: 700; }
+
+.audit-col .audit-body { font-size: 12px; }
+
+/* 须改级：红纸告示牌，默认摊开。挡住确认的只有这几条，不该藏起来。 */
+.audit-finding {
+  border: 3px solid var(--danger-border);
+  background: var(--danger-soft);
+  box-shadow: 3px 3px 0 rgba(142, 19, 19, .18);
+}
+
+.audit-finding + .audit-finding { margin-top: 10px; }
+
+.audit-finding > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.audit-finding > summary::-webkit-details-marker { display: none; }
+.audit-finding > summary .mk-sticker { transform: rotate(-2deg); }
+.audit-finding > summary .mk-sticker:hover { transform: rotate(0deg); }
+
+.audit-finding__why {
+  margin: 0 10px 8px;
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.audit-finding__todo {
+  margin: 0 10px 8px;
+  padding-left: 8px;
+  border-left: 3px solid var(--danger);
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.audit-finding > button { margin: 0 10px 10px; }
+
+/* 建议级：退成灰纸，收进折叠区，不与「须改」抢视线。 */
+.audit-finding.is-advisory {
+  padding: 8px 10px;
+  border-color: var(--paper-3);
+  background: var(--paper-2);
+  box-shadow: none;
+}
+
+.audit-finding.is-advisory strong { display: block; color: var(--ink-2); font-size: 11px; }
+
+.audit-finding.is-advisory p {
+  margin: 4px 0 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.audit-finding.is-advisory button { margin: 0; }
+
+.audit-more { margin-top: 10px; padding-top: 8px; border-top: 2px dashed var(--paper-3); }
+.audit-more > summary { color: var(--text-secondary); font: 700 10px/1.4 var(--font-mono); letter-spacing: .1em; cursor: pointer; }
+.audit-more[open] > summary { margin-bottom: 8px; }
+
+/* 硬约束：勾选式清单，条与条之间不做框 */
+.con-list { display: flex; flex-direction: column; gap: 4px; }
+.con-list li { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 7px; list-style: none; line-height: 1.45; }
+.con-list li::before { content: '▪'; color: var(--brick); font-weight: 900; }
+
+/* 最终确认条：横跨两栏的底栏，不吸底、不遮挡节点内容，主操作只有一颗金砖 */
+.final-approval {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border: var(--mk-bw-panel) solid var(--ink);
+  background: var(--paper-2);
+  color: var(--ink);
+  box-shadow: var(--mk-depth-card) var(--mk-depth-card) 0 rgba(0, 0, 0, .45);
+}
+
+/* ==========================================================================
+   7. 关卡内页：生图指令 / 故事编排 / 图片工作台
+   这三页此前还是旧表单皮肤：整块深色横幅、满宽空条、label:value 表格。
+   这里统一回关卡语言——门牌、纸卡、虚线分节、编号贴纸。
+   ========================================================================== */
+
+/* ---- 7.1 门牌：编号贴纸 + 标题 + 计数贴纸 ---- */
+.stage-scroll .production-stage-heading,
+.stage-scroll .flow-stage-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  margin: 0 0 14px !important;
+  padding: 14px 16px !important;
+  border: var(--mk-bw-panel) solid var(--ink);
+  border-left: 8px solid var(--gold);
+  background: var(--ink-2);
+  color: var(--paper);
+  box-shadow: var(--mk-depth-card) var(--mk-depth-card) 0 rgba(0, 0, 0, .5);
+}
+
+.stage-scroll .production-stage-heading > div > span,
+.stage-scroll .flow-stage-head > div > span {
+  display: inline-block;
+  padding: 3px 8px 2px;
+  border: 2px solid var(--ink);
+  background: var(--gold);
+  color: var(--ink);
+  font: 800 10px/1.5 var(--font-mono);
+  letter-spacing: .12em;
+  transform: rotate(-1.5deg);
+}
+
+.stage-scroll .production-stage-heading h2,
+.stage-scroll .flow-stage-head h3 {
+  margin: 7px 0 3px;
+  font-size: 21px;
+  letter-spacing: .02em;
+}
+
+.stage-scroll .production-stage-heading p,
+.stage-scroll .flow-stage-head small {
+  display: block;
+  margin: 0;
+  color: #c3d2ea;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.stage-scroll .production-stage-heading .production-stage-count {
+  align-self: start;
+  padding: 4px 9px 3px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font: 800 10px/1.5 var(--font-mono);
+  letter-spacing: .08em;
+  transform: rotate(1.5deg);
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, .45);
+}
+
+/* ---- 7.2 提示条：一条会说话的警示带，而不是满宽空白 ---- */
+.stage-scroll .review-notice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 12px !important;
+  padding: 8px 12px !important;
+  border: 3px solid var(--ink) !important;
+  border-left: 8px solid var(--brick) !important;
+  background: var(--warning-soft) !important;
+  color: var(--ink) !important;
+  font-size: 11.5px;
+  line-height: 1.5;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, .3);
+}
+
+.stage-scroll .review-notice::before {
+  content: '!';
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--brick-dark);
+  background: var(--brick);
+  color: var(--paper);
+  font: 900 10px/1 var(--font-mono);
+}
+
+/* ---- 7.3 分镜选择条：一条虚线收边，不再占一整块色带 ---- */
+.stage-scroll .board-bar {
+  margin: 0 0 12px !important;
+  padding: 0 2px 8px !important;
+  border: 0 !important;
+  border-bottom: 3px dashed var(--paper-3) !important;
+  background: transparent !important;
+}
+
+.stage-scroll .board-picker > span {
+  color: var(--brick);
+  font: 800 10px/1.7 var(--font-mono);
+  letter-spacing: .12em;
+}
+
+.stage-scroll .board-count {
+  color: var(--text-secondary);
+  font: 700 10px/1.5 var(--font-mono);
+  letter-spacing: .08em;
+}
+
+/* ---- 7.4 镜头卡：一张拍摄卡 ---- */
+.stage-scroll .shot-card {
+  margin: 0 0 12px !important;
+  padding: 0 !important;
+  overflow: hidden;
+  border: var(--mk-bw-panel) solid var(--ink) !important;
+  background: var(--paper) !important;
+  box-shadow: var(--mk-depth-card) var(--mk-depth-card) 0 rgba(0, 0, 0, .45) !important;
+  transition: transform var(--mk-t-fast) steps(2, end), box-shadow var(--mk-t-fast) steps(2, end);
+}
+
+.stage-scroll .shot-card:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, .5) !important;
+}
+
+.stage-scroll .shot-card.is-selected { box-shadow: 6px 6px 0 var(--gold) !important; }
+.stage-scroll .shot-card.is-selected::before { display: none; }
+
+#app .stage-scroll .shot-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 3px solid var(--ink);
+  background: var(--ink-2);
+}
+
+/* 卡头本身是门牌，里面的选择按钮不该再长成一颗砖 */
+#app .stage-scroll .shot-select {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: inherit !important;
+  box-shadow: none !important;
+}
+
+#app .stage-scroll .shot-select:hover { background: transparent !important; color: inherit !important; }
+
+#app .stage-scroll .shot-index {
+  flex: 0 0 auto;
+  padding: 2px 7px 1px;
+  border: 2px solid var(--ink);
+  background: var(--gold);
+  color: var(--ink);
+  font: 800 10px/1.5 var(--font-mono);
+  letter-spacing: .06em;
+  box-shadow: inset 0 -3px 0 var(--gold-dark);
+}
+
+#app .stage-scroll .shot-subject {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--paper);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#app .stage-scroll .shot-meta {
+  flex: 0 0 auto;
+  padding: 2px 7px 1px;
+  border: 2px solid var(--ink);
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font: 700 9.5px/1.5 var(--font-mono);
+  letter-spacing: .06em;
+  transform: rotate(1.5deg);
+}
+
+/* 字段行：定宽标签 + 虚线收边 */
+.stage-scroll .shot-brief { margin: 0; padding: 10px 12px 6px; }
+
+.stage-scroll .shot-brief > div {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 2px dashed var(--paper-3);
+}
+
+.stage-scroll .shot-brief > div:last-child { border-bottom: 0; }
+
+.stage-scroll .shot-brief dt {
+  color: var(--brick);
+  font: 800 10px/1.7 var(--font-mono);
+  letter-spacing: .1em;
+}
+
+.stage-scroll .shot-brief dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+/* 指令槽：虚线待放置区，而不是一条满宽浅色块 */
+.stage-scroll .shot-generation {
+  margin: 0 12px 12px;
+  padding: 14px 12px;
+  border: 3px dashed var(--paper-3);
+  background: var(--paper-2);
+}
+
+.stage-scroll .shot-generation .pane-note {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* 底部操作条：锁定态也必须在场，否则用户以为功能不存在 */
+.stage-scroll .shot-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.stage-scroll .shot-footer > p {
+  flex: 1 1 240px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.stage-scroll .shot-footer.is-locked {
+  padding: 10px 12px;
+  border: 3px solid var(--ink);
+  border-left: 8px solid var(--brick);
+  background: var(--warning-soft);
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, .3);
+}
+
+.stage-scroll .shot-footer.is-locked > p strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--brick-dark);
+  font-size: 11.5px;
+}
+
+/* ---- 7.5 故事编排：编辑区与右栏都是纸卡 ---- */
+.stage-scroll .flow-stage { display: flex; flex-direction: column; gap: 14px; }
+
+.stage-scroll .flow-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+@media (max-width: 1120px) {
+  .stage-scroll .flow-columns { grid-template-columns: minmax(0, 1fr); }
+}
+
+.stage-scroll .flow-col {
+  border: var(--mk-bw-panel) solid var(--ink);
+  background: var(--paper);
+  box-shadow: var(--mk-depth-card) var(--mk-depth-card) 0 rgba(0, 0, 0, .4);
+}
+
+/* 右栏是几张小卡叠起来，各自独立成砖 */
+.stage-scroll .flow-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.stage-scroll .flow-side > section {
+  border: var(--mk-bw-control) solid var(--ink);
+  background: var(--paper);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, .35);
+}
+
+.stage-scroll .flow-panel-heading,
+.stage-scroll .flow-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 3px solid var(--ink);
+  background: var(--ink-2);
+  color: var(--gold-light);
+  font: 800 10px/1.5 var(--font-mono);
+  letter-spacing: .12em;
+}
+
+.stage-scroll .flow-col-head small,
+.stage-scroll .flow-panel-heading small {
+  margin-left: auto;
+  color: #b6b1a3;
+  font-weight: 400;
+  letter-spacing: .06em;
+}
+
+.stage-scroll .flow-col-head .ui-button { transform: none; }
+
+/* 全宽金色大按钮改成右对齐的小砖：它是"整理"，不是"提交整页" */
+.stage-scroll .flow-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.stage-scroll .flow-ai .ui-button.primary { align-self: flex-start; }
+
+.stage-scroll .flow-ai small {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.stage-scroll .flow-review .flow-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.stage-scroll .flow-history { margin-top: 2px; }
+
+/* ---- 7.6 图片工作台：画布是暗场，空态给一个可点击的虚线槽 ---- */
+.stage-scroll .image-workbench { display: flex; flex-direction: column; gap: 12px; }
+
+.stage-scroll .wb-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 342px);
+  align-items: stretch;
+  gap: 12px;
+}
+
+/* 1120px 就折成单列太早了：1082 的窗口里，画布还剩 600 宽，右栏给 300 完全放得下。
+   折成单列之后画布被垂直压缩，右栏又整块掉到下面，才显得"整个内容区很挤"。 */
+@media (max-width: 919px) {
+  .stage-scroll .wb-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 单列时画布必须自己撑住高度，否则会被 flex 压成一条 */
+  .stage-scroll .wb-canvas {
+    min-height: 300px;
+  }
+}
+
+.stage-scroll .wb-main {
+  border: var(--mk-bw-panel) solid var(--ink);
+  background: var(--paper);
+  box-shadow: var(--mk-depth-card) var(--mk-depth-card) 0 rgba(0, 0, 0, .45);
+}
+
+.stage-scroll .wb-viewbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 3px solid var(--ink);
+  background: var(--paper-2);
+}
+
+.stage-scroll .wb-viewbar-left,
+.stage-scroll .wb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.stage-scroll .wb-canvas {
+  border-top: 0;
+  background: var(--ink-2);
+}
+
+.stage-scroll .wb-canvas .wb-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 320px;
+  margin: 16px;
+  padding: 28px 20px;
+  border: 3px dashed rgba(255, 255, 255, .22);
+  background: rgba(0, 0, 0, .18);
+  color: #dbe4f4;
+  text-align: center;
+}
+
+.stage-scroll .wb-canvas .wb-empty > p {
+  margin: 0;
+  color: #dbe4f4;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.stage-scroll .wb-import--empty { margin-top: 2px; }
+
+/* 右栏空态：给出三步路径，而不是留一行灰字 */
+.stage-scroll .wb-panel > .wb-empty--panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 16px 14px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.stage-scroll .wb-empty--panel > strong {
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.stage-scroll .wb-empty--panel > p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.stage-scroll .wb-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: wb-step;
+}
+
+.stage-scroll .wb-steps > li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.55;
+  counter-increment: wb-step;
+}
+
+.stage-scroll .wb-steps > li::before {
+  content: counter(wb-step);
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--ink);
+  background: var(--gold);
+  color: var(--ink);
+  font: 800 9.5px/1 var(--font-mono);
+}
+
+/* ==========================================================================
+   8. 动效（克制：只给状态变化，不给装饰）
+   ========================================================================== */
+@keyframes mk-bump {
+  0% { transform: translateY(0); }
+  45% { transform: translateY(-4px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes mk-drop {
+  from { transform: translateY(-6px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes mk-blink {
+  50% { opacity: .35; }
+}
+
+@keyframes mk-coin {
+  0%, 100% { transform: scaleX(1); }
+  50% { transform: scaleX(.15); }
+}
+
+@keyframes mk-rise {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* 页面切换：像关卡推进 */
+.route-enter-active { animation: mk-rise var(--mk-t-slow) steps(4, end) 1; }
+.route-leave-active { animation: mk-rise var(--mk-t-fast) steps(2, end) reverse 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-button,
+  .px-btn,
+  .route-enter-active,
+  .route-leave-active {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ==========================================================================
+   9. 字体分层：界面壳用像素字，叙事正文留在可读字体
+   ---------------------------------------------------------------------------
+   这一节放在最后，因为 font-family / font-size 是横切属性，需要盖住前面各段的
+   局部声明。规则只有一条：凡是用 Zpix 的地方，字号必须是 12 的整数倍
+   （12 / 24 / 36），且 font-weight 必须是 400 —— 像素字只有一个字重，
+   浏览器合成的粗体会把 1px 的格子糊成 1.5px，整个界面立刻发毛。
+   长段中文（故事概述、Prompt 正文、审核意见）继续走 --mk-font-read，
+   这是「核心内容让人看清」和「主题贴合」之间必须留下的分界。
+   ========================================================================== */
+
+/* 9.1 界面壳：按钮、页签、徽章、表头、字段名 —— 像素字 */
+#app .ui-button,
+#app .px-btn,
+#app .stage-nav a,
+#app .flow-nav a,
+#app .nav-step,
+#app .badge,
+#app .chip,
+#app .tag,
+#app .kicker,
+#app .eyebrow,
+#app th,
+#app .shot-index,
+#app .shot-meta,
+#app .shot-brief > span,
+#app .flow-col-head,
+#app .flow-panel-heading,
+#app .wb-viewbar,
+#app .dir-section > h3,
+#app .pill,
+#app .status-dot + span,
+#app .pnode__cnt {
+  font-family: var(--mk-font-pixel) !important;
+  font-weight: 400 !important;
+  letter-spacing: .06em;
+  /* 像素字的中宫偏满，line-height:1 会把中文的上下缘切掉 */
+  line-height: 1.5;
+}
+
+/* 9.2 标题：只走 24 / 36 两档，避免落在半像素上 */
+#app .production-stage-heading h1,
+#app .production-stage-heading h2,
+#app .flow-stage-head h1,
+#app .flow-stage-head h2,
+#app .stage-head h1,
+#app .stage-head h2 {
+  font-family: var(--mk-font-pixel) !important;
+  font-weight: 400 !important;
+  font-size: 24px;
+  line-height: 1.34;
+  letter-spacing: .02em;
+}
+
+/* 门牌上的说明行：12px，压在标题下方一行 */
+#app .production-stage-heading p,
+#app .flow-stage-head p {
+  font-family: var(--mk-font-pixel) !important;
+  font-weight: 400 !important;
+  font-size: 12px;
+  line-height: 1.7;
+  letter-spacing: .03em;
+  color: var(--mk-stage-dim);
+}
+
+/* 9.3 像素字的下限是 12px：Zpix 只有 12px 网格，9.5px / 11px 会把笔画糊在
+   半像素上，越小的字越看不清。这里把已知的小号界面元素统一提到 12px。 */
+#app .shot-meta,
+#app .shot-index,
+#app .shot-brief > span,
+#app .badge,
+#app .chip,
+#app .tag,
+#app .kicker,
+#app .eyebrow,
+#app .pnode__cnt,
+#app .production-stage-count {
+  font-size: 12px !important;
+}
+
+/* 9.3b 小号界面文字统一收口：11px 的伪像素全部提到 12px */
+#app small,
+#app .hint,
+#app .meta,
+#app .muted {
+  font-family: var(--mk-font-pixel) !important;
+  font-weight: 400 !important;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* 9.4 数字用等宽数位，标签切换时不跳宽 */
+#app .shot-index,
+#app .count,
+#app .stat-num,
+#app time {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .04em;
+}
+
+/* 9.5 叙事正文：可读优先，只补一点字距和行高把版面撑开 */
+#app .shot-brief p,
+#app .audit-col p,
+#app .wb-panel p {
+  font-family: var(--mk-font-read) !important;
+  letter-spacing: .01em;
+  line-height: 1.8;
+}
+
+/* ==========================================================================
+   10. 按钮去强刷：把「全站一块深蓝砖」拆回有层级的砖
+   ---------------------------------------------------------------------------
+   pixel.css 里 `#app button { background:#243757 !important }` 把每一个按钮都
+   焊成同一块深蓝砖，主按钮、次按钮、页签、图标按钮全部无差别 —— 这是「组件
+   太板正」的第二大来源（第一是原生表单控件）。
+   这里按 id 级特异性 + !important 把它压回去：默认纸砖，primary 金砖，
+   quiet 浅砖，danger 砖红，选中态给金色。
+   ========================================================================== */
+#app .ui-button,
+#app .px-btn {
+  background: var(--paper) !important;
+  color: var(--ink) !important;
+  border: var(--mk-bw-control) solid var(--ink) !important;
+  box-shadow: var(--mk-depth-control) var(--mk-depth-control) 0 var(--ink) !important;
+}
+
+#app .ui-button:hover:not(:disabled),
+#app .px-btn:hover:not(:disabled) {
+  background: var(--gold-light) !important;
+  color: var(--ink) !important;
+  transform: translate(-1px, -1px) !important;
+  box-shadow: calc(var(--mk-depth-control) + 1px) calc(var(--mk-depth-control) + 1px) 0 var(--ink) !important;
+}
+
+#app .ui-button:active:not(:disabled),
+#app .px-btn:active:not(:disabled) {
+  transform: translate(var(--mk-depth-control), var(--mk-depth-control)) !important;
+  box-shadow: 0 0 0 var(--ink) !important;
+}
+
+#app .ui-button.primary,
+#app .ui-button.is-gold,
+#app .px-btn.is-gold {
+  background: var(--gold) !important;
+  color: var(--ink) !important;
+}
+
+#app .ui-button.primary:hover:not(:disabled),
+#app .ui-button.is-gold:hover:not(:disabled) {
+  background: var(--gold-light) !important;
+}
+
+#app .ui-button.quiet,
+#app .px-btn.is-paper {
+  background: var(--paper-2) !important;
+  color: var(--ink) !important;
+}
+
+#app .ui-button.danger,
+#app .px-btn.is-danger {
+  background: var(--brick) !important;
+  color: var(--paper) !important;
+}
+
+#app .ui-button:disabled,
+#app .px-btn:disabled {
+  background: var(--paper-3) !important;
+  color: var(--text-secondary) !important;
+  border-color: var(--mk-text-dim) !important;
+  box-shadow: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+/* 没有 .ui-button 的裸按钮：也不再是深蓝砖，而是浅纸砖 */
+#app button:not(.ui-button):not(.px-btn) {
+  background: var(--paper-2) !important;
+  color: var(--ink) !important;
+  border: var(--mk-bw-rule) solid var(--ink) !important;
+  box-shadow: var(--mk-bw-rule) var(--mk-bw-rule) 0 var(--ink) !important;
+}
+
+#app button:not(.ui-button):not(.px-btn):hover:not(:disabled) {
+  background: var(--paper) !important;
+  color: var(--ink) !important;
+}
+
+/* 页签 / 分段控件的选中态：金色是唯一的"已选中"信号 */
+#app button[aria-selected='true']:not(:disabled),
+#app button[aria-current]:not(:disabled),
+#app button[aria-pressed='true']:not(:disabled),
+#app button.is-active:not(:disabled),
+#app button.active:not(:disabled) {
+  background: var(--gold) !important;
+  color: var(--ink) !important;
+}
+
+#app button:not(.ui-button):not(.px-btn):disabled {
+  background: var(--paper-3) !important;
+  color: var(--text-secondary) !important;
+  border-color: var(--mk-text-dim) !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+}
+
+/* ==========================================================================
+   11. 旧皮肤残留配色对齐：步骤条
+   ---------------------------------------------------------------------------
+   步骤条真正的着色元素是内层 .block，组件里写着：
+     .step .block            { background:#22304f; color:#d3ddf0 }   ← 深蓝底浅蓝字
+     [data-status='todo']    { background:transparent }              ← 完全透明
+     [data-status='current'] .lbl { color:#ffe24b }                  ← 浅金压在金底上
+   换成纸底之后，透明块直接把纸色透出来，浅蓝字和浅金字全部糊掉。
+   这里把三种状态重新钉在纸 / 砖红 / 金三档上。
+   ========================================================================== */
+#app .step .block {
+  background: var(--paper-2) !important;
+  color: var(--ink) !important;
+  border: var(--mk-bw-control) solid var(--ink) !important;
+  box-shadow: var(--mk-bw-control) var(--mk-bw-control) 0 var(--ink) !important;
+  font-family: var(--mk-font-pixel) !important;
+  font-weight: 400 !important;
+  letter-spacing: .04em !important;
+}
+
+/* 已完成的关卡：砖红，像被踩过的砖 */
+#app .step[data-status='done'] .block {
+  background: var(--brick) !important;
+  color: var(--paper) !important;
+}
+
+/* 当前关卡：金砖，文字必须回到墨色，否则金压金看不见 */
+#app .step[data-status='current'] .block {
+  background: var(--gold) !important;
+  color: var(--ink) !important;
+}
+
+#app .step[data-status='current'] .lbl {
+  color: var(--ink) !important;
+}
+
+/* 还没到的关卡：虚线留白，但字要能读 */
+#app .step[data-status='todo'] .block {
+  background: var(--paper-2) !important;
+  color: var(--text-secondary) !important;
+  border-style: dashed !important;
+  border-color: var(--mk-text-dim) !important;
+  box-shadow: none !important;
+}
+
+/* 序号原来 9px + .8 透明度，在像素字上等于消失 */
+#app .step .num {
+  font-size: 12px !important;
+  opacity: 1 !important;
+}
+
+/* ---------- 11.1 全局输入规则不能吃掉组件自己的宽度上限 ---------- */
+/* `#app select { max-width:100% }` 会盖掉 .board-picker select 原有的 320px 上限，
+   结果分镜下拉被拉成一米宽的长条，选项文字被截在半句上。 */
+#app .board-picker > select {
+  max-width: 320px !important;
+}
+
+/* ---------- 11.2 段 10 把「长得像按钮的卡片头」也刷成了砖 ---------- */
+/* .shot-select 是镜头卡头里的整行点击区，本身不该有砖的外观。
+   段 10 的 `#app button:not(.ui-button)` 特异性高于段 7，这里用同级选择器把它拉回来。 */
+#app .stage-scroll button.shot-select,
+#app .stage-scroll button.shot-select:hover {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: inherit !important;
+  box-shadow: none !important;
+  justify-content: flex-start !important;
+  transform: none !important;
+}
+
+/* 镜头摘要是一整句角色描述，用等宽字 12px bold 排出来就是一堵墙。
+   摘要只需要让人认出是哪一镜，细节在下面的正文里，所以给可读字体 + 单行截断。 */
+#app .stage-scroll .shot-subject {
+  color: var(--paper) !important;
+  font-family: var(--mk-font-read) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1.6;
+  letter-spacing: .01em !important;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 11.3 空画布时只保留一个导入入口 ---------- */
+/* 顶栏的导入行和画布中央的空态原来各说一遍「导入图片 / 可以拖进来 / ≤5MB」，
+   空态下两块并排出现既啰嗦又让人不知道该点哪个。空态时收起顶栏那行，
+   让画布中央的大虚线区成为唯一入口。 */
+#app .wb-main:has(.wb-empty) .wb-import:not(.wb-import--empty) > .image-import-controls {
+  display: none !important;
+}
+
+/* 顶栏导入行收起后，画布空态顺势吃掉多出来的高度 */
+.stage-scroll .wb-canvas .wb-empty {
+  flex: 1 1 auto;
+  min-height: 360px;
+}
+
+/* ==========================================================================
+   12. 对比度收口：深色文字留在深底上，浅色文字不能落到纸底
+   ---------------------------------------------------------------------------
+   旧皮肤给这些辅助文字挑的是"深蓝底上的浅蓝字"，纸底一上就变成 1.4:1。
+   这里按"文字坐在哪块底色上"重新分配，全部拉到 4.5:1 以上。
+   ========================================================================== */
+
+/* 12.1 流程标题：浅蓝字压在白纸上是 1.48:1，基本看不见 */
+#app .pipeline-caption {
+  color: var(--text-secondary) !important;
+}
+
+/* 12.2 节点头上的「点击展开 / 待生成 / 展开中」：浅蓝字压在纸底或金底上 */
+#app .pnode__cnt {
+  color: var(--text-secondary) !important;
+}
+
+#app .pnode.is-active .pnode__cnt,
+#app .pnode__hd.is-active .pnode__cnt,
+#app .pnode.is-open .pnode__cnt {
+  color: var(--ink) !important;
+}
+
+/* 展开中的节点是金砖，浅蓝字在金底上只有 1.27:1 */
+#app .pnode:has(.pnode__hd.is-active) .pnode__cnt {
+  color: var(--ink) !important;
+}
+
+/* 12.3 故事编排的「镜头顺序」条是深底，深棕色文字只有 2.08:1 */
+#app .flow-col-head > span {
+  color: var(--mk-stage-text) !important;
+}
+
+#app .flow-col-head > strong small {
+  color: var(--mk-stage-dim) !important;
+}
+
+/* 12.4 顶栏「创作模式」下拉的标签：它坐在深色工具条（#1f1f1f）上，
+   深棕字只有 2.08:1。这里不是"浅字掉到纸底"，而是反过来——
+   深字掉进了深底，所以要给回浅色。 */
+#app .ui-dropdown-label {
+  color: var(--mk-stage-text) !important;
+}
+
+/* ==========================================================================
+   13. 关卡页签均分整行：从"挤在左边一条"改成"铺满整条赛道"
+   ---------------------------------------------------------------------------
+   .level > li 原本 flex:0 0 auto + .step min-width:122px，7 个块固定 900 出头，
+   窗口一宽右边就留一大片空场，块内文字又只剩 12px 的窄条 —— 又空又挤。
+   改成每个块等分剩余宽度，终点旗固定收在末端。
+   ========================================================================== */
+#app .level > li:not(.goal) {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+#app .level .step {
+  width: 100%;
+  min-width: 0;
+}
+
+#app .level .step .block {
+  justify-content: center;
+  padding: 0 8px;
+  min-width: 0;
+}
+
+#app .level .goal {
+  flex: 0 0 auto;
+}
+
+/* 窄屏不再均分：宁可横向滚动，也不把七个块压成七个字 */
+@media (max-width: 840px) {
+  #app .level > li:not(.goal) {
+    flex: 0 0 auto;
+  }
+
+  #app .level .step {
+    width: auto;
+    min-width: 112px;
+  }
+}
+
+/* ==========================================================================
+   14. 对话页回到首页那片天空：取消「白板 + 深色输入条」的上下分层
+   ---------------------------------------------------------------------------
+   原来 .workspace-stage 铺一层深蓝底板，再把消息区做成一块带 4px 墨边的白板，
+   输入区又是一条 #101f43 的深色横条 —— 三段各唱各的调，看起来被切成上下两层。
+   首页的做法是：天空透出来，消息和输入框都是浮在上面的纸卡。
+   对话态（.is-chat）统一按首页来处理。
+   ========================================================================== */
+/* 外壳本身铺了一层纸色底（.app-stage / .comic-workspace），会把 body 上的天空
+   整片盖住。对话态下让这两层也透明，天空和远山才能透上来——首页之所以有风景，
+   是因为它没有这层纸。 */
+#app .app-stage:has(.workspace-stage.is-chat),
+#app .domain-workspace:has(.workspace-stage.is-chat) {
+  background: transparent !important;
+}
+
+#app .workspace-stage.is-chat {
+  background: transparent !important;
+}
+
+#app .workspace-stage.is-chat .workspace-messages,
+#app .workspace-stage.is-chat .panelWrap > .workspace-messages {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding-inline: var(--mk-chat-inline) !important;
+}
+
+/* 消息列和输入框用同一套左右留白，才不会一个居中一个贴边 */
+#app .workspace-stage.is-chat {
+  --mk-chat-inline: max(24px, calc((100% - 820px) / 2));
+}
+
+/* 输入区不在 .workspace-stage 里（它挂在壳的 composer 插槽），单独按对话态处理 */
+#app .workspace-composer.is-chat {
+  --mk-chat-inline: max(24px, calc((100% - 820px) / 2));
+  background: transparent !important;
+  padding: 0 var(--mk-chat-inline) 14px !important;
+}
+
+/* 控制条原来靠浅色字压深底，现在底变成天空，字要回到墨色 */
+#app .workspace-composer.is-chat .composer-context {
+  margin: 0 0 8px;
+  padding: 0 2px;
+}
+
+#app .workspace-composer.is-chat .composer-context > small,
+#app .workspace-composer.is-chat > small {
+  color: var(--ink) !important;
+  opacity: .72;
+}
+
+/* 关卡页签那条网格线是给深底配的，在天空上会脏 */
+#app .workspace-stage.is-chat .trackWrap {
+  background-image: none !important;
+}
+
+/* 输入框卡片本身加一层落影，和首页那张浮起的卡一致 */
+#app .workspace-composer.is-chat .message-composer {
+  box-shadow: 6px 6px 0 rgba(20, 20, 20, .55) !important;
+}
+
+/* ==========================================================================
+   15. 图片投放区：从"飘在暗场里的小虚线圈"改成真正的投放位
+   ---------------------------------------------------------------------------
+   .wb-canvas 是 display:grid + place-items:center，空态又被内容撑成 463×360，
+   外面 896×562 的画布四周各空 200 多 —— 看起来就是随手放的一块占位。
+   这里让空态撑满画布，加上金色角标、像素徽章和 16:9 的视觉重心。
+   ========================================================================== */
+.stage-scroll .wb-canvas:has(> .wb-empty) {
+  align-items: stretch;
+  justify-items: stretch;
+}
+
+.stage-scroll .wb-canvas .wb-empty {
+  position: relative;
+  width: auto;
+  min-height: 0;
+  margin: 16px;
+  padding: 34px 24px;
+  border: 3px dashed rgba(198, 216, 250, .34);
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, .03) 0 10px, transparent 10px 20px),
+    rgba(6, 14, 32, .5);
+  gap: 14px;
+}
+
+/* 四角金色角标：告诉人"这块是可以放东西的区域" */
+.stage-scroll .wb-canvas .wb-empty::before,
+.stage-scroll .wb-canvas .wb-empty::after {
+  content: '';
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--gold);
+  pointer-events: none;
+}
+
+.stage-scroll .wb-canvas .wb-empty::before {
+  top: 10px;
+  left: 10px;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.stage-scroll .wb-canvas .wb-empty::after {
+  right: 10px;
+  bottom: 10px;
+  border-left: 0;
+  border-top: 0;
+}
+
+/* 图标做成一块像素徽章，而不是一枚飘着的线条图标 */
+.stage-scroll .wb-canvas .wb-drop-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 2px;
+  border: 3px solid var(--mk-stage-line);
+  background: rgba(255, 255, 255, .07);
+  color: var(--gold);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, .45);
+}
+
+.stage-scroll .wb-canvas .wb-empty > p {
+  font-family: var(--mk-font-pixel) !important;
+  font-size: 12px;
+  letter-spacing: .06em;
+  color: var(--mk-stage-text) !important;
+}
+
+/* ---------- 14.1 底部提示不能直接压在远山和地面上 ---------- */
+/* 天空底部是深紫色的山和砖地，墨色字掉进去就没了。给它一张半透明纸签，
+   无论窗口高低、地平线落在哪里，都保证能读。 */
+#app .workspace-composer.is-chat > small {
+  width: max-content;
+  max-width: 100%;
+  margin: 8px auto 0 !important;
+  padding: 3px 10px;
+  background: rgba(255, 253, 245, .88);
+  color: var(--ink) !important;
+  opacity: 1 !important;
+  border: 2px solid rgba(20, 20, 20, .55);
+}
+
+/* ---------- 13.1 终点旗：均分后被挤成一条线，直接收起 ---------- */
+/* 七个关卡铺满整条赛道后，旗杆没有剩余空间可站，被压成 2px 竖线还溢出上沿。
+   它本来是"右侧留白"的装饰，留白没了，装饰也就没有存在意义。 */
+#app .level .goal {
+  display: none !important;
+}
+
+
+/* ---------- 15.1 投放区要放得下"徽章 + 标题 + 按钮"这三行 ---------- */
+/* 不能只给画布设 min-height：.wb-main 是 overflow:hidden，抬高的画布会被
+   外层裁掉，导入按钮反而更看不见。正确做法是把整个工作台抬到一个能用的
+   高度，随后由 .stage-scroll 自己滚动 —— 放不下就滚，不要藏东西。 */
+.stage-scroll .image-workbench {
+  min-height: 430px;
+}
+
+/* ---------- 15.2 投放区里被深底吃掉的细节 ---------- */
+/* 1) .wb-import 带着 flex:1，进到投放区里会把自己撑满，整组内容被顶到上三分之一，
+      看着像没居中对齐。这里取消它的伸展，让"徽章 / 标题 / 按钮"作为一组居中。 */
+/* 2) 「或将图片拖到此处 · ≤5 MB」那行 small 是给纸底配的深棕色，压在深色投放区
+      上等于隐形。 */
+.stage-scroll .wb-canvas .wb-empty .wb-import--empty {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.stage-scroll .wb-canvas .wb-empty .image-import-controls small,
+.stage-scroll .wb-canvas .wb-empty small {
+  color: var(--mk-stage-dim) !important;
+  font-size: 12px !important;
+}
+
+/* ==========================================================================
+   段 16 · 历史抽屉（首页「最近对话」+ 工作区「作品与历史对话」共用）
+   为什么改成抽屉：常驻右栏永久吃掉 258–340px，1080 宽窗口下对话被挤成一条缝，
+   而它大部分时间是空白的。抽屉默认不占宽度，要翻历史时按需滑出。
+   ========================================================================== */
+#app .mk-drawer-layer {
+  position: fixed;
+  /* 全屏高度 + 高于 HUD(40)：顶到 --topbar-height 会在工作区把第二行工具栏拦腰切开
+     （「历史」按钮和右侧动作只露出半截），而不够高又会被顶栏盖住标题。
+     抽屉要么完整地在页面之上，要么不出现。 */
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+}
+
+#app .mk-drawer-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 14, 32, .3);
+  opacity: 0;
+  transition: opacity 160ms linear;
+}
+
+#app .mk-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(372px, 92%);
+  background: var(--paper) !important;
+  border-left: 4px solid var(--ink);
+  box-shadow: -10px 0 0 rgba(20, 20, 20, .38);
+  transform: translateX(calc(100% + 14px));
+  transition: transform 220ms var(--mk-step);
+}
+
+#app .mk-drawer-layer.is-open { pointer-events: auto; }
+#app .mk-drawer-layer.is-open .mk-drawer-scrim { opacity: 1; }
+#app .mk-drawer-layer.is-open .mk-drawer { transform: translateX(0); }
+
+/* 抽屉头：深色砖块，金色 kicker + 大标题 + 计数 + 关闭键。 */
+#app .mk-drawer-hd {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--ink-2) !important;
+  border-bottom: 4px solid #000;
+  color: var(--paper) !important;
+}
+
+#app .mk-drawer-kick {
+  color: var(--gold-light) !important;
+  font-family: var(--mk-font-pixel) !important;
+  font-size: 12px !important;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+
+#app .mk-drawer-hd strong {
+  color: var(--paper) !important;
+  font-family: var(--mk-font-pixel) !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  letter-spacing: .02em;
+}
+
+#app .mk-drawer-count {
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 2px solid var(--gold);
+  background: var(--gold) !important;
+  color: var(--ink) !important;
+  font-family: var(--mk-font-pixel) !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  line-height: 1.5;
+}
+
+#app .mk-drawer-x {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 2px solid var(--paper) !important;
+  background: transparent !important;
+  color: var(--paper) !important;
+  font-size: 15px !important;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: none !important;
+}
+
+#app .mk-drawer-x:hover { background: var(--brick) !important; border-color: var(--brick) !important; }
+
+#app .mk-drawer-bd {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px 10px 12px;
+  /* 内容比抽屉高时整块滚动，而不是把底部的费用行裁掉。 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 抽屉里的会话/作品列表沿用首页那套「纸卡行 + 硬边」语汇。 */
+#app .mk-drawer .conversation-history { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+
+#app .mk-drawer .conversation-search { display: block; flex: 0 0 auto; margin-bottom: 8px; }
+#app .mk-drawer .conversation-search input {
+  width: 100%;
+  min-height: 0;
+  padding: 5px 8px;
+  line-height: 1.4;
+  border: 3px solid var(--ink) !important;
+  border-radius: 0 !important;
+  background: var(--paper-2) !important;
+  color: var(--ink) !important;
+  font-family: var(--mk-font-pixel) !important;
+  font-size: 12px !important;
+  box-shadow: inset 0 -3px 0 var(--paper-3);
+}
+
+#app .mk-drawer .conversation-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+#app .mk-drawer .conversation-row {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+  border: 0;
+  border-bottom: 3px solid var(--paper-3);
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+#app .mk-drawer .conversation-row:hover { background: #fff7dc !important; }
+#app .mk-drawer .conversation-row[data-active='true'] { background: var(--gold-light) !important; }
+
+#app .mk-drawer .conversation-list button.conversation-select {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 8px;
+  overflow: hidden;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--ink) !important;
+  font-family: var(--mk-font-read) !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: none !important;
+}
+
+#app .mk-drawer .conversation-actions { display: flex; flex: 0 0 auto; gap: 2px; padding-right: 4px; opacity: 0; }
+#app .mk-drawer .conversation-row:hover .conversation-actions,
+#app .mk-drawer .conversation-row:focus-within .conversation-actions { opacity: 1; }
+
+#app .mk-drawer .conversation-row .conversation-actions button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 2px solid transparent !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--mk-text-dim) !important;
+  box-shadow: none !important;
+  cursor: pointer;
+}
+
+#app .mk-drawer .conversation-actions button:hover { border-color: var(--ink) !important; color: var(--ink) !important; }
+
+#app .mk-drawer .history-rename {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 8px;
+  line-height: 1.4;
+  border: 2px solid var(--ink) !important;
+  border-radius: 0 !important;
+  background: var(--paper-2) !important;
+  color: var(--ink) !important;
+  font-size: 12px !important;
+}
+
+/* 抽屉顶部的「新建」行：一句话解释「新建不会删掉旧作品」。 */
+#app .mk-drawer .drawer-new-row { display: grid; flex: 0 0 auto; gap: 6px; }
+#app .mk-drawer .drawer-new-row > .ui-button { width: 100%; justify-content: center; }
+#app .mk-drawer .drawer-new-row > small { color: var(--mk-text-dim) !important; font-size: 12px !important; line-height: 1.6; }
+
+/* 首页抽屉里的产物缩略图 / 任务块，也收成同一套纸卡。 */
+#app .mk-drawer .home-block { flex: 0 0 auto; border: 3px solid var(--ink); background: var(--paper-2) !important; }
+#app .mk-drawer .home-block-hd { display: flex; align-items: center; gap: 8px; padding: 6px 9px; background: var(--ink-3) !important; }
+
+#app .mk-drawer .home-block-hd .lbl {
+  color: var(--gold-light) !important;
+  font-family: var(--mk-font-pixel) !important;
+  font-size: 12px !important;
+  letter-spacing: .16em;
+}
+
+#app .mk-drawer .home-block-hd .n { margin-left: auto; color: #9c9c9c !important; font-family: var(--mk-font-pixel) !important; font-size: 12px !important; }
+#app .mk-drawer .home-recent-foot { flex: 0 0 auto; display: grid; gap: 4px; padding: 8px 2px 0; border-top: 3px solid var(--ink); }
+#app .mk-drawer .home-recent-foot .kv { display: flex; justify-content: space-between; font-size: 12px; }
+#app .mk-drawer .home-recent-foot .kv span { color: var(--mk-text-dim) !important; }
+#app .mk-drawer .home-recent-foot .kv b { color: var(--ink) !important; font-family: var(--mk-font-pixel) !important; font-weight: 400 !important; }
+
+/* 工具栏里的「历史」入口：图标 + 两个字 + 金砖条数，和首页顶栏那枚保持一致。 */
+#app .ws-shell-top .toolbar-history { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+#app .ws-shell-top .toolbar-history svg { flex: 0 0 auto; }
+#app .ws-shell-top .toolbar-history b {
+  display: inline-grid; place-items: center; min-width: 16px; padding: 0 3px;
+  background: var(--gold) !important; color: var(--ink) !important;
+  font-family: var(--mk-font-pixel) !important; font-size: 12px !important;
+  font-weight: 400 !important; line-height: 1.5;
+}
+#app .ws-shell-top .toolbar-history[aria-pressed='true'] b { background: var(--ink) !important; color: var(--gold-light) !important; }

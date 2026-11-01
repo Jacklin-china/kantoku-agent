@@ -20,7 +20,7 @@ export const storyCodeLabels: Record<string, string> = {
 }
 type StoryApi = Pick<typeof core, 'getComicStory' | 'getComicStoryImages' | 'getComicStoryVersions' | 'getComicStoryRequests'
   | 'getComicProject' | 'saveComicStory' | 'generateComicStory' | 'reviewComicStory' | 'confirmComicStory'
-  | 'restoreComicStory' | 'adoptComicStoryCandidate' | 'exportComicStory' | 'getArtifactContentUrl'>
+  | 'restoreComicStory' | 'exportComicStory' | 'getArtifactContentUrl'>
 
 /** UI session controller, owned by DirectorWorkspace. The server defines versions and approval.
  * Draft edits outlive the story/export view; a late request never replaces newer local edits. */
@@ -30,7 +30,8 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
     images: [] as ComicImageView[], versions: [] as core.ComicStory[], selectedImages: [] as string[],
     imageWarnings: [] as (ComicImageRef & { reason: string })[],
     previews: {} as Record<string, string>, previewErrors: {} as Record<string, string>,
-    unknownRequest: null as { request_id: string; action: string } | null, candidateRunId: '' })
+    unknownRequest: null as { request_id: string; action: string } | null, candidateRunId: '', candidateCanContinue: false,
+    candidate: null as { draft: ComicStoryDraft; review?: core.ComicStoryReview } | null })
   let epoch = 0, editEpoch = 0, loadSequence = 0, disposed = false
   let autosave: ReturnType<typeof setTimeout> | null = null
   let savePromise: Promise<boolean> | null = null
@@ -38,7 +39,8 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
   let visiblePreviewIds = new Set<string>()
   const dirty = computed(() => state.dirty)
   const confirmed = computed(() => state.loaded && !state.dirty && !state.conflict && !!state.view?.confirmation?.confirmed)
-  const canConfirm = computed(() => state.loaded && !state.dirty && !state.conflict && !!state.view?.review?.validation_requested
+  const canConfirm = computed(() => state.loaded && !state.dirty && !state.conflict && !!state.view?.review
+    && (state.view.can_confirm ?? !!state.view.review.validation_requested)
     && state.view.review.status !== 'needs_revision' && !state.view.review.findings.some(item => item.severity === 'error')
     && !state.view.missing_images.length)
   const canExport = computed(() => confirmed.value && !state.view?.missing_images.length && !!state.view?.export_text)
@@ -61,6 +63,11 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
     if (view.story && !state.versions.some(item => item.version === view.story!.version)) state.versions.unshift(view.story)
     if (replaceDraft) { state.draft = view.story ? cloneDraft(view.story) : emptyDraft(); state.dirty = false; state.conflict = false }
     if (view.candidate_run_id) state.candidateRunId = view.candidate_run_id
+    if (view.generation_status === 'needs_revision' && view.candidate_draft) {
+      state.candidate = { draft: cloneDraft(view.candidate_draft), review: view.candidate_review }
+      state.candidateCanContinue = true
+    }
+    if (view.generation_status === 'ready') { state.candidateRunId = ''; state.candidate = null; state.candidateCanContinue = false }
   }
   function previewFailed(image: { artifact_id: string }): void {
     const url = state.previews[image.artifact_id]
@@ -107,7 +114,7 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
     if (state.owner !== owner) {
       epoch++; editEpoch++; clearPreviews(); if (autosave) clearTimeout(autosave)
       Object.assign(state, { owner, loaded: false, dirty: false, conflict: false, error: '', notice: '', view: null,
-        draft: emptyDraft(), images: [], imageWarnings: [], versions: [], selectedImages: [], operation: '', saving: false, unknownRequest: null, candidateRunId: '' })
+        draft: emptyDraft(), images: [], imageWarnings: [], versions: [], selectedImages: [], operation: '', saving: false, unknownRequest: null, candidateRunId: '', candidate: null, candidateCanContinue: false })
       savePromise = null
       try { state.unknownRequest = JSON.parse(sessionStorage.getItem(requestStorage(owner)) ?? 'null') } catch { state.unknownRequest = null }
     }
@@ -225,10 +232,17 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
       if (ownerEpoch !== epoch || disposed) return
       const pending = state.unknownRequest
       const run = pending ? tasks.find(item => (item.state.media_input as Record<string, unknown> | undefined)?.request_id === pending.request_id) : undefined
-      const adopted = new Set(tasks.map(item => (item.state.story_result as ComicStoryView | undefined)?.candidate_run_id).filter(Boolean))
-      const candidate = tasks.find(item => item.state.story_candidate && ['waiting', 'failed'].includes(item.status)
-        && !item.state.story_result && !adopted.has(item.id))
+      const adopted = new Set(tasks.map(item => item.state.story_result as ComicStoryView | undefined)
+        .filter(result => result?.generation_status !== 'needs_revision').map(result => result?.candidate_run_id).filter(Boolean))
+      const candidate = tasks.find(item => {
+        const stored = item.state.story_candidate as { request?: { expected_story_version: number } } | undefined
+        return stored && ['waiting', 'failed'].includes(item.status)
+          && (stored.request?.expected_story_version === undefined || stored.request.expected_story_version === (state.view?.story?.version ?? 0))
+          && (!item.state.story_result || (item.state.story_result as ComicStoryView).generation_status === 'needs_revision') && !adopted.has(item.id)
+      })
       state.candidateRunId = candidate?.id ?? ''
+      state.candidate = candidate?.state.story_candidate as typeof state.candidate ?? null
+      state.candidateCanContinue = candidate?.status === 'waiting' && !!state.candidate?.review
       if (!pending) return
       if (!run || ['pending', 'running'].includes(run.status)) { state.notice = '请求结果尚未确定，请查询原请求；不会自动重新生成。'; return }
       const unknown = run.state.provider_submission_unknown || run.state.task_status === 'unknown'
@@ -236,7 +250,6 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
       const view = await api.getComicStory(owner)
       if (ownerEpoch !== epoch || !view) return
       applyView(view, !state.dirty)
-      if (run.state.story_candidate && !run.state.story_result && !adopted.has(run.id)) state.candidateRunId = run.id
       state.unknownRequest = null; rememberRequest(null)
       state.notice = run.status === 'failed' ? '原请求已失败，原故事和本地修改已保留。' : '已恢复原请求结果。'
       if (state.dirty) state.conflict = true
@@ -250,8 +263,11 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
     const unique = new Map(source.map(item => [storyImageKey(item), item]))
     return [...unique.values()]
   }
-  async function mutate(action: 'generate' | 'review' | 'confirm' | 'restore' | 'candidate' | 'export', argument?: number | boolean): Promise<boolean> {
+  async function mutate(action: 'generate' | 'refine' | 'review' | 'confirm' | 'restore' | 'export', argument?: number | boolean): Promise<boolean> {
     if (state.operation || state.unknownRequest) return false
+    if (action === 'refine' && (!state.candidateCanContinue || !state.candidate || !state.candidateRunId || state.dirty)) {
+      state.error = '请先保存当前修改，再基于当前故事整理。'; return false
+    }
     let repaired = 0
     if (action === 'generate') state.draft.shots.forEach((shot, index) => {
       const replacement = imageReplacement(shot)
@@ -290,16 +306,23 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
       if (action === 'generate') {
         view = await api.generateComicStory(owner, { ...body, instruction: state.draft.instruction,
           images, draft: cloneDraft(state.draft) })
+      } else if (action === 'refine') {
+        const candidate = cloneDraft(state.candidate!.draft)
+        const candidateImages = [...new Map(candidate.shots.map(shot => [storyImageKey(shot.image), shot.image])).values()]
+        view = await api.generateComicStory(owner, { ...body, candidate_run_id: state.candidateRunId,
+          instruction: candidate.instruction, images: candidateImages, draft: candidate })
       } else if (action === 'review') view = await api.reviewComicStory(owner, body)
       else if (action === 'confirm') view = await api.confirmComicStory(owner, { ...body,
         accept_warnings: argument === true || state.view?.review?.status === 'warning' })
       else if (action === 'restore') view = await api.restoreComicStory(owner, { ...body, version: Number(argument) })
-      else if (action === 'candidate') view = await api.adoptComicStoryCandidate(owner, { ...body, candidate_run_id: state.candidateRunId })
       else view = await api.exportComicStory(owner, body)
       if (ownerEpoch !== epoch || disposed) return false
       applyView(view, edits === editEpoch); rememberRequest(null)
+      if (view.generation_status === 'needs_revision') {
+        state.notice = `AI 尚未完成整理，还有 ${view.candidate_review?.findings.length ?? 0} 项待修正或优化。当前故事已保留，可继续由 AI 修正并复核。`
+      }
+      if (view.generation_status === 'ready') state.notice = 'AI 已完成整理和复核，结果已保存。可直接确认，也可再次校验。'
       if (edits !== editEpoch) { state.dirty = true; state.notice = '结果已保存，继续保留你刚才的修改。'; void save() }
-      if (action === 'candidate') state.candidateRunId = ''
       const versions = await api.getComicStoryVersions(owner)
       if (ownerEpoch === epoch && !disposed) state.versions = versions
       return true
@@ -311,7 +334,7 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
       else {
         rememberRequest(null)
         if (status === 409) { const latest = await api.getComicStory(owner); if (latest && ownerEpoch === epoch) applyView(latest, false); await recoverRequest() }
-        else if (submitted && action === 'generate') {
+        else if (submitted && ['generate', 'refine'].includes(action)) {
           const message = state.error
           await recoverRequest()
           if (ownerEpoch === epoch && !disposed) state.error = message
@@ -333,7 +356,7 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (failure) { if (ownerEpoch === epoch) state.error = failure instanceof Error ? failure.message : '素材包下载失败' }
   }
-  function reset(): void { epoch++; editEpoch++; if (autosave) clearTimeout(autosave); clearPreviews(); state.owner = ''; state.view = null; state.loaded = false; state.draft = emptyDraft(); state.dirty = false; state.images = []; state.versions = []; state.unknownRequest = null; state.operation = ''; savePromise = null }
+  function reset(): void { epoch++; editEpoch++; if (autosave) clearTimeout(autosave); clearPreviews(); state.owner = ''; state.view = null; state.loaded = false; state.draft = emptyDraft(); state.dirty = false; state.images = []; state.versions = []; state.unknownRequest = null; state.operation = ''; state.candidateRunId = ''; state.candidate = null; state.candidateCanContinue = false; savePromise = null }
   async function dispose(): Promise<void> { await save(); disposed = true; reset() }
   return { state, dirty, confirmed, canConfirm, canExport, saveLabel, load, save, changed, toggleImage, addImage, moveShot,
     removeShot, replaceImage, imageReplacement, repairImage, preview, previewFailed, showImages, recoverRequest, mutate, download, reset, dispose }

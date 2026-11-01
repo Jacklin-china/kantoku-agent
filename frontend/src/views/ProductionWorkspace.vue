@@ -12,7 +12,7 @@ import { getArtifactContentUrl, getArtifacts, getEvents, getRun, getTaskImageUrl
 import type { CoreArtifact, CoreRun } from '../types'
 import HomeView from './HomeView.vue'
 
-const props = defineProps<{ domain: string; runId?: string }>()
+const props = defineProps<{ domain: string; runId?: string; historySignal?: number }>()
 const presenter = computed(() => presenterFor(props.domain))
 const run = ref<CoreRun | null>(null)
 const artifacts = ref<CoreArtifact[]>([])
@@ -159,7 +159,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section v-if="isComic" class="domain-workspace comic-workspace">
-    <DirectorWorkspace :key="runId ?? 'current-project'" :initial-run-id="runId" @new-project="navigate({ name: 'workspace', domain: 'comic' })">
+    <DirectorWorkspace :key="runId ?? 'current-project'" :initial-run-id="runId" :history-signal="historySignal" @new-project="navigate({ name: 'workspace', domain: 'comic' })">
       <template #works>
         <section v-if="run && run.workflow !== 'comic.director'" class="comic-preview" aria-label="已有制作结果">
           <header class="comic-preview-header"><strong>已有制作记录</strong><small>{{ statusText }}</small></header>
@@ -180,6 +180,9 @@ onBeforeUnmount(() => {
   </section>
 
   <!-- 非 Comic 领域：统一 Shell —— 左侧导航 + 中央工作区 + 顶部阶段导航 + 按需详情抽屉 -->
+  <section v-else-if="domain === 'commerce'" class="domain-workspace ws-domain">
+    <p>电商功能已停用。</p>
+  </section>
   <section v-else class="domain-workspace ws-domain">
     <HomeView
       :key="domain"

@@ -1199,17 +1199,15 @@ def test_workspace_http_request_reaches_existing_production_graph(
         connection.close()
 
 
-def test_selected_commerce_runs_existing_graph_not_normal_chat(
+def test_selected_commerce_does_not_create_a_task(
     app: web_studio.StudioApplication,
     production: list[str],
 ) -> None:
     cid = app.create_conversation({"interaction_mode": "autonomous"})["id"]
-    events = _send(app, cid, selected_domain="commerce", content="做一个便携台灯商品介绍")
-    run = _run(events)
-    assert run["domain"] == "commerce" and run["status"] == "completed"
-    assert run["state"]["conversation_id"] == cid
-    assert run["state"]["marketplace_draft"]["mock"] is True
+    with pytest.raises(ToolError, match="电商功能已停用"):
+        _send(app, cid, selected_domain="commerce", content="做一个便携台灯商品介绍")
     assert production == []
+    assert not app.runtime_store.list_runs(conversation_id=cid)
     assert app.conversation(cid)["domain"] is None
 
 

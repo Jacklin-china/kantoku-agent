@@ -9,6 +9,7 @@ export type RouteName =
   | 'task_batch'
   | 'assets'
   | 'settings'
+  | 'account'
 
 export interface Route {
   name: RouteName
@@ -134,6 +135,7 @@ export function parse(path: string): Route {
     return { name: 'tasks', tab: parts[1] }
   }
   if (parts[0] === 'assets') return { name: 'assets' }
+  if (parts[0] === 'account') return { name: 'account' }
   if (parts[0] === 'settings') return { name: 'settings' }
   return { name: 'home' }
 }
@@ -163,6 +165,8 @@ function hrefPath(next: Route): string {
       return next.tab && next.tab !== 'running' ? `/tasks/${next.tab}` : '/tasks'
     case 'assets':
       return '/assets'
+    case 'account':
+      return '/account'
     default:
       return '/settings'
   }

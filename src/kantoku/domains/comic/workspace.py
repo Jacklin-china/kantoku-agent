@@ -7,10 +7,11 @@ import hashlib
 import json
 from pathlib import Path
 
+from loguru import logger
 from pydantic import ValidationError
 
 from kantoku.config import ToolError
-from kantoku.config.observability import public_error
+from kantoku.config.observability import current_trace_id, public_error
 from kantoku.config.runtime_paths import get_runtime_paths, validate_runtime_path
 from kantoku.core.conversation_context import token_size
 from kantoku.core.conversations import InteractionMode, MessageRole, MessageType
@@ -38,6 +39,14 @@ from .models import (
     ImageVersionRef,
 )
 from .projects import ComicContextBuilder
+from .visual_continuity import (
+    OBJECT_CONTRACT,
+    VisualContinuityStore,
+    continuity_changes,
+    pending_changes,
+    shot_visual_plan,
+    visual_model_references,
+)
 
 
 class ComicWorkspaceService:
@@ -47,6 +56,7 @@ class ComicWorkspaceService:
         self.media, self.assets = media, assets
         self.projects, self.runtime = media.projects, media.runtime
         self.prompts = prompts
+        self.visual = VisualContinuityStore(media)
 
     def _latest(self, connection, project_id, kind, entity_id=None):
         return self.media._latest(connection, project_id, kind, entity_id or project_id)
@@ -402,13 +412,16 @@ class ComicWorkspaceService:
                                 state=state, current_node="director_critic")
         return {"run_id": run.id}
 
-    def image_continuity(self, work_id, request, resolution, *, model_call, cutoff, budget):
+    def image_continuity(self, work_id, request, resolution, *, model_call, cutoff, budget,
+                         vision_model_call=None):
         """从已采用图片及明确引用的方案恢复锚点，不受聊天窗口或轮数限制。"""
         work = self.get(work_id)
         tasks = {item["task_id"]: item for item in work["tasks"]}
         candidates = {}
         descriptions = {}
         selected = {}
+        visual_bases = {}
+        adopted_candidates = set()
         for source in resolution.sources:
             if source.kind != "run":
                 continue
@@ -486,11 +499,23 @@ class ComicWorkspaceService:
                            "version": prompt.version, "artifact_id": prompt.artifact_id}
                           if prompt and prompt.context_version else None)
                 key = project_id + ":" + image["artifact_id"]
+                if own_adoption:
+                    adopted_candidates.add(key)
                 candidates[key] = {"image": image, "selection_version": anchor["selection_version"],
                     "prompt_source": source, "source_task_id": project_id,
                     "source_director_id": spec.spec_id if spec else None,
                     "source_director_version": spec.version if spec and prompt
                         and prompt.director_spec_version == spec.version else None}
+                visual_bases[key] = (prompt.context_sources.get("image_references", {}).get(
+                    "continuity") if own_adoption and prompt else
+                    anchor if not own_adoption else None)
+                if visual_bases[key] and visual_bases[key].get("visual_state"):
+                    candidates[key]["visual_state"] = visual_bases[key]["visual_state"]
+                if vision_model_call is not None:
+                    cached = self.visual.cached(work_id, {"image": image,
+                        "selection_version": anchor["selection_version"]})
+                    if cached:
+                        candidates[key]["visual_state"] = cached
                 descriptions[key] = {"source_request": tasks[project_id].get("requirement")
                     or tasks[project_id]["title"], "prompt_sections": {
                         section: getattr(prompt, section)
@@ -500,11 +525,13 @@ class ComicWorkspaceService:
             return None
         schema = ImageContinuityDecision.model_json_schema()
         schema["properties"]["candidate_id"]["anyOf"][0]["enum"] = list(candidates)
-        messages = [{"role": "system", "content": (
+        system = (
             "判断本轮创作对已采用图片的延续及逐字段修改权限，不生成方案。"
             "已采用图是视觉基准；除用户明确提出的变化，其余人物、数量、外貌、服装、"
-            "场景结构、道具、画风、构图和摄影都保留。动作/神态变化只释放实际涉及的"
-            "shot_context 叶子，不释放人物或世界。局部换服装不能释放外貌、身份或场景。"
+            "场景结构、道具、画风、构图和摄影都保留。动作/神态变化通常只释放涉及的"
+            "shot_context 叶子；完成请求必需的道具位置、遮挡或空间关系变化可以释放"
+            "对应叶子及具体元素，但不能连带重设道具外形或整个世界。"
+            "局部换服装不能释放外貌、身份或场景。"
             "fields 来自原有 ComicPromptContexts：" + json.dumps({key: list(
                 field.annotation.model_fields)
                 for key, field in ComicPromptContexts.model_fields.items()})
@@ -513,6 +540,9 @@ class ComicWorkspaceService:
             "changes 每项 quote 必须逐字来自 current_request，并确实授权该字段改变；"
             "未提及的变化不填写，保持站姿/场景等不是修改授权。"
             "field 必须使用 Schema 中枚举的完整叶子路径，不得填写整段、别名或自创字段。"
+            "element_ids 如有对应已建立元素，只填写本轮允许改变的具体元素 ID；多人不能"
+            "因一人换装释放所有人的服装。只允许完成本轮要求必要的姿态、遮挡、构图联动，"
+            "必要联动仍须引用本轮原话，不允许连带换脸、换服装、换道具或风格。"
             "如收到 repair，只纠正指出的结构问题；fixed 与 change_count 不可改写，"
             "不得借纠正更换图片、重做判断或扩大用户修改范围。"
             "若 repair 给出 alternatives，须在原图片和原独立依据两条分支中消除冲突："
@@ -520,14 +550,47 @@ class ComicWorkspaceService:
             "选择独立画面时 candidate_id=null、原独立依据不变、changes=[]。"
             "明确独立新题材或完全重做时 candidate_id=null，new_context_quote 填对应本轮原话。"
             "只改变某元素仍选原图并列出相应变化。无法唯一判断则给 question，不猜测。"
-            "只返回符合 Schema 的公开 JSON："
-            + json.dumps(schema, ensure_ascii=False))},
-            {"role": "user", "content": json.dumps({"stage": "confirmed_image_continuity",
-                "current_request": request, "resolution": resolution.model_dump(mode="json"),
-                "candidates": {key: {**candidate, **descriptions[key], "candidate_id": key}
-                               for key, candidate in candidates.items()}}, ensure_ascii=False)}]
-        decision = self._continuity_decision(
-            work_id, messages, request, candidates, model_call=model_call, budget=budget)
+            "当所选 visual_state.contract=visual-elements-2 时，还必须返回 required_elements"
+            "和 visual_changes（无变化用空数组）。required_elements 只选本镜头需要视觉依据的"
+            "属性 ID，出画对象留在作品但不选入，旧动作和旧构图不作为新镜头的保持项。"
+            "visual_changes 使用稳定 entity_id 与语义 attributes，不按 Prompt 栏目授权；"
+            "转身只允许 action/position/presence 等必要联动，不能释放 face/hair/clothing。"
+            "明确新增道具使用 operation=add、entity_id=null 和本次唯一 new_object_key；"
+            "已有人物首次露脸等未知属性使用 design，不能把尚无图像证据的面容当成定稿。"
+            "target 是展示名称，不是对象身份。每条 quote 逐字引用 current_request。"
+            "只返回符合 Schema 的公开 JSON：")
+        payload = {"stage": "confirmed_image_continuity", "current_request": request,
+            "resolution": resolution.model_dump(mode="json"),
+            "candidates": {key: {**visual_model_references({"continuity": candidate})[
+                "continuity"], **descriptions[key], "candidate_id": key}
+                           for key, candidate in candidates.items()}}
+        messages = [{"role": "system", "content": system + json.dumps(schema, ensure_ascii=False)},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
+        size = token_size(messages)
+        logger.bind(component="comic.image_continuity", project_id=work_id,
+                    trace_id=current_trace_id() or "-").info(
+            "context capacity phase=full estimated_tokens={} limit={} candidates={}",
+            size, budget, len(candidates))
+        selected_id = None
+        if size > budget:
+            decision = self._continuity_source(
+                work_id, payload, model_call=model_call, budget=budget)
+            selected_id = decision.candidate_id if not decision.question else None
+            if selected_id:
+                # Read the original complete evidence only after an explicit source decision.
+                # The catalog never grants change permissions or replaces the saved source.
+                payload = {**payload, "candidates": {
+                    selected_id: payload["candidates"][selected_id]}}
+                schema["properties"]["candidate_id"]["anyOf"][0]["enum"] = [selected_id]
+                messages = [{"role": "system", "content": system + json.dumps(
+                    schema, ensure_ascii=False)}, {"role": "user", "content": json.dumps(
+                        payload, ensure_ascii=False)}]
+        if size <= budget or selected_id:
+            decision = self._continuity_decision(work_id, messages, request,
+                {selected_id: candidates[selected_id]} if selected_id else candidates,
+                model_call=model_call, budget=budget)
+            if selected_id and not decision.question and decision.candidate_id != selected_id:
+                raise ToolError("图片延续判断改写了已选择来源，原设定已保留")
         if decision.question:
             raise ToolError(decision.question)
         if decision.candidate_id is None:
@@ -541,7 +604,266 @@ class ComicWorkspaceService:
             raise ToolError("图片修改范围缺少本轮用户原话依据")
         chosen = candidates[decision.candidate_id]
         self.require_continuity(work_id, chosen)
-        return {**chosen, "changes": [item.model_dump() for item in decision.changes]}
+        if vision_model_call is not None:
+            state = self.visual_state_for_image(work_id, chosen, model_call=vision_model_call)
+            self.visual.require_state(work_id, state)
+            chosen = {**chosen, "visual_state": state}
+        state = chosen.get("visual_state", {})
+        if state.get("contract") == OBJECT_CONTRACT:
+            if decision.required_elements is None or decision.visual_changes is None:
+                messages = [{"role": "system", "content": (
+                    "只编译本轮镜头的对象属性权限和所需视觉依据，不生成画面。"
+                    "required_elements 选本镜头需保持并可见的属性 ID，不携带无关出画对象、"
+                    "旧动作或旧构图。visual_changes 按稳定 entity_id 和 attributes 授权，"
+                    "Prompt 栏目不决定权限。转身不授权换脸；改动作不授权换装。"
+                    "未知面容/细节首次需要时 operation=design；明确新增对象 operation=add，"
+                    "使用本次唯一 new_object_key，entity_id=null。已有对象 operation=change。"
+                    "quote 必须逐字来自 request；必要动作/位置/遮挡联动须保留对应原话。"
+                    "无法确定对象时返回 question 并停止，不猜测。只返回 required_elements"
+                    "与 visual_changes 两个字段；visual_changes 每项符合以下 Schema："
+                    + json.dumps(ImageContinuityDecision.model_json_schema(), ensure_ascii=False)
+                )}, {"role": "user", "content": json.dumps({"stage": "visual_shot_plan",
+                    "request": request, "elements": visual_model_references({"continuity": {
+                        "visual_state": state}})["continuity"]["visual_state"]["elements"]},
+                    ensure_ascii=False)}]
+                if token_size(messages) > budget:
+                    raise ToolError("本轮对象选择超过容量，原设定已保留")
+                try:
+                    parsed = json.loads(model_call(messages))
+                    if not isinstance(parsed, dict) or set(parsed) != {
+                            "required_elements", "visual_changes"}:
+                        raise ValueError("shot plan fields")
+                    semantic_decision = ImageContinuityDecision.model_validate({
+                        **parsed, "candidate_id": decision.candidate_id})
+                except (ValueError, ValidationError):
+                    raise ToolError("本轮对象范围不明确或结构无效，原设定已保留") from None
+            else:
+                semantic_decision = decision
+            plan = shot_visual_plan(state, semantic_decision, request)
+            previous = (visual_bases[decision.candidate_id] or {})
+            pending = (state.get("unresolved_changes", []) if decision.candidate_id
+                in adopted_candidates else previous.get("visual_plan", {}).get("pending_changes",
+                    previous.get("visual_plan", {}).get("changes", [])))
+            by_attribute = {}
+            for index, change in enumerate([*pending, *plan["changes"]]):
+                for attribute in change["attributes"]:
+                    if index < len(pending) and attribute in {
+                            "action", "pose", "composition", "camera", "lighting"}:
+                        continue
+                    by_attribute[change["entity_id"], attribute] = {**change,
+                                                                  "attributes": [attribute]}
+            if len(by_attribute) > 128:
+                raise ToolError("待落实对象属性超过容量，请先生成并采用当前画面")
+            relevant = {item["entity_id"] for item in state["elements"]
+                        if item["element_id"] in plan["required_elements"]}
+            relevant.update(item["entity_id"] for item in plan["changes"])
+            plan["pending_changes"] = list(by_attribute.values())
+            plan["changes"] = [item for item in plan["pending_changes"]
+                               if item["entity_id"] in relevant]
+            return {**chosen, "changes": [item.model_dump(exclude_defaults=True)
+                for item in decision.changes], "visual_plan": plan}
+        elements = {item["element_id"]: item for item in state.get("elements", [])}
+        self._visual_change_targets(request, decision.changes, elements,
+                                    model_call=model_call, budget=budget, work_id=work_id)
+        changes = [{**item.model_dump(exclude_defaults=True),
+                                       **({"element_ids": item.element_ids} if state else {})}
+                   for item in decision.changes]
+        if state:
+            previous = (visual_bases[decision.candidate_id] or {})
+            chosen = {**chosen, "pending_changes": pending_changes(state,
+                state.get("unresolved_changes", []) if decision.candidate_id in adopted_candidates
+                else continuity_changes(previous),
+                changes)}
+        return {**chosen, "changes": changes}
+
+    @staticmethod
+    def _visual_change_targets(request, changes, elements, *, model_call, budget, work_id=None):
+        """Locate only unresolved attributes; commit permissions after complete validation."""
+        assignments, missing, allowed = {}, [], []
+        for index, change in enumerate(changes):
+            eligible = [key for key, item in elements.items() if item["field"] == change.field]
+            if (len(change.element_ids) != len(set(change.element_ids))
+                    or any(key not in eligible for key in change.element_ids)):
+                raise ToolError("图片修改指定了未知元素或其他属性，原设定已保留")
+            # An explicit [] targets a new/unknown attribute, never every existing object.
+            if "element_ids" in change.model_fields_set or not eligible:
+                assignments[index] = change.element_ids
+            else:
+                missing.append(index)
+                allowed.append(eligible)
+        if not missing:
+            return
+        schema = {"type": "object", "additionalProperties": False, "required": ["element_ids"],
+            "properties": {"element_ids": {"type": "array", "minItems": len(missing),
+                "maxItems": len(missing), "items": False, "prefixItems": [
+                    {"type": "array", "uniqueItems": True, "maxItems": len(keys),
+                     "items": {"type": "string", "enum": keys}} for keys in allowed]}}}
+        system = {"role": "system", "content": (
+            "仅定位用户允许修改的既有视觉元素，不改写字段、原话、图片或创作内容。"
+            "按输入 changes 的顺序，每项返回一个元素 ID 数组，只能使用对应位置 Schema 的枚举。"
+            "只选本轮原话确实涉及的具体对象及属性；"
+            "一人换装不得选择其他人，转身不得选择面容。新增对象或无既有对应属性返回空数组。"
+            "如收到 repair，只修复指出的问题；fixed 必须原样保留，required 中的合法 ID 不得删去，"
+            "counts 中的原条目数量不能增加，不扩大权限、不重做已合法决定。"
+            "有真实歧义且不能唯一定位时仅返回 {\"question\":\"简短问题\"}，不能按顺序猜测。"
+            "正常结果只返回符合以下 Schema 的 JSON，不附说明："
+            + json.dumps(schema, ensure_ascii=False))}
+        payload = {"stage": "visual_change_targets", "request": request,
+            "changes": [changes[index].model_dump() for index in missing],
+            "elements": [{key: item[key] for key in ("element_id", "target", "field", "value")}
+                         for item in elements.values()]}
+        fixed, required, counts = {}, {}, {}
+        for attempt in range(2):
+            messages = [system, {"role": "user", "content": json.dumps(
+                payload, ensure_ascii=False)}]
+            if token_size(messages) > budget:
+                raise ToolError("视觉元素定位超过上下文容量，原设定已保留")
+            # Only received invalid structure is corrected; transport errors never resubmit.
+            raw = model_call(messages)
+            issues, valid, fragments, sizes = [], {}, {}, {}
+            try:
+                output = json.loads(raw)
+            except (ValueError, TypeError):
+                output = None
+            if not isinstance(output, dict):
+                issues.append({"path": [], "type": "object_required"})
+            else:
+                question = output.get("question")
+                if isinstance(question, str) and question.strip():
+                    raise ToolError("视觉元素修改对象不明确，请说明需要改变哪个对象")
+                if (set(output) - {"element_ids", "question"}
+                        or ("question" in output and question is not None)):
+                    issues.append({"path": ["<unknown>"], "type": "unexpected_field"})
+                groups = output.get("element_ids")
+                # A flat list has exactly one interpretation only for one requested attribute.
+                if (len(missing) == 1 and isinstance(groups, list) and groups
+                        and all(isinstance(key, str) for key in groups)):
+                    groups = [groups]
+                if not isinstance(groups, list) or len(groups) != len(missing):
+                    issues.append({"path": ["element_ids"], "type": "group_count"})
+                else:
+                    for position, (group, eligible) in enumerate(zip(groups, allowed, strict=True)):
+                        if (not isinstance(group, list) or len(group) > 128
+                                or any(not isinstance(key, str) for key in group)):
+                            kind = "string_array_required"
+                        else:
+                            fragments[position] = [key for key in group if key in eligible]
+                            sizes[position] = len(group)
+                            kind = ("duplicate_id" if len(group) != len(set(group)) else
+                                    "unknown_or_other_attribute" if any(
+                                        key not in eligible for key in group) else None)
+                            if kind is None:
+                                valid[position] = group
+                        if kind:
+                            issues.append({"path": ["element_ids", position], "type": kind})
+            if not issues:
+                if (any(valid[index] != group for index, group in fixed.items())
+                        or any(not set(keys).issubset(valid[index])
+                               for index, keys in required.items())
+                        or any(len(valid[index]) > size for index, size in counts.items())):
+                    raise ToolError("视觉元素纠正改写了已核验范围，原设定已保留")
+                assignments.update({index: valid[position]
+                                    for position, index in enumerate(missing)})
+                break
+            failure = ToolError("视觉元素修改范围未返回有效身份，原设定已保留",
+                detail=json.dumps({"stage": "visual_change_targets", "issues": issues[:20]}))
+            if attempt:
+                raise failure from None
+            public_error(failure, component="comic.image_continuity", project_id=work_id,
+                         phase="visual_target_correction", response_sha256=value_hash(raw))
+            # Never forward invalid output, unknown identifiers or private fields.
+            fixed, required, counts = valid, fragments, sizes
+            payload["repair"] = {"issues": issues[:20], "fixed": fixed,
+                                 "required": required, "counts": counts}
+        for index, ids in assignments.items():
+            changes[index].element_ids = ids
+
+    def visual_state_for_image(self, work_id, context, *, model_call, seen=None):
+        """Follow only the actual image's frozen production input, including legacy ancestors."""
+        source = {"image": context["image"], "selection_version": context["selection_version"]}
+        self.visual.require_source(work_id, source)
+        cached = self.visual.cached(work_id, source)
+        if cached:
+            return cached
+        if context.get("visual_state") and context["visual_state"]["source"] == source:
+            self.visual.require_state(work_id, context["visual_state"])
+            return context["visual_state"]
+        seen = set() if seen is None else seen
+        key = context["image"]["artifact_id"]
+        if key in seen or len(seen) >= 128:
+            raise ToolError("视觉来源链循环或超过处理容量，原图已保留")
+        seen.add(key)
+        previous = None
+        instruction_id = context["image"].get("instruction_artifact_id")
+        if instruction_id:
+            artifact = self.runtime.get_artifact(instruction_id)
+            if artifact.metadata.get("prompt_id"):
+                prompt = self.prompts.get(artifact.metadata["shot_id"], version=artifact.version)
+                if (prompt.artifact_id != instruction_id
+                        or prompt.project_id != context["image"]["project_id"]):
+                    raise ToolError("图片的视觉来源 Prompt 身份不一致")
+                previous = prompt.context_sources.get("image_references", {}).get("continuity")
+        inherited = self.visual_state_for_image(
+            work_id, previous, model_call=model_call, seen=seen) if previous else None
+        plan = (previous or {}).get("visual_plan")
+        return self.visual.observe(work_id, source, inherited=inherited,
+            changes=plan["changes"] if plan else continuity_changes(previous or {}),
+            deferred_changes=[item for item in plan.get("pending_changes", [])
+                              if item not in plan["changes"]] if plan else (),
+            required_elements=plan["required_elements"] if plan else None,
+            model_call=model_call)
+
+    @staticmethod
+    def _continuity_source(work_id, payload, *, model_call, budget):
+        """Select a source without loading every image's execution/permission contract."""
+        candidates = payload["candidates"]
+        catalog = {key: {**{name: value for name, value in item.items()
+            if name not in {"image", "candidate_id", "description_status"}},
+            "image": {name: item["image"][name] for name in (
+                "image_id", "version", "artifact_id")}}
+            for key, item in candidates.items()}
+        decision_schema = ImageContinuityDecision.model_json_schema()["properties"]
+        schema = {"type": "object", "additionalProperties": False,
+            "properties": {"candidate_id": {"enum": [*candidates, None]},
+                **{name: decision_schema[name] for name in ("new_context_quote", "question")}}}
+        resolution = payload["resolution"]
+        messages = [{"role": "system", "content": (
+            "只选择本轮延续的图片/方案来源，不决定修改范围、不生成方案。"
+            "目录保留各方案的来源说明、完整文字依据和已有公开视觉属性；文字依据不是图像观察。"
+            "依据 current_request 和 resolution 中的明确引用选择完整 candidate_id；"
+            "不能按最新、列表顺序或图片相同来合并不同方案及其待落实修改。"
+            "缺少足够区分依据时仅给 question，不猜测；本阶段不能回答 changes 等权限。"
+            "用户明确要求独立新画面时 candidate_id=null，new_context_quote 逐字引用本轮原话。"
+            "所选来源随后将单独读取完整信息并核验修改权限。只返回符合 Schema 的公开 JSON："
+            + json.dumps(schema, ensure_ascii=False))},
+            {"role": "user", "content": json.dumps({"stage": "confirmed_image_source",
+                "current_request": payload["current_request"],
+                "resolution": {key: resolution[key] for key in (
+                    "action", "relation", "goal", "current_task_id", "sources")
+                    if key in resolution},
+                "candidates": catalog}, ensure_ascii=False)}]
+        size = token_size(messages)
+        logger.bind(component="comic.image_continuity", project_id=work_id,
+                    trace_id=current_trace_id() or "-").info(
+            "context capacity phase=source_selection estimated_tokens={} limit={} candidates={}",
+            size, budget, len(candidates))
+        if size > budget:
+            raise ToolError("可选画面的来源目录超过单次容量，请先选择要沿用的方案再继续",
+                detail=f"estimated_tokens={size} limit={budget} candidates={len(candidates)}")
+        # One source-selection attempt. Unknown transport results are never resubmitted.
+        raw = model_call(messages)
+        try:
+            data = json.loads(raw)
+            if not isinstance(data, dict) or set(data) - set(schema["properties"]):
+                raise ValueError("source selection fields")
+            decision = ImageContinuityDecision.model_validate(data,
+                context={"candidate_ids": set(candidates)})
+        except (ValueError, TypeError, ValidationError):
+            raise ToolError("图片来源选择未返回有效结果，原设定已保留") from None
+        if (decision.new_context_quote
+                and decision.new_context_quote not in payload["current_request"]):
+            raise ToolError("独立画面缺少本轮用户原话依据，原设定已保留")
+        return decision
 
     @staticmethod
     def _continuity_decision(work_id, messages, request, candidates, *, model_call, budget):
@@ -556,15 +878,22 @@ class ComicWorkspaceService:
                    "candidate_aliases": {key: tuple(values) for key, values in aliases.items()}}
         repair = None
         for attempt in range(2):
-            if token_size(messages) > budget:
-                raise ToolError("已采用图片来源超过上下文容量，请明确引用要沿用的画面")
+            size = token_size(messages)
+            logger.bind(component="comic.image_continuity", project_id=work_id,
+                        trace_id=current_trace_id() or "-").info(
+                "context capacity phase=permissions attempt={} estimated_tokens={} "
+                "limit={} candidates={}",
+                attempt + 1, size, budget, len(candidates))
+            if size > budget:
+                raise ToolError("画面的完整修改依据超过单次容量，本轮未继续，原设定已保留",
+                    detail=f"estimated_tokens={size} limit={budget} candidates={len(candidates)}")
             # Transport errors have no received decision to correct and must never resubmit.
             raw = model_call(messages)
             try:
                 decision = ImageContinuityDecision.model_validate_json(raw, context=context)
             except ValidationError as error:
-                known = {"candidate_id", "changes", "field", "quote", "new_context_quote",
-                         "question"}
+                known = {"candidate_id", "changes", "field", "quote", "element_ids",
+                         "new_context_quote", "question"}
                 issues = [{"path": [part if isinstance(part, int) or part in known else
                                      "<unknown>" for part in item["loc"]], "type": item["type"]}
                           for item in error.errors(include_input=False, include_context=False,
@@ -648,6 +977,10 @@ class ComicWorkspaceService:
                             "enum"]
                         if item.get("field") in allowed:
                             change["field"] = item["field"]
+                        ids = item.get("element_ids", [])
+                        if ("element_ids" in item and isinstance(ids, list) and len(ids) <= 128
+                                and all(isinstance(key, str) for key in ids)):
+                            change["element_ids"] = ids
                         quote = item.get("quote")
                         if isinstance(quote, str) and quote.strip() and len(quote) <= 1000:
                             if quote not in request:
@@ -665,6 +998,8 @@ class ComicWorkspaceService:
                 payload, ensure_ascii=False)}]
 
     def require_continuity(self, work_id, context):
+        if context.get("visual_state"):
+            self.visual.require_state(work_id, context["visual_state"])
         image = context["image"]
         self.require_task(work_id, image["project_id"], image["conversation_id"])
         current = self.media.require_image(ImageVersionRef.model_validate({

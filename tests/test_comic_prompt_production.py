@@ -8,6 +8,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from test_comic_prompts import _run, _setup
 from test_home_quick_domain import _workspace_production_request
 from test_home_quick_domain import app as app_fixture
@@ -18,7 +19,15 @@ from kantoku.config import ToolError
 from kantoku.core import budget
 from kantoku.core.artifacts import ArtifactService
 from kantoku.core.runtime.models import ArtifactLifecycle, ArtifactType, ExecutionStatus
-from kantoku.domains.comic.models import ComicPromptDraft, ComicShotDraft
+from kantoku.domains.comic.models import (
+    ComicPromptContexts,
+    ComicPromptDraft,
+    ComicShotDraft,
+    ComicStoryboardDraft,
+    CreativeBriefInput,
+    CreativeBriefUpdate,
+    DirectorSpecDraft,
+)
 from kantoku.domains.comic.prompts import (
     CONTEXT_VERSION,
     PROMPT_SECTIONS,
@@ -30,6 +39,212 @@ from kantoku.shells import web_studio
 app = app_fixture
 production = production_fixture
 server = server_fixture
+
+
+def _codex_request(app, request, shot, prompt, key="codex-export"):
+    return {"request_id": key, "conversation_id": request["conversation_id"],
+        "expected_project_version": app.comic_projects.get(
+            prompt["project_id"]).project.current_version,
+        "expected_prompt_version": prompt["version"], "expected_shot_version": shot["version"]}
+
+
+def test_codex_task_is_an_immutable_replayable_export_without_generation(
+    app, production, monkeypatch,
+):
+    request, shot, prompt = _external(app, monkeypatch)
+    body = _codex_request(app, request, shot, prompt)
+    calls = list(production)
+    result = app.export_comic_codex_task(shot["shot_id"], body)
+    path = Path(result["task_path"])
+    task = json.loads(path.read_text(encoding="utf-8"))
+    assert task["prompt"] == prompt["final_prompt"]
+    assert task["prompt_artifact_id"] == prompt["artifact_id"]
+    assert task["references"] == []
+    assert "实际" in task["execution_instructions"]
+    assert app.export_comic_codex_task(shot["shot_id"], body) == result
+    assert app.export_comic_codex_task(shot["shot_id"], {**body,
+        "request_id": "another-copy"}) == result
+    assert production == calls
+    assert result["task_path"] in result["handoff_text"]
+    assert result["task_sha256"] in result["handoff_text"]
+    assert app.comic_projects.get(prompt["project_id"]).project.current_version == body[
+        "expected_project_version"]
+
+
+def test_both_image_paths_use_saved_execution_text_after_formatter_changes(
+    app, production, monkeypatch,
+):
+    from kantoku.capabilities.image import prepare_generation_input
+    from kantoku.domains.comic import prompts
+
+    request, shot, prompt = _external(app, monkeypatch)
+    original = prompt["execution_prompt"]
+    assert original
+    monkeypatch.setattr(prompts, "execution_prompt", lambda *_a, **_k: "changed future formatter")
+    exported = app.export_comic_codex_task(shot["shot_id"],
+        _codex_request(app, request, shot, prompt))
+    task = app.comic_prompts.read_codex_task(app.runtime_store.path, exported["task_id"])
+    prepared = prepare_generation_input(app.runtime_store, exported["artifact_id"],
+                                        request["conversation_id"])
+    assert task["execution_prompt"] == task["prompt"] == prepared.execution_prompt == original
+
+
+def test_codex_export_copies_all_exact_reference_bytes_and_detects_snapshot_damage(
+    app, production, monkeypatch, tmp_path,
+):
+    from test_comic_stories import _png, _upload
+
+    from kantoku.config.runtime_paths import atomic_write_bytes
+
+    request, shot, prompt = _external(app, monkeypatch)
+    monkeypatch.setattr(web_studio.get_settings().image, "output_dir",
+                        tmp_path / "codex-images", raising=False)
+    refs = [_upload(app, prompt["project_id"], request["conversation_id"], content=_png(color))
+            for color in (21, 75)]
+    original_payload = app.comic_prompts.payload
+
+    def payload(value):
+        return {**original_payload(value), "reference_attachments": [{
+            "image": {key: image[key] for key in ("image_id", "version")},
+            "artifact_id": image["artifact_id"], "sha256": image["sha256"],
+            "filename": image["filename"], "target": "离线参考", "roles": ["identity"],
+        } for image in refs]}
+
+    monkeypatch.setattr(app.comic_prompts, "payload", payload)
+    body = _codex_request(app, request, shot, prompt)
+    result = app.export_comic_codex_task(shot["shot_id"], body)
+    task = json.loads(Path(result["task_path"]).read_text(encoding="utf-8"))
+    assert [Path(item["path"]).read_bytes() for item in task["references"]] == [
+        _png(21), _png(75)]
+    assert [item["artifact_id"] for item in task["references"]] == [
+        item["artifact_id"] for item in refs]
+    from kantoku.capabilities.image import prepare_generation_input
+    prepared = prepare_generation_input(app.runtime_store, result["artifact_id"],
+                                        request["conversation_id"])
+    assert prepared.execution_prompt == task["execution_prompt"] == task["prompt"]
+    assert prepared.sha256 == result["task_sha256"]
+    assert [base64.b64decode(url.split(",", 1)[1]) for url in prepared.reference_urls] == [
+        _png(21), _png(75)]
+    assert app.comic_prompts.read_codex_task(app.runtime_store.path, result["task_id"]) == task
+    with pytest.raises(ToolError, match="会话"):
+        prepare_generation_input(app.runtime_store, result["artifact_id"], "other-conversation")
+    from kantoku.capabilities.image import ConversationImageService
+    from kantoku.core.conversations import MessageRole, MessageType
+
+    class LimitedProvider:
+        model_id = "offline-reference-limit"
+
+        def generation_identity(self):
+            return {"provider": "offline-reference-limit"}
+
+        def validate_request(self, **values):
+            assert len(values["reference_urls"]) == 2
+            raise ToolError("离线模型仅允许一张参考图")
+
+        def submit(self, **_):
+            pytest.fail("Unsupported references must fail before submission")
+
+    message = app.runtime_store.add_conversation_message(request["conversation_id"],
+        role=MessageRole.USER, type=MessageType.TEXT, content="Offline shared input test")
+    with pytest.raises(ToolError, match="仅允许一张"):
+        ConversationImageService(app.runtime_store, LimitedProvider()).generate(
+            conversation_id=request["conversation_id"], user_message_id=message.id,
+            generation_request_id="unsupported-reference-test", prompt=prepared.execution_prompt,
+            estimate_fen=1, generation_input_artifact_id=result["artifact_id"])
+    assert budget.get_reservation("unsupported-reference-test") is None
+    source = app.runtime_store.get_artifact(refs[0]["artifact_id"])
+    atomic_write_bytes(Path(source.location), _png(90), owner="offline.test")
+    assert app.export_comic_codex_task(shot["shot_id"], body) == result
+    assert prepare_generation_input(app.runtime_store, result["artifact_id"],
+                                    request["conversation_id"]) == prepared
+    atomic_write_bytes(Path(task["references"][0]["path"]), _png(100),
+                       file_type="export", owner="offline.test")
+    with pytest.raises(ToolError, match="参考图片"):
+        app.export_comic_codex_task(shot["shot_id"], body)
+    with pytest.raises(ToolError, match="参考图内容"):
+        prepare_generation_input(app.runtime_store, result["artifact_id"],
+                                 request["conversation_id"])
+
+
+def test_codex_task_route_keeps_session_and_version_guards(app, production, server, monkeypatch):
+    request, shot, prompt = _external(app, monkeypatch)
+    body = _codex_request(app, request, shot, prompt)
+    connection = HTTPConnection("127.0.0.1", server, timeout=10)
+    try:
+        url = f"/api/comic/shots/{shot['shot_id']}/prompt/codex-task"
+        headers = {"X-Studio-Token": app.token, "Content-Type": "application/json"}
+        connection.request("POST", url, json.dumps(body), {"Content-Type": "application/json"})
+        denied = connection.getresponse()
+        assert denied.status == 403
+        denied.read()
+        connection.request("POST", url, json.dumps(body), headers)
+        response = connection.getresponse()
+        assert response.status == 200
+        saved = json.loads(response.read())
+        assert Path(saved["task_path"]).is_file()
+        with pytest.raises(ToolError):
+            app.export_comic_codex_task(shot["shot_id"], {**body, "request_id": "wrong-chat",
+                "conversation_id": app.create_conversation({"interaction_mode": "guided",
+                                                           "domain": "comic"})["id"]})
+    finally:
+        connection.close()
+
+
+def test_old_fixed_task_result_cannot_replace_a_new_prompt(app, production, monkeypatch, tmp_path):
+    from test_comic_stories import _png, _select
+
+    request, shot, prompt = _external(app, monkeypatch)
+    monkeypatch.setattr(web_studio.get_settings().image, "output_dir", tmp_path / "images",
+                        raising=False)
+    exported = app.export_comic_codex_task(shot["shot_id"],
+        _codex_request(app, request, shot, prompt))
+    imported = app.import_comic_external_image(shot["shot_id"], {
+        "conversation_id": request["conversation_id"],
+        "expected_project_version": app.comic_projects.get(
+            prompt["project_id"]).project.current_version,
+        "expected_shot_version": shot["version"], "expected_prompt_version": prompt["version"],
+        "filename": "old-task-result.png",
+        "data_url": "data:image/png;base64," + base64.b64encode(_png(60)).decode()})
+    artifact = app.runtime_store.get_artifact(imported["artifact_id"])
+    assert artifact.metadata["generation_task_id"] == exported["task_id"]
+    old = app.comic_prompts.get(shot["shot_id"])
+    app.comic_prompts.save(shot["shot_id"], ComicPromptDraft.model_validate(
+        old.model_dump(include=set(ComicPromptDraft.model_fields))),
+        expected_project_version=app.comic_projects.get(prompt["project_id"]).project.current_version,
+        expected_shot_version=shot["version"], model_target="external",
+        compiler_version="offline-test",
+        run_id=_run(app.runtime_store))
+    with pytest.raises(ToolError, match="旧版生成任务"):
+        _select(app, request["conversation_id"],
+                app.comic_media.get(artifact.id).model_dump(mode="json"))
+
+
+def test_concurrent_codex_exports_share_one_snapshot(app, production, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    request, shot, prompt = _external(app, monkeypatch)
+    body = _codex_request(app, request, shot, prompt)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(app.export_comic_codex_task, shot["shot_id"],
+            {**body, "request_id": f"concurrent-{index}"}) for index in range(2)]
+        results = [future.result() for future in futures]
+    assert results[0] == results[1]
+    with app.comic_projects._connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM comic_entity_versions "
+            "WHERE entity_type='codex_task'").fetchone()[0] == 1
+
+
+def test_codex_export_rejects_stale_sources_and_excess_references(app, production, monkeypatch):
+    request, shot, prompt = _external(app, monkeypatch)
+    body = _codex_request(app, request, shot, prompt)
+    with pytest.raises(ToolError, match="版本"):
+        app.export_comic_codex_task(shot["shot_id"], {**body, "expected_shot_version": 99})
+    payload = app.comic_prompts.payload
+    monkeypatch.setattr(app.comic_prompts, "payload", lambda value: {
+        **payload(value), "reference_attachments": [{"artifact_id": str(index), "sha256": "a" * 64}
+            for index in range(9)]})
+    with pytest.raises(ToolError, match="超过八张"):
+        app.export_comic_codex_task(shot["shot_id"], body)
 
 
 def _sections():
@@ -48,6 +263,111 @@ def _sections():
     }
 
 
+def test_preserved_semantic_scope_keeps_exact_empty_groups_without_releasing_new_fields():
+    values = {name: {field: "" for field in model.annotation.model_fields}
+              for name, model in ComicPromptContexts.model_fields.items()}
+    values["style_context"]["art_style"] = "水墨渲染"
+    values["shot_context"]["action"] = "箭矢掠过画面"
+    with pytest.raises(ValidationError):
+        ComicPromptContexts.model_validate(values)
+    preserved = {f"{name}.{field}": value for name, body in values.items()
+                 if name != "shot_context" for field, value in body.items()}
+    contexts = ComicPromptContexts.model_validate(values, context={"preserved_scope": preserved})
+    assert ComicPromptContexts.from_sections(
+        contexts.sections(), preserved_scope=preserved) == contexts
+    empty_shot = contexts.model_dump()
+    empty_shot["shot_context"] = dict.fromkeys(empty_shot["shot_context"], "")
+    with pytest.raises(ValidationError):
+        ComicPromptContexts.model_validate(empty_shot, context={"preserved_scope": preserved})
+    preserved_shot = {**preserved, **{f"shot_context.{field}": ""
+                                     for field in empty_shot["shot_context"]}}
+    assert ComicPromptContexts.model_validate(
+        empty_shot, context={"preserved_scope": preserved_shot}).shot_context.action == ""
+    changed = contexts.model_dump()
+    changed["character_context"]["appearance"] = "低机位远景"
+    with pytest.raises(ValidationError):
+        ComicPromptContexts.model_validate(changed, context={"preserved_scope": preserved})
+    changed = contexts.model_dump()
+    changed["style_context"]["art_style"] = ""
+    changed["shot_context"]["action"] = ""
+    all_empty = {f"{name}.{field}": value for name, body in changed.items()
+                 for field, value in body.items()}
+    with pytest.raises(ValidationError):
+        ComicPromptContexts.model_validate(changed, context={"preserved_scope": all_empty})
+
+
+@pytest.mark.parametrize("value", ["远景\n额外字段", "远景" + "墨" * 600])
+def test_preserved_semantic_scope_still_checks_basic_field_structure(value):
+    values = {name: body for name, body in _sections().items()
+              if name in ComicPromptContexts.model_fields}
+    values["style_context"]["photographic_style"] = value
+    with pytest.raises(ValidationError):
+        ComicPromptContexts.model_validate(values, context={
+            "preserved_scope": {"style_context.photographic_style": value}})
+
+
+@pytest.mark.parametrize("mode", ["automatic", "automatic_event", "manual", "long_event"])
+def test_saved_automatic_pose_shot_compiles_current_event_without_rewriting_history(tmp_path, mode):
+    _runtime, projects, _assets, boards, prompts, original, _unused = _setup(tmp_path / "db")
+    old = projects.get_director(original.project_id)
+    event = "箭矢从雨幕中射向少女，保持坐姿，镜头推近"
+    if mode == "long_event":
+        event += "，箭矢穿过雨夜竹林的速度极快" * 60
+    snapshot = projects.get(original.project_id)
+    projects.replace_brief(original.project_id, CreativeBriefUpdate.model_validate({
+        **snapshot.creative_brief.model_dump(include=set(CreativeBriefInput.model_fields)),
+        "original_request": event, "expected_version": snapshot.project.current_version}))
+    pose = "保持垂钓坐姿"
+    draft = DirectorSpecDraft.model_validate({
+        **old.model_dump(include=set(DirectorSpecDraft.model_fields)),
+        "execution_policy": "single_image", "director_plan": {
+            "visual_strategy": "表现突发威胁", "visual_focus": "少女与竹林",
+            "subject_environment_relation": "少女位于雨夜竹林",
+            "composition_strategy": "保留主体位置", "color_strategy": "冷暖层次",
+            "character_pose": pose,
+        },
+    })
+    director = projects.save_director(original.project_id, draft,
+        expected_project_version=projects.get(original.project_id).project.current_version,
+        source="model")
+    board = boards.create(original.project_id, ComicStoryboardDraft(title="历史自动单镜头"),
+        expected_project_version=projects.get(original.project_id).project.current_version,
+        director_spec_version=director.version, source="model", shots=[
+            ComicShotDraft.model_validate({
+                **original.model_dump(include=set(ComicShotDraft.model_fields)),
+                "action": event if mode == "automatic_event" else pose})])
+    shot = boards.get_shot(board.shot_ids[0])
+    assert shot.source == "model"
+    assert shot.action == (event if mode == "automatic_event" else pose)
+    if mode == "manual":
+        shot = boards.edit_shot(shot.shot_id, ComicShotDraft.model_validate({
+            **shot.model_dump(include=set(ComicShotDraft.model_fields)), "action": "手改迎战动作"}),
+            expected_project_version=projects.get(original.project_id).project.current_version,
+            expected_version=shot.version, status=shot.status)
+    before = boards.shot_versions(shot.shot_id)
+    requests = []
+
+    def call(messages):
+        requests.append(json.loads(messages[1]["content"]))
+        output = _sections()
+        output["shot_context"]["action"] = "箭矢高速掠过雨幕"
+        return json.dumps(output, ensure_ascii=False)
+
+    result = _compile(prompts, shot.shot_id, call)
+    expected_input = shot.action if mode == "manual" else event
+    expected_output = shot.action if mode == "manual" else "箭矢高速掠过雨幕"
+    assert requests[0]["current_shot"]["action"] == expected_input
+    assert "动作：" + expected_output in result.shot_context
+    assert result.context_sources["input_lineage"]["execution_action"]["field_path"] == (
+        "shot.action" if mode in {"manual", "automatic_event"}
+        else "creative_brief.original_request")
+    assert result.context_sources["input_lineage"]["execution_action"]["use"] == (
+        "exact_projection" if mode == "manual" else "model_compiled")
+    saved = _save(prompts, shot.shot_id, result)
+    assert expected_output in prompts.get(shot.shot_id).shot_context == saved.shot_context
+    assert boards.shot_versions(shot.shot_id) == before
+
+
 def test_external_prompt_uses_actual_attachment_without_treating_filename_as_a_retrieval_key():
     image = {"filename": "approved-reference.webp", "version": 2, "sha256": "a" * 64}
     draft = ComicPromptDraft(
@@ -60,7 +380,7 @@ def test_external_prompt_uses_actual_attachment_without_treating_filename_as_a_r
     text = image_prompt(draft)
     for required in [image["filename"], image["sha256"], "实际附带的参考图",
                      "不是图片地址或检索条件", "重命名附件或转为 PNG",
-                     "没有附上这张参考图", "本轮允许的变化：抬起左手", "文字水印"]:
+                     "没有附上这张参考图", "本轮允许的变化：姿态：抬起左手", "文字水印"]:
         assert required in text
     assert draft.context_sources["image_references"]["continuity"]["image"] == image
     draft.context_sources = {}
@@ -441,8 +761,10 @@ def test_complete_prompt_keeps_pinned_facts_and_excludes_other_character(tmp_pat
     draft = _compile(prompts, shot.shot_id, call)
     record = _save(prompts, shot.shot_id, draft)
     full = prompts.payload(record)["final_prompt"]
-    for heading in [*PROMPT_SECTIONS.values(), "Negative Constraint / 禁止内容"]:
-        assert full.count(heading) == 1
+    assert full == record.execution_prompt
+    for heading in PROMPT_SECTIONS.values():
+        assert record.positive_prompt.count(heading) == 1
+        assert heading not in full  # Source layout remains in audit, not the execution body.
     for fact in ("阿青", "黑发少女", "青色披风", "雨夜竹林", "电影", "右上方", "文字水印"):
         assert fact in full
     assert unrelated.asset_id not in requests[0][1]["content"] and "银发少年" not in full

@@ -7,6 +7,12 @@
     <meta name="color-scheme" content="light" />
     <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
     <title>Kantoku · AI Production Supervisor</title>
+    <style>
+      /* FOUC 防御：JS 加载前就铺好像素底色，避免白屏闪旧样式 */
+      html, body { background:#16295e; margin:0; padding:0; }
+      body { font-family: "Press Start 2P","Zpix","Fusion Pixel 12px",ui-monospace,monospace; -webkit-font-smoothing:none; }
+      #app { min-height:100vh; }
+    </style>
   </head>
   <body>
     <div id="app"></div>

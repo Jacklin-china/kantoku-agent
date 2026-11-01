@@ -1,23 +1,26 @@
 """少量契约回归：实际媒体/HTTP/编译输入，模型全部为明确离线替身。"""
 
 import base64
+import hashlib
 import json
 import struct
 import threading
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPConnection
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image, ImageOps
 from pydantic import ValidationError
 
-from kantoku.config import ToolError, get_settings
+from kantoku.config import LLMError, ToolError, get_settings
 from kantoku.core import llm
 from kantoku.core.runtime.models import ArtifactLifecycle, ArtifactType
 from kantoku.domains.comic.director_provenance import value_hash
-from kantoku.domains.comic.models import ImageVersionRef
+from kantoku.domains.comic.models import ImageEditScope, ImageVersionRef
 from kantoku.shells import web_studio
 from kantoku.tools.image_gen import LocalFakeImageProvider
 
@@ -83,6 +86,269 @@ def observation(topic="主体"):
         {"finding_id": "unselected", "observation": "未选观察",
          "suggested_change": "换成绿色天空", "confidence": 0.5}],
         "protected_features": [f"保留{topic}轮廓"], "limitations": ["离线替身不证明视觉质量"]}
+
+
+@pytest.mark.parametrize("orientation", range(1, 9))
+def test_detail_crop_uses_display_coordinates_and_records_original_mapping(orientation):
+    from kantoku.capabilities.image import crop_vision_image
+
+    with Image.new("RGB", (6, 4)) as original, BytesIO() as buffer:
+        original.putdata([(x * 30, y * 50, 10) for y in range(4) for x in range(6)])
+        exif = Image.Exif()
+        exif[274] = orientation
+        original.save(buffer, format="PNG", exif=exif)
+        raw = buffer.getvalue()
+    crop = crop_vision_image(raw, "image/png", [.25, 0., .75, 1.])
+    with Image.open(BytesIO(raw)) as source, ImageOps.exif_transpose(source) as display:
+        box = crop.metadata["display_pixel_box"]
+        with display.crop(tuple(box)) as expected, Image.open(BytesIO(crop.data)) as actual:
+            assert actual.size == expected.size and actual.tobytes() == expected.tobytes()
+            a, b, c, d, e, f = crop.metadata["display_to_source"]
+            for y in range(actual.height):
+                for x in range(actual.width):
+                    dx, dy = box[0] + x + .5, box[1] + y + .5
+                    assert actual.getpixel((x, y)) == source.getpixel((
+                        int(a * dx + b * dy + c), int(d * dx + e * dy + f)))
+    assert crop.metadata["source_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert len(crop.metadata["display_to_source"]) == 6
+    assert crop.metadata["orientation"] == orientation and not crop.metadata["upscaled"]
+
+
+@pytest.mark.parametrize("mode,format,mime", [
+    ("CMYK", "JPEG", "image/jpeg"), ("RGBA", "PNG", "image/png"),
+])
+def test_detail_crop_accepts_print_colors_and_keeps_transparency(mode, format, mime):
+    from kantoku.capabilities.image import crop_vision_image
+
+    with Image.new(mode, (10, 8), (20, 30, 40, 50)) as source, BytesIO() as buffer:
+        source.save(buffer, format=format)
+        crop = crop_vision_image(buffer.getvalue(), mime, [0., 0., .1, .125])
+    with Image.open(BytesIO(crop.data)) as result:
+        assert result.size == (1, 1) and result.mode == ("RGBA" if mode == "RGBA" else "RGB")
+        if mode == "RGBA":
+            assert result.getpixel((0, 0))[3] == 50
+
+
+def test_analysis_has_one_batched_detail_review_and_conservative_suggestions(
+    review_app, monkeypatch,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    calls = []
+    output = observation()
+    output["findings"][0].update(category="clear_deviation", evidence=[], risk_level="low")
+    output["findings"][1].update(category="optional_improvement")
+    output["recommendation"] = "consider_edit"
+    output["detail_regions"] = [{"bounds": [.1, .1, .9, .9], "reason": "关键细部不确定"}]
+    def vision(messages):
+        calls.append(messages)
+        return json.dumps(output)
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    result = app.comic_image_operation(pid, "analysis", {
+        **common(app, pid, cid, "detail-analysis"), "image": image, "task": "检查原图"})
+    assert len(calls) == 2
+    assert len([part for part in calls[1][1]["content"] if part["type"] == "image_url"]) == 2
+    assert result["analysis_policy"] == "evidence-review-2"
+    assert result["output"]["recommendation"] == "retain"
+    assert result["output"]["findings"][0]["category"] == "uncertain"
+    assert result["output"]["findings"][1]["category"] == "optional_improvement"
+    assert result["output"]["detail_regions"] == []
+    assert result["detail_review"]["crops"][0]["source_sha256"] == app.comic_media.get(
+        image["image_id"]).sha256
+    assert len(app.comic_media.versions(image["image_id"])) == 1
+
+
+@pytest.mark.parametrize("outcome", [
+    "accept", "reject", "stale", "tampered", "override", "overlap", "merge",
+])
+def test_unified_edit_plan_binds_scope_confirmation_and_resolves_manual_priority(
+    review_app, monkeypatch, outcome,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    plan_calls = []
+    bounds = ([.05, .05, .95, .95] if outcome in {"accept", "reject", "stale", "tampered", "merge"}
+              else [.2, .2, .7, .7])
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        if payload.get("stage") == "constraint_extraction_review":
+            return app._comic_constraint_model([messages[0],
+                {"role": "user", "content": json.dumps(payload)}])
+        assert payload["stage"] == "image_edit_plan"
+        plan_calls.append(payload)
+        return json.dumps({"items": [
+            {"item_id": "ai", "operation": "modify", "requirement_ids": ["finding:selected"],
+             "object_id": "subject",
+             "target": "主体", "attribute": "color" if outcome in {"override", "merge"} else "edge",
+             "desired_state": "红色" if outcome == "merge" else
+                "蓝色" if outcome == "override" else "清晰边缘",
+             "edit_bounds": bounds, "scope_reason": "需连接定位框外的部分",
+             "within_scope_alternative": "原框内只能修整局部"},
+            {"item_id": "manual", "operation": "modify", "requirement_ids": ["user-instruction"],
+             "object_id": "subject",
+             "target": "主体", "attribute": "color", "desired_state": "红色",
+             "edit_bounds": [.2, .2, .7, .7]}], "questions": []})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    result, request, seen = edit(app, pid, cid, image, report, monkeypatch,
+        request_fields={"instruction": "把主体改为红色", "edit_scope": {
+            "mode": "regions", "region_semantics": "locator", "regions": [{
+                "region_id": "locate", "bounds": [.1, .1, .8, .8],
+                "finding_id": "selected", "instruction": ""}],
+            "instruction_target": {"mode": "selected_regions"}, "whole_finding_ids": []}})
+    assert len(plan_calls) == 1
+    if outcome in {"accept", "reject", "stale", "tampered"}:
+        assert result["edit_status"] == "needs_scope_confirmation"
+        assert "artifact_id" not in result
+        run = app.runtime_store.get_run(result["run_id"])
+        assert run.status.value == "waiting"
+        # Replaying the completed business response must not call the plan model again.
+        assert app.comic_image_operation(pid, "edit", request)["run_id"] == result["run_id"]
+        confirm = {**request, **common(app, pid, cid, "scope-decision"),
+            "plan_confirmation": {"run_id": result["run_id"],
+                "fingerprint": result["plan_fingerprint"],
+                "accepted_item_ids": ["ai"] if outcome != "reject" else []}}
+        if outcome == "stale":
+            confirm["instruction"] = "把另一个物体改为红色"
+        if outcome == "tampered":
+            changed = {**run.state}
+            changed["image_edit_plan"]["plan"]["proposal"]["items"][0][
+                "edit_bounds"] = [0., 0., 1., 1.]
+            app.runtime_store.update_run(run.id, status=run.status,
+                current_node=run.current_node, state=changed)
+        result = app.comic_image_operation(pid, "edit", confirm)
+        assert len(plan_calls) == 1
+        if outcome in {"reject", "stale", "tampered"}:
+            assert result["edit_status"] == ("needs_clarification" if outcome == "reject"
+                                              else "review_unavailable")
+            assert "artifact_id" not in result
+            return
+    assert result["edit_status"] == "ready"
+    scope = result["scope"]
+    assert scope["locator_scope"]["regions"][0]["bounds"] == [.1, .1, .8, .8]
+    assert "proposal" not in scope["unified_plan"]
+    if outcome == "override":
+        assert scope["selected_findings"] == []
+        assert scope["unified_plan"]["handling"][0]["action"] == "manual_override"
+        assert {item["requirement_id"] for item in scope["authorized_requirements"]} == {
+            "user-instruction"}
+    elif outcome == "merge":
+        assert len(scope["unified_plan"]["items"]) == 1
+        assert scope["unified_plan"]["items"][0]["edit_bounds"] == [.2, .2, .7, .7]
+        assert scope["unified_plan"]["handling"][0]["action"] == "merged"
+        assert len(scope["unified_plan"]["items"][0]["requirement_ids"]) == 2
+    else:
+        assert len(scope["unified_plan"]["items"]) == 2
+        assert scope["edit_scope"]["regions"][0]["bounds"] == bounds
+    compiler = next(item for item in seen if isinstance(item, dict) and item.get("mode") == "edit")
+    assert len(compiler["authorized_requirements"]) == (1 if outcome == "override" else 2)
+
+
+@pytest.mark.parametrize("locator", [[.01, .02, .99, .99], [0., 0., 1., 1.]])
+def test_global_edit_confirms_once_and_preservation_never_expands_the_edit(
+    review_app, monkeypatch, locator,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    plans = []
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        if payload.get("stage") == "constraint_extraction_review":
+            return app._comic_constraint_model([messages[0],
+                {"role": "user", "content": json.dumps(payload)}])
+        plans.append(payload)
+        return json.dumps({"items": [
+            {"item_id": "lighting", "requirement_ids": ["region:manual"],
+             "object_id": "scene", "target": "整图亮度", "attribute": "lighting",
+             "desired_state": "降低亮度", "operation": "modify", "edit_bounds": None},
+            {"item_id": "structure", "requirement_ids": ["region:manual"],
+             "object_id": "subject", "target": "主体结构", "attribute": "structure",
+             "desired_state": "保持原状", "operation": "preserve",
+             "edit_bounds": [0., 0., .5, .5]},
+            {"item_id": "color", "requirement_ids": ["region:manual"],
+             "object_id": "subject", "target": "主体颜色", "attribute": "color",
+             "desired_state": "保留颜色", "operation": "preserve", "edit_bounds": None}]})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    result, request, compiled = edit(app, pid, cid, image, report, monkeypatch,
+        request_fields={"selected_finding_ids": [], "edit_scope": {"mode": "regions",
+            "region_semantics": "locator", "regions": [{"region_id": "manual",
+                "bounds": locator, "instruction": "整图暗一点，主体结构和颜色保持不变"}]}})
+    if locator[0] != 0.:
+        assert result["edit_status"] == "needs_scope_confirmation"
+        assert result["edit_plan"]["questions"] == []
+        assert [item["item_id"] for item in result["edit_plan"]["scope_proposals"]] == ["lighting"]
+        assert result["edit_plan"]["scope_proposals"][0]["bounds"] == [0., 0., 1., 1.]
+        assert compiled == [] and "artifact_id" not in result
+        confirm = {**request, **common(app, pid, cid, "accept-global"),
+            "plan_confirmation": {"run_id": result["run_id"],
+                "fingerprint": result["plan_fingerprint"], "accepted_item_ids": ["lighting"]}}
+        result = app.comic_image_operation(pid, "edit", confirm)
+        assert app.comic_image_operation(pid, "edit", confirm) == result
+    assert result["edit_status"] == "ready" and len(plans) == 1
+    assert result["scope"]["edit_scope"]["mode"] == "whole"
+    assert result["scope"]["edit_scope"]["regions"] == []
+    assert result["scope"]["authorized_requirements"][0]["target"] == {
+        "mode": "whole", "region_ids": []}
+    assert {item["operation"] for item in result["scope"]["unified_plan"]["items"]} == {
+        "modify", "preserve"}
+    assert app.runtime_store.get_artifact(result["artifact_id"]).type == ArtifactType.PROMPT
+    assert result["correction"] == {"used": False, "stage": None}
+
+
+def test_preservation_alone_creates_no_edit_regions_or_scope_proposals(review_app, monkeypatch):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        if payload.get("stage") == "constraint_extraction_review":
+            return app._comic_constraint_model([messages[0],
+                {"role": "user", "content": json.dumps(payload)}])
+        return json.dumps({"items": [{"item_id": "preserve", "requirement_ids": ["region:manual"],
+            "object_id": "subject", "target": "主体", "attribute": "shape",
+            "desired_state": "保持原状", "operation": "preserve", "edit_bounds": None}]})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    result, _, _ = edit(app, pid, cid, image, report, monkeypatch, request_fields={
+        "selected_finding_ids": [], "edit_scope": {"mode": "regions",
+            "region_semantics": "locator", "regions": [{"region_id": "manual",
+                "bounds": [.1, .1, .8, .8], "instruction": "主体保持原状"}]}})
+    assert result["edit_status"] == "ready"
+    assert result["scope"]["unified_plan"]["scope_proposals"] == []
+    assert result["scope"]["edit_scope"]["regions"] == []
+    assert result["scope"]["authorized_requirements"][0]["operation"] == "preserve"
+    assert result["scope"]["authorized_requirements"][0]["target"]["region_ids"] == ["manual"]
+
+
+def test_mutually_exclusive_manual_goals_wait_without_discarding_other_requirements(
+    review_app, monkeypatch,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    calls = []
+    def vision(messages):
+        calls.append(messages)
+        return json.dumps({"items": [
+            {"item_id": "red", "operation": "modify", "requirement_ids": ["region:manual"],
+             "object_id": "coat",
+             "target": "外套", "attribute": "color", "desired_state": "红色", "edit_bounds": None},
+            {"item_id": "blue", "operation": "modify", "requirement_ids": ["user-instruction"],
+             "object_id": "coat",
+             "target": "外套", "attribute": "color", "desired_state": "蓝色",
+             "edit_bounds": None}]})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    result = app.comic_image_operation(pid, "edit", {
+        **common(app, pid, cid, "manual-conflict"), "image": image, "task": "检查外套",
+        "instruction": "外套必须是蓝色", "selected_finding_ids": [],
+        "edit_scope": {"mode": "mixed", "region_semantics": "locator", "regions": [{
+            "region_id": "manual", "bounds": [.1, .1, .8, .8], "instruction": "外套改为红色"}],
+            "instruction_target": {"mode": "whole"}, "whole_finding_ids": []}})
+    assert result["edit_status"] == "needs_clarification" and len(calls) == 1
+    assert "artifact_id" not in result
+    assert result["edit_plan"]["questions"][0]["requirement_ids"] == [
+        "region:manual", "user-instruction"]
+    assert len(app.runtime_store.get_run(result["run_id"]).state["media_input"][
+        "edit_scope"]["regions"]) == 1
 
 
 def analyze(app, pid, cid, image, monkeypatch, task="检查主体", output=None, request_id="analyze"):
@@ -218,6 +484,202 @@ def test_full_loop_selected_scope_actual_images_and_manual_selection(
     assert len(app.comic_media.versions(image["image_id"])) == 2
 
 
+@pytest.mark.parametrize("problem", ["new_problem", "damage", "uncertain", "clean"])
+def test_regression_check_can_recommend_old_version_without_adopting(
+    review_app, monkeypatch, problem,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    instruction, _, _ = edit(app, pid, cid, image, report, monkeypatch)
+    app.comic_image_operation(pid, "confirm", {**common(app, pid, cid, "regression-confirm"),
+        "instruction_artifact_id": instruction["artifact_id"]})
+    after = upload(app, pid, cid, color=35, image_id=image["image_id"],
+        expected_image_version=1, parent=image,
+        instruction_artifact_id=instruction["artifact_id"])
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        return json.dumps({"summary": "离线退步检查", "recommendation": "consider_after",
+            "changes": [{"check_id": item["check_id"], "status": "satisfied",
+                "evidence": "离线证据", "confidence": .9} for item in payload["changes"]],
+            "preservation": [{"check_id": item["check_id"], "status":
+                "not_satisfied" if problem == "damage" else
+                "uncertain" if problem == "uncertain" else "satisfied",
+                "evidence": "离线证据", "confidence": .9} for item in payload["preservation"]],
+            "new_problems": ["新增结构损伤"] if problem == "new_problem" else [],
+            "other_observations": [], "limitations": ["替身不证明视觉质量"]})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    result = app.comic_image_operation(pid, "comparison", {
+        **common(app, pid, cid, "regression"), "before": image,
+        "after": {"image_id": after["image_id"], "version": after["version"]},
+        "instruction_artifact_id": instruction["artifact_id"]})
+    assert result["output"]["recommendation"] == (
+        "retain_before" if problem in {"damage", "new_problem"} else
+        "uncertain" if problem == "uncertain" else "consider_after")
+    assert result["assessment"]["resolved"] and not result["assessment"]["unresolved"]
+    assert app.comic_media.list(pid)[0]["selection"] is None
+    assert len(app.comic_media.versions(image["image_id"])) == 2
+
+
+def test_plan_and_normalization_share_the_same_correction_allowance(review_app, monkeypatch):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    plans, normalizations, reviews = [], [], []
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        if payload.get("stage") == "constraint_extraction_review":
+            reviews.append(payload)
+            return "{}"
+        plans.append(messages)
+        if len(plans) == 1:
+            return json.dumps({"items": []})  # Missing requirement is a system omission.
+        return json.dumps({"items": [{"item_id": "lighting", "operation": "modify",
+            "object_id": "background",
+            "requirement_ids": ["user-instruction"], "target": "背景", "attribute": "light",
+            "desired_state": "略暗", "edit_bounds": None}]})
+    def text_model(messages):
+        normalizations.append(messages)
+        return json.dumps({"constraints": []})  # A second correction must be refused.
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", text_model)
+    result = app.comic_image_operation(pid, "edit", {**common(app, pid, cid, "plan-budget"),
+        "image": image, "task": "调整光线", "instruction": "背景暗一点，其他不变",
+        "edit_scope": {"mode": "whole", "region_semantics": "locator"}})
+    assert len(plans) == 2 and len(normalizations) == 1 and len(reviews) == 1
+    assert result["correction"] == {"used": True, "stage": "edit_plan"}
+    assert result["edit_status"] == "review_unavailable" and "artifact_id" not in result
+
+
+@pytest.mark.parametrize("problem,expected", [
+    ("source", "unknown_requirement_id"), ("bounds", "list_type"),
+    ("missing", "missing"), ("operation", "missing"),
+    ("extra", "extra_forbidden"), ("json", "json_invalid"),
+])
+def test_edit_plan_repairs_specific_protocol_errors_then_compiles(
+    review_app, monkeypatch, problem, expected,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    item = {"item_id": "lighting", "operation": "modify", "requirement_ids": ["region:manual"],
+        "object_id": "background", "target": "背景", "attribute": "lighting",
+        "desired_state": "光线略暗", "edit_bounds": [.2, .2, .7, .7]}
+    invalid = dict(item)
+    if problem == "source":
+        invalid["requirement_ids"] = ["manual"]  # Region identity is not a requirement identity.
+    elif problem == "bounds":
+        invalid["edit_bounds"] = {"x": .2, "y": .2, "width": .5, "height": .5}
+    elif problem == "missing":
+        invalid.pop("desired_state")
+    elif problem == "operation":
+        invalid.pop("operation")
+    elif problem == "extra":
+        invalid["private_debug"] = "must never enter correction inputs"
+    calls = []
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        if payload.get("stage") == "constraint_extraction_review":
+            return app._comic_constraint_model([messages[0],
+                {"role": "user", "content": json.dumps(payload)}])
+        calls.append(payload)
+        schema = json.loads(messages[0]["content"].rsplit("只返回 JSON：", 1)[1])
+        for name in ("ImageEditPlanItem", "ImageEditPlanIssue"):
+            field = schema["$defs"][name]["properties"]["requirement_ids"]
+            assert field["items"]["enum"] == ["region:manual"] and field["uniqueItems"]
+        if len(calls) == 1:
+            return "not JSON" if problem == "json" else json.dumps({"items": [invalid]})
+        assert expected in {issue["type"] for issue in payload["repair"]["issues"]}
+        assert payload["repair"]["missing_requirement_ids"] == ["region:manual"]
+        assert payload["fixed_items"] == [] and payload["fixed_questions"] == []
+        assert "must never enter correction inputs" not in json.dumps(messages)
+        assert "private_debug" not in json.dumps(messages)
+        return json.dumps({"items": [item]})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    result, request, _ = edit(app, pid, cid, image, report, monkeypatch, request_fields={
+        "selected_finding_ids": [], "edit_scope": {"mode": "regions",
+            "region_semantics": "locator", "regions": [{"region_id": "manual",
+                "bounds": [.1, .1, .8, .8], "instruction": "画面有点亮，背景暗一点"}]}})
+    assert result["edit_status"] == "ready" and len(calls) == 2
+    assert result["correction"] == {"used": True, "stage": "edit_plan"}
+    run = app.runtime_store.get_run(result["run_id"])
+    audit = run.state["image_edit_plan_review"]
+    assert len(audit["attempts"]) == 2 and audit["attempts"][1]["issues"] == []
+    assert expected in {issue["type"] for issue in audit["attempts"][0]["issues"]}
+    assert all(len(attempt["response_sha256"]) == 64 for attempt in audit["attempts"])
+    assert run.state["media_input"]["edit_scope"] == ImageEditScope.model_validate(
+        request["edit_scope"]).frozen_scope()
+    assert result["scope"]["authorized_requirements"][0]["requirement"] == "画面有点亮，背景暗一点"
+
+
+def test_edit_plan_protocol_failure_is_specific_bounded_and_replayable(review_app, monkeypatch):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    calls = []
+    def vision(messages):
+        calls.append(messages)
+        return json.dumps({"items": [{"item_id": "broken", "private_debug": "secret"}]})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    result, request, compiled = edit(app, pid, cid, image, report, monkeypatch, request_fields={
+        "selected_finding_ids": [], "edit_scope": {"mode": "regions",
+            "region_semantics": "locator", "regions": [{"region_id": "manual",
+                "bounds": [.1, .1, .8, .8], "instruction": "画面暗一点"}]}})
+    assert len(calls) == 2 and compiled == []
+    assert result["edit_status"] == "review_unavailable" and "artifact_id" not in result
+    assert result["candidate"] is None and "候选" not in result["message"]
+    assert "选区已保留" in result["message"]
+    assert any(issue["region_ids"] == ["manual"] and "遗漏" in issue["reason"]
+               for issue in result["review_diagnostics"]["issues"])
+    run = app.runtime_store.get_run(result["run_id"])
+    assert run.status.value == "waiting"
+    audit = run.state["image_edit_plan_review"]
+    assert len(audit["attempts"]) == 2 and "secret" not in json.dumps(audit)
+    assert "private_debug" not in json.dumps(calls[1])
+    assert app.comic_image_operation(pid, "edit", request) == result
+    assert len(calls) == 2  # Refresh/unknown delivery must not start another paid attempt.
+
+
+@pytest.mark.parametrize("change", ["none", "item", "question"])
+def test_edit_plan_repair_keeps_typed_items_and_real_ambiguity(
+    review_app, monkeypatch, change,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    item = {"item_id": "lighting", "operation": "modify", "requirement_ids": ["region:first"],
+        "object_id": "background", "target": "背景", "attribute": "lighting",
+        "desired_state": "略暗", "edit_bounds": [.2, .2, .7, .7]}
+    question = {"requirement_ids": ["region:second"], "reason": "有两个对象，请选择要修改的对象。"}
+    calls = []
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        calls.append(payload)
+        if len(calls) == 1:
+            return json.dumps({"items": [item, {"item_id": "broken",
+                "requirement_ids": ["region:second"], "private_debug": "secret"}],
+                "questions": [question]})
+        assert payload["fixed_items"][0]["desired_state"] == "略暗"
+        assert payload["fixed_questions"] == [question]
+        assert "secret" not in json.dumps(messages)
+        return json.dumps({"items": [{**item, **({"desired_state": "变亮"}
+                            if change == "item" else {})}],
+            "questions": [] if change == "question" else [question]})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    result, _, compiled = edit(app, pid, cid, image, report, monkeypatch, request_fields={
+        "selected_finding_ids": [], "edit_scope": {"mode": "regions",
+            "region_semantics": "locator", "regions": [
+                {"region_id": "first", "bounds": [.1, .1, .8, .8], "instruction": "背景暗一点"},
+                {"region_id": "second", "bounds": [.1, .1, .9, .9],
+                 "instruction": "把它换个颜色"}]}})
+    assert len(calls) == 2 and compiled == [] and "artifact_id" not in result
+    assert result["edit_status"] == ("needs_clarification" if change == "none"
+                                      else "review_unavailable")
+    audit = app.runtime_store.get_run(result["run_id"]).state["image_edit_plan_review"]
+    if change != "none":
+        assert "fixed_" + change + "_changed" in {
+            issue["type"] for issue in audit["attempts"][1]["issues"]}
+
+
 def test_concurrent_idempotency_restart_and_unknown_never_resend(review_app, monkeypatch):
     app = review_app
     pid, cid, image = setup_image(app)
@@ -293,10 +755,11 @@ def test_unconfirmed_import_and_scope_conflict_are_blocked(review_app, monkeypat
     app = review_app
     pid, cid, image = setup_image(app, constraints=["主体轮廓不能改变"])
     report, _, _ = analyze(app, pid, cid, image, monkeypatch)
-    with pytest.raises(ToolError, match="作用范围"):
-        edit(app, pid, cid, image, report, monkeypatch, approved=False)
+    unresolved, _, _ = edit(app, pid, cid, image, report, monkeypatch, approved=False)
+    assert unresolved["edit_status"] == "review_unavailable"
+    assert "artifact_id" not in unresolved
     assert app.comic_image_reports(pid, cid, "edit")["items"] == []
-    # The rejected request remains unavailable; a new explicit request can make another attempt.
+    # The unresolved result is retained; only a new explicit request makes another attempt.
     report2, _, _ = analyze(app, pid, cid, image, monkeypatch, request_id="new-analysis")
     instruction, _, _ = edit(app, pid, cid, image, report2, monkeypatch, request_id="edit-new")
     with pytest.raises(ToolError, match="先确认"):
@@ -341,8 +804,9 @@ def test_http_persisted_report_queries_are_read_only(review_app, monkeypatch):
             "analysis_artifact_id": result["artifact_id"], "selected_finding_ids": ["selected"]}),
             headers)
         response = connection.getresponse()
-        assert response.status == 400
+        assert response.status == 201
         failure = json.loads(response.read())
+        assert failure["edit_status"] == "review_unavailable" and "artifact_id" not in failure
         assert failure["error_id"] and failure["trace_id"]
         assert failure["review_diagnostics"]["issues"][0]["finding_ids"] == ["selected"]
         assert failure["review_diagnostics"]["diagnostic_artifact_id"]
@@ -396,14 +860,13 @@ def test_edit_review_uses_frozen_targets_and_persists_missing_and_scope_failures
                 "scope_issues": [{"requirement_ids": ["finding:selected"],
                     "reason": "局部要求被扩展到区域外"}] if verdict == "scope" else []})
         monkeypatch.setattr(app, "_comic_constraint_model", model)
-        with pytest.raises(ToolError) as raised:
-            app.comic_image_operation(pid, "edit", {**common(app, pid, cid, verdict),
+        failure = app.comic_image_operation(pid, "edit", {**common(app, pid, cid, verdict),
                 "image": image, "task": "检查主体", "analysis_artifact_id": report["artifact_id"],
                 "selected_finding_ids": ["selected"], "edit_scope": scope, "round_id": verdict,
                 "instruction": "区域颜色改为蓝色，同时必须保持红色"
                 if verdict == "normalize" else ""})
-        assert len(calls) == 2
-        failure = raised.value._kantoku_public_failure
+        assert failure["edit_status"] == "review_unavailable"
+        assert len(calls) == 4
         diagnostic = failure["review_diagnostics"]
         assert diagnostic["stage"] == ("normalize" if verdict == "normalize" else "final_review")
         assert diagnostic["issues"][0]["finding_ids"] == (
@@ -419,6 +882,316 @@ def test_edit_review_uses_frozen_targets_and_persists_missing_and_scope_failures
         assert run.state["review_diagnostics"] == diagnostic
         assert any(item["id"] == run.id for item in app.list_comic_project_tasks(pid)["tasks"])
     assert app.comic_image_reports(pid, cid, "edit")["items"] == []
+
+
+@pytest.mark.parametrize("first_failure", ["missing", "inconsistent_flags", "invalid_json"])
+def test_edit_corrects_one_received_review_failure_before_publishing(
+    review_app, monkeypatch, first_failure,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    calls = []
+
+    def model(messages):
+        payload = json.loads(messages[-1]["content"])
+        calls.append(payload)
+        if "sections" not in payload:
+            return json.dumps({"positive_prompt": "修正已选边缘，其他部分保持原图。",
+                               "negative_prompt": "", "summary": "离线改图候选"})
+        reviews = sum("sections" in item for item in calls)
+        if reviews == 1 and first_failure == "invalid_json":
+            return '{"private_debug": "must never enter correction inputs"}'
+        return json.dumps({"complete": reviews > 1 or first_failure != "inconsistent_flags",
+            "scope_valid": True, "findings": [], "edit_findings": []
+            if reviews == 1 and first_failure == "missing" else [{
+                "constraint_id": "finding:selected", "status": "covered",
+                "evidence_path": "sections.positive_prompt"}]})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", model)
+    request = {**common(app, pid, cid, "review-repair"), "image": image,
+        "task": "检查主体", "analysis_artifact_id": report["artifact_id"],
+        "selected_finding_ids": ["selected"]}
+    result = app.comic_image_operation(pid, "edit", request)
+    assert result["edit_status"] == "ready"
+    assert result["correction"]["used"] is True
+    assert len(calls) == 4
+    assert result["constraint_receipt"]["review"]["complete"] is True
+    assert app.comic_image_operation(pid, "edit", request) == result
+    assert len(calls) == 4
+    assert "private_debug" not in json.dumps(calls)
+    assert len(app.comic_image_reports(pid, cid, "edit")["items"]) == 1
+
+
+def test_edit_unavailable_review_is_persisted_without_a_confirmable_prompt(review_app, monkeypatch):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    calls = []
+
+    def model(messages):
+        payload = json.loads(messages[-1]["content"])
+        calls.append(payload)
+        if "sections" not in payload:
+            return json.dumps({"positive_prompt": "只修复边缘，保留其他内容。",
+                               "negative_prompt": "", "summary": "未核验候选"})
+        return json.dumps({"complete": False, "scope_valid": True,
+                           "findings": [], "edit_findings": []})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", model)
+    request = {**common(app, pid, cid, "review-unavailable"), "image": image,
+        "task": "检查主体", "analysis_artifact_id": report["artifact_id"],
+        "selected_finding_ids": ["selected"], "round_id": "review-round"}
+    result = app.comic_image_operation(pid, "edit", request)
+    assert result["edit_status"] == "review_unavailable"
+    assert "artifact_id" not in result
+    assert result["correction"]["used"] is True
+    assert result["review_diagnostics"]["issues"][0]["finding_ids"] == ["selected"]
+    run = app.runtime_store.get_run(result["run_id"])
+    assert run.status.value == "waiting"
+    assert run.state["image_edit_candidate"]["output"]["summary"] == "未核验候选"
+    assert app.comic_image_operation(pid, "edit", request) == result
+    assert len(calls) == 4
+    assert app.comic_image_reports(pid, cid, "edit")["items"] == []
+
+
+@pytest.mark.parametrize("final_missing", [False, True])
+def test_normalization_and_compiler_share_one_correction_allowance(
+    review_app, monkeypatch, final_missing,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    calls = []
+
+    def model(messages):
+        payload = json.loads(messages[-1]["content"])
+        calls.append(payload)
+        if isinstance(payload, list):
+            assert payload[0]["edit_targets"][0]["requirement_id"] == "user-instruction"
+            return json.dumps({"constraints": [{"source_index": 0,
+                "source_quote": payload[0]["quote"], "target": "原有背景", "scope": "world"}]})
+        if payload.get("stage") == "constraint_extraction_review":
+            complete = sum(isinstance(item, list) for item in calls) > 1
+            return json.dumps({"complete": complete, "scope_valid": True,
+                "constraint_replacements": [], "findings": [{
+                    "constraint_id": item["constraint_id"], "status": "covered",
+                    "evidence_path": f"constraints.{item['constraint_id']}.source_quote"}
+                    for item in payload["constraints"]] if complete else []})
+        if "sections" not in payload:
+            return json.dumps({"positive_prompt": "仅使背景变暗，保留其他内容。",
+                               "negative_prompt": "", "summary": "离线候选"})
+        return json.dumps({"complete": not final_missing, "scope_valid": True,
+            "findings": [{"constraint_id": item["constraint_id"], "status": "covered",
+                "evidence_path": "sections.positive_prompt"} for item in payload["constraints"]],
+            "edit_findings": [] if final_missing else [{"constraint_id": "user-instruction",
+                "status": "covered", "evidence_path": "sections.positive_prompt"}]})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", model)
+    result = app.comic_image_operation(pid, "edit", {**common(app, pid, cid, "one-allowance"),
+        "image": image, "task": "调整画面", "instruction": "背景暗一点，其他不变",
+        "edit_scope": {"mode": "whole"}})
+    assert len(calls) == 6
+    assert result["correction"] == {"used": True, "stage": "normalize"}
+    assert result["edit_status"] == ("review_unavailable" if final_missing else "ready")
+    assert ("artifact_id" in result) is not final_missing
+
+
+def test_review_transport_error_never_spends_correction_and_keeps_candidate(
+    review_app, monkeypatch,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    calls = []
+
+    def model(messages):
+        payload = json.loads(messages[-1]["content"])
+        calls.append(payload)
+        if "sections" in payload:
+            raise ToolError("离线模拟：供应商结果未知", detail="module=llm stage=transport")
+        return json.dumps({"positive_prompt": "仅修复边缘。", "negative_prompt": "",
+                           "summary": "供应商故障前的候选"})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", model)
+    request = {**common(app, pid, cid, "unknown-review"), "image": image,
+        "task": "检查主体", "analysis_artifact_id": report["artifact_id"],
+        "selected_finding_ids": ["selected"]}
+    with pytest.raises(ToolError) as raised:
+        app.comic_image_operation(pid, "edit", request)
+    diagnostic = raised.value.review_diagnostics
+    assert diagnostic["stage"] == "final_review"
+    run = app.runtime_store.get_run(diagnostic["run_id"])
+    assert run.status.value == "failed"
+    assert run.state["image_edit_candidate"]["output"]["summary"] == "供应商故障前的候选"
+    with pytest.raises(ToolError, match="不会自动重发"):
+        app.comic_image_operation(pid, "edit", request)
+    assert len(calls) == 2
+    assert app.comic_image_reports(pid, cid, "edit")["items"] == []
+
+
+def test_unchanged_conflicting_candidate_cannot_be_promoted_by_another_review(
+    review_app, monkeypatch,
+):
+    app = review_app
+    pid, cid, image = setup_image(app)
+    report, _, _ = analyze(app, pid, cid, image, monkeypatch)
+    calls = []
+
+    def model(messages):
+        payload = json.loads(messages[-1]["content"])
+        calls.append(payload)
+        if "sections" not in payload:
+            return json.dumps({"positive_prompt": "修复边缘", "negative_prompt": "禁止修复边缘",
+                               "summary": "仅修改摘要" if "correction" in payload else "候选"})
+        return json.dumps({"complete": True, "scope_valid": True, "findings": [],
+            "edit_findings": [{"constraint_id": "finding:selected", "status": "conflict",
+                "reason": "正负向指令互相矛盾", "evidence_path": "sections.positive_prompt"}]})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", model)
+    result = app.comic_image_operation(pid, "edit", {**common(app, pid, cid, "unchanged-conflict"),
+        "image": image, "task": "检查主体", "analysis_artifact_id": report["artifact_id"],
+        "selected_finding_ids": ["selected"]})
+    assert result["edit_status"] == "review_unavailable"
+    assert result["review_diagnostics"]["issues"][0]["code"] == "conflict"
+    assert "artifact_id" not in result and len(calls) == 3
+
+
+def test_comic_vision_compacts_upload_in_memory_and_preserves_source_and_resolution(monkeypatch):
+    picture = Image.effect_noise((1774, 887), 64).convert("RGB")
+    with BytesIO() as buffer:
+        picture.save(buffer, format="PNG")
+        original = buffer.getvalue()
+    picture.close()
+    fingerprint = hashlib.sha256(original).hexdigest()
+    messages = [{"role": "system", "content": "公开观察"}, {"role": "user", "content": [
+        {"type": "text", "text": "当前图"}, {"type": "image_url", "image_url": {
+            "url": "data:image/png;base64," + base64.b64encode(original).decode()}}]}]
+    saved = json.dumps(messages)
+    calls = []
+
+    def provider(prepared, **kwargs):
+        calls.append((prepared, kwargs))
+        return SimpleNamespace(content="{}")
+
+    monkeypatch.setattr(web_studio, "vision_chat", provider)
+    assert web_studio.StudioApplication._comic_image_vision_model(messages) == "{}"
+    sent, options = calls[0]
+    pixels = next(item for item in sent[1]["content"] if item["type"] == "image_url")
+    encoded = base64.b64decode(pixels["image_url"]["url"].split(",", 1)[1])
+    assert len(encoded) <= 1024 * 1024 < len(original)
+    with Image.open(BytesIO(encoded)) as transmitted:
+        assert transmitted.size == (1774, 887)
+    assert json.dumps(messages) == saved
+    assert fingerprint in json.dumps(sent)
+    assert options["single_attempt"] is True and len(calls) == 1
+
+
+def test_repeated_vision_inputs_are_prepared_once_per_operation(monkeypatch):
+    image = png()
+    messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {
+        "url": "data:image/png;base64," + base64.b64encode(image).decode()}}]}]
+    prepared_inputs = []
+    prepare = web_studio.prepare_vision_image
+
+    def prepare_once(*args, **kwargs):
+        prepared_inputs.append(1)
+        return prepare(*args, **kwargs)
+
+    sent = []
+    monkeypatch.setattr(web_studio, "prepare_vision_image", prepare_once)
+    monkeypatch.setattr(web_studio, "vision_chat", lambda payload, **_: (
+        sent.append(payload) or SimpleNamespace(content="{}")))
+    with web_studio._reuse_vision_inputs():
+        web_studio.StudioApplication._comic_image_vision_model(messages)
+        web_studio.StudioApplication._comic_image_vision_model(messages)
+        assert len(prepared_inputs) == 1 and sent[0] == sent[1]
+        changed = [{"role": "user", "content": [{"type": "image_url", "image_url": {
+            "url": "data:image/png;base64," + base64.b64encode(png(120)).decode()}}]}]
+        web_studio.StudioApplication._comic_image_vision_model(changed)
+        assert len(prepared_inputs) == 2 and sent[2] != sent[0]
+    with web_studio._reuse_vision_inputs():
+        web_studio.StudioApplication._comic_image_vision_model(messages)
+    assert len(prepared_inputs) == 3
+
+
+@pytest.mark.parametrize("alpha", [False, True])
+def test_vision_preparation_keeps_orientation_and_alpha_without_writing_files(alpha):
+    from kantoku.capabilities.image import prepare_vision_image
+
+    picture = Image.new("RGBA" if alpha else "RGB", (60, 40), (200, 30, 10, 80)
+                        if alpha else (200, 30, 10))
+    picture.putpixel((0, 0), (0, 255, 0, 80) if alpha else (0, 255, 0))
+    exif = Image.Exif()
+    exif[274] = 6
+    with BytesIO() as buffer:
+        picture.save(buffer, format="PNG", exif=exif)
+        original = buffer.getvalue()
+    picture.close()
+    prepared = prepare_vision_image(original, "image/png")
+    with Image.open(BytesIO(prepared.data)) as displayed:
+        assert displayed.size == (40, 60)
+        assert displayed.getexif().get(274, 1) == 1
+        if alpha:
+            assert displayed.mode == "RGBA" and displayed.getpixel((10, 10))[3] == 80
+    assert prepared.metadata["source_sha256"] == hashlib.sha256(original).hexdigest()
+    assert prepared.metadata["orientation_applied"] is True
+
+
+def test_vision_preparation_bounds_large_images_and_keeps_small_original_bytes():
+    from kantoku.capabilities.image import prepare_vision_image
+
+    small = png()
+    unchanged = prepare_vision_image(small, "image/png")
+    assert unchanged.data == small and unchanged.metadata["transformed"] is False
+    with Image.new("RGB", (2400, 1200), (20, 40, 60)) as large, BytesIO() as buffer:
+        large.save(buffer, format="PNG")
+        prepared = prepare_vision_image(buffer.getvalue(), "image/png")
+    assert prepared.metadata["display_size"] == [2400, 1200]
+    assert prepared.metadata["sent_size"] == [2048, 1024]
+    assert prepared.metadata["resized"] is True
+    with pytest.raises(ToolError, match="解码"):
+        prepare_vision_image(b"\x89PNG\r\n\x1a\ninvalid", "image/png")
+
+
+def test_compact_vision_crosses_actual_sdk_upload_boundary_once_without_network(monkeypatch):
+    import httpx2
+    from openai import OpenAI
+
+    picture = Image.effect_noise((1774, 887), 64).convert("RGB")
+    with BytesIO() as buffer:
+        picture.save(buffer, format="PNG")
+        original = buffer.getvalue()
+    picture.close()
+    messages = [{"role": "user", "content": [{"type": "image_url", "image_url": {
+        "url": "data:image/png;base64," + base64.b64encode(original).decode()}}]}]
+    settings = get_settings().model_copy(deep=True)
+    monkeypatch.setattr(llm, "get_settings", lambda: settings)
+    monkeypatch.setattr(web_studio, "get_settings", lambda: settings)
+    monkeypatch.setattr(type(settings.llm), "vision_api_key", lambda _: "offline-key")
+    calls, clients = [], []
+
+    def transport(request):
+        calls.append(len(request.content))
+        # 离线模拟大请求上传受阻；不声称真实代理存在此固定限制。
+        if len(request.content) > 2 * 1024 * 1024:
+            raise httpx2.WriteTimeout("offline upload limit", request=request)
+        return httpx2.Response(200, json={"id": "offline-vision", "object": "chat.completion",
+            "created": 0, "model": "offline", "usage": {"prompt_tokens": 10,
+            "completion_tokens": 5, "total_tokens": 15}, "choices": [{"index": 0,
+            "finish_reason": "stop", "message": {"role": "assistant", "content": "{}"}}]})
+
+    def factory(**_kwargs):
+        client = OpenAI(base_url="https://offline.invalid/v1", api_key="offline-key", max_retries=0,
+            http_client=httpx2.Client(transport=httpx2.MockTransport(transport), trust_env=False))
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(llm, "_build_client", factory)
+    with pytest.raises(LLMError, match="上传请求内容超时"):
+        llm.vision_chat(messages, single_attempt=True)
+    assert web_studio.StudioApplication._comic_image_vision_model(messages) == "{}"
+    assert len(calls) == 2 and calls[0] > 2 * 1024 * 1024 > calls[1]
+    assert all(client.is_closed() for client in clients)
 
 
 def test_vision_single_attempt_preserves_old_default_and_usage(monkeypatch):
@@ -542,9 +1315,11 @@ def test_manual_region_review_receives_actual_pixels_and_keeps_scope_gate(
     request = {**common(app, pid, cid, "visual-edit"), "image": image,
                "task": "检查当前画面", "edit_scope": scope, "round_id": "visual-round"}
     if ambiguous:
-        with pytest.raises(ToolError) as raised:
-            app.comic_image_operation(pid, "edit", request)
-        assert raised.value.review_diagnostics["issues"][0]["region_ids"] == ["right"]
+        unresolved = app.comic_image_operation(pid, "edit", request)
+        assert unresolved["edit_status"] == "needs_clarification"
+        assert unresolved["review_diagnostics"]["issues"][0]["region_ids"] == ["right"]
+        assert unresolved["correction"]["used"] is False
+        assert app.comic_image_operation(pid, "edit", request) == unresolved
         assert len(text_calls) == 1
         assert app.comic_image_reports(pid, cid, "edit")["items"] == []
     else:
@@ -637,7 +1412,7 @@ def test_manual_revision_supersedes_only_its_old_target_and_comparison_keeps_exc
         "image": image, "task": "检查当前画面", "edit_scope": scope, "round_id": "revision",
         "analysis_artifact_id": report["artifact_id"]})
     assert len(calls) == 4  # Original normalization, compilation and independent review only.
-    assert result["compiler_version"].endswith(":edit-4")
+    assert result["compiler_version"].endswith(":edit-5")
     assert app.comic_projects.get(pid).creative_brief == original_brief
     assert len(result["constraint_receipt"]["review"]["constraint_replacements"]) == 2
     assert result["scope"]["constraint_resolution"]["constraint_replacements"] == result[
@@ -653,10 +1428,10 @@ def test_manual_revision_supersedes_only_its_old_target_and_comparison_keeps_exc
             output["negative_prompt"] = "不能改变" + old
         return json.dumps(output)
     monkeypatch.setattr(app, "_comic_constraint_model", contradictory_model)
-    with pytest.raises(ToolError) as failed:
-        app.comic_image_operation(pid, "edit", {**common(app, pid, cid, "contradictory-edit"),
-            "image": image, "task": "检查当前画面", "edit_scope": scope, "round_id": "failed"})
-    assert failed.value.review_diagnostics["issues"][0]["region_ids"] == ["right"]
+    failed = app.comic_image_operation(pid, "edit", {**common(app, pid, cid, "contradictory-edit"),
+        "image": image, "task": "检查当前画面", "edit_scope": scope, "round_id": "failed"})
+    assert failed["edit_status"] == "review_unavailable" and "artifact_id" not in failed
+    assert failed["review_diagnostics"]["issues"][0]["region_ids"] == ["right"]
     app.comic_image_operation(pid, "confirm", {**common(app, pid, cid, "confirm-revision"),
         "instruction_artifact_id": result["artifact_id"]})
     newer = upload(app, pid, cid, color=17, image_id=image["image_id"], expected_image_version=1,

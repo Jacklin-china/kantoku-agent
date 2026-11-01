@@ -785,12 +785,38 @@ class ComicMediaStore:
 
     def select(self, image_id: str, request: ComicImageSelectionRequest) -> dict:
         image = self.get(image_id)
+        candidate = self.get(image_id, version=request.version)
+        candidate_artifact = self.runtime.get_artifact(candidate.artifact_id)
+        accepted = []
+        if request.accepted_visual_changes:
+            chosen = self.get(image_id, version=request.version)
+            instruction = self.runtime.get_artifact(chosen.instruction_artifact_id or "")
+            state = instruction.metadata.get("context_sources", {}).get(
+                "image_references", {}).get("continuity", {}).get("visual_state", {})
+            entities = {item.get("entity_id") for item in state.get("elements", [])} - {None}
+            for change in request.accepted_visual_changes:
+                attributes = {item.get("attribute") for item in state.get("elements", [])
+                              if item.get("entity_id") == change.entity_id}
+                if (change.operation != "change" or change.entity_id not in entities
+                        or change.new_object_key or not change.quote.strip()
+                        or not set(change.attributes).issubset(attributes)):
+                    raise ToolError("额外采用范围必须指向该图片依据中的具体对象")
+                accepted.append(change.model_dump(exclude_none=True))
         with self.projects._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             project_id = image.project_id
             operation = "image.select:" + image_id
             if saved := self.request_result(project_id, operation, request, connection=connection):
                 return saved
+            if candidate_artifact.metadata.get("generation_task_id"):
+                instruction = self.runtime.get_artifact(candidate.instruction_artifact_id or "")
+                current = connection.execute("SELECT v.payload_json FROM comic_prompts p "
+                    "JOIN comic_entity_versions v ON v.project_id=p.project_id "
+                    "AND v.entity_type='prompt' AND v.entity_id=p.prompt_id "
+                    "AND v.version=p.current_version WHERE p.shot_id=?",
+                    (instruction.metadata.get("shot_id"),)).fetchone()
+                if not current or json.loads(current[0])["artifact_id"] != instruction.id:
+                    raise ToolError("该结果来自旧版生成任务，请在原版本分支处理，未更新当前设定")
             self._write_guard(connection, project_id, request)
             self.require_image(
                 ImageVersionRef(image_id=image_id, version=request.version),
@@ -807,6 +833,7 @@ class ComicMediaStore:
                 "image_id": image_id,
                 "selected_version": request.version,
                 "selection_version": version + 1,
+                **({"accepted_visual_changes": accepted} if accepted else {}),
             }
             self.projects._insert_version(
                 connection,

@@ -835,6 +835,55 @@ class ComicProjectStore:
                 result[f"provenance:{field}"] = json.dumps(
                     prompt.get("context_sources", {}).get("field_provenance", {}).get(field, {}),
                     ensure_ascii=False)
+                for path, evidence in self.preserved_prompt_scope({
+                        "project_id": prompt["project_id"], "prompt_id": prompt["prompt_id"],
+                        "version": prompt["version"], "artifact_id": prompt["artifact_id"]
+                }).items():
+                    if path.startswith(field + "."):
+                        result[f"scope:{path}"] = json.dumps(evidence, ensure_ascii=False)
+        return result
+
+    def preserved_prompt_scope(self, source: dict) -> dict[str, dict]:
+        """Read immutable source values; legacy descendants retain only verified semantic leaves."""
+        sources = {}
+
+        def read(reference):
+            key = tuple(reference[name] for name in (
+                "project_id", "prompt_id", "version", "artifact_id"))
+            if key in sources:
+                return sources[key]
+            with self._connect() as connection:
+                prompt = json.loads(self._version_payload(connection, reference["project_id"],
+                    "prompt", reference["prompt_id"], reference["version"]))
+            if prompt["artifact_id"] != reference["artifact_id"]:
+                raise ToolError("保留字段与 Prompt Artifact 来源不一致")
+            metadata = prompt.get("context_sources", {})
+            if (metadata.get("bible_contract") != "semantic-contexts-2"
+                    and not metadata.get("preserved_semantic_fields")):
+                return prompt, {}
+            sections = ComicPromptContexts.from_sections({
+                name: prompt[name] for name in ComicPromptContexts.model_fields},
+                semantic_scope=True)
+            values = {f"{name}.{field}": value for name, body in sections.model_dump().items()
+                      for field, value in body.items()}
+            sources[key] = (prompt, values)
+            return sources[key]
+
+        prompt, values = read(source)
+        reference = {name: prompt[name] for name in (
+            "project_id", "prompt_id", "version", "artifact_id")}
+        if prompt.get("context_sources", {}).get("bible_contract") == "semantic-contexts-2":
+            return {path: {"value": value, "source": reference} for path, value in values.items()}
+        result = {}
+        for path, origin in prompt.get("context_sources", {}).get(
+                "preserved_semantic_fields", {}).items():
+            if path not in values:
+                raise ToolError("保留字段包含不支持的 Context 路径")
+            original, original_values = read(origin)
+            if (original.get("context_sources", {}).get("bible_contract")
+                    != "semantic-contexts-2" or original_values.get(path) != values[path]):
+                raise ToolError("保留字段与原始语义 Prompt 不一致")
+            result[path] = {"value": values[path], "source": origin}
         return result
 
     def director_confirmed(self, spec: DirectorSpec) -> bool:
@@ -1241,11 +1290,14 @@ class ComicContextBuilder:
             if section not in bibles:
                 continue
             context = ComicPromptContexts.model_fields[section].annotation.from_text(
-                bibles[section])
+                bibles[section], preserved_scope={path.removeprefix("scope:"): json.loads(value)[
+                    "value"] for path, value in bibles.items() if path.startswith("scope:")})
             for field, value in context.model_dump().items():
                 if field not in fields:
                     retained[f"lock:{section}.{field}"] = value
                     retained[f"source:{section}.{field}"] = bibles.get(f"source:{section}", "")
+                    if f"scope:{section}.{field}" in bibles:
+                        retained[f"scope:{section}.{field}"] = bibles[f"scope:{section}.{field}"]
         return retained
 
     @staticmethod

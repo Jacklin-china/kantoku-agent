@@ -10,6 +10,7 @@ const transpile = source => ts.transpileModule(source, { compilerOptions: { modu
 // Minimal node renderer has no browser realm; Vue's input directive checks these types.
 globalThis.Document ??= class TestDocument {}
 globalThis.ShadowRoot ??= class TestShadowRoot {}
+globalThis.ResizeObserver ??= class TestResizeObserver { observe() {} disconnect() {} }
 const moduleUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 const geometryUrl = moduleUrl(transpile(readFileSync(new URL('../src/components/ui/imageViewport.ts', import.meta.url), 'utf8')))
 const presentationUrl = moduleUrl(transpile(readFileSync(new URL('../src/domains/comic/shotGeneration.ts', import.meta.url), 'utf8')))
@@ -61,6 +62,7 @@ const instruction = { artifact_id: 'edit', basis, analysis_artifact_id: analysis
 function node(tag) { return { tag, tagName: tag.toUpperCase(), props: {}, children: [], parent: null, value: '', listeners: {}, style: {},
   get options() { return this.children.filter(item => item.tag === 'option') },
   getRootNode() { return { activeElement: null } },
+  getBoundingClientRect() { return { left: 0, top: 0, width: 1400, height: 800 } },
   addEventListener(name, action) { this.listeners[name] = action }, removeEventListener() {},
   click() { this.clicked = true } } }
 const renderer = createRenderer({
@@ -163,6 +165,32 @@ function offlineWorkbench(report = analysis) {
   }
   return { api, calls, stored }
 }
+
+test('adoption sends only explicitly selected object attributes and clears the extra permission', async () => {
+  const report = { ...analysis, basis: { ...basis, references: { established_elements: [
+    { entity_id: 'person-a', attribute: 'face', target: '甲' },
+    { entity_id: 'person-b', attribute: 'clothing', target: '乙' },
+  ] } } }
+  const fixture = offlineWorkbench(report), previous = globalThis.workbenchAPI
+  globalThis.workbenchAPI = fixture.api
+  const host = node('root'), app = renderer.createApp(Optimize, { projectId: 'project', conversationId: 'conversation', task: basis.task_context.task, legacyImages: [] })
+  app.mount(host)
+  try {
+    await flush()
+    const photo = find(host, el => el.tag === 'img' && el.props.src === 'blob:legacy-image')
+    photo.props.onLoad({ target: { naturalWidth: 800, naturalHeight: 600 } })
+    await flush()
+    const checkbox = find(host, el => el.tag === 'input' && el.props.value === 'person-a:face')
+    assert.ok(checkbox)
+    checkbox.props['onUpdate:modelValue'](['person-a:face'])
+    await flush()
+    await find(host, el => el.tag === 'button' && content(el).includes('采用此版本')).props.onClick()
+    await flush()
+    const sent = fixture.calls.find(item => item.action === 'adopt').body
+    assert.deepEqual(sent.accepted_visual_changes, [{ entity_id: 'person-a', target: '甲', attributes: ['face'], quote: '甲 · 面容按当前图片更新', operation: 'change' }])
+    assert.equal(fixture.calls.filter(item => item.action === 'analysis').length, 0)
+  } finally { app.unmount(); globalThis.workbenchAPI = previous }
+})
 
 test('fixed viewport bounds zoom and pan while normalized selections stay stable', async () => {
   const fixture = offlineWorkbench(), previous = globalThis.workbenchAPI, priorObserver = globalThis.ResizeObserver
@@ -432,7 +460,11 @@ test('four selected suggestions remain visible and unresolved scope blocks compi
     for (const id of ['edge', 'detail', 'ambient', 'light']) assert.ok(find(host, el => el.props['data-requirement'] === 'finding:' + id))
     assert.match(content(host), /已选 4 条 · 区域 2 条 · 整图 0 条 · 待定位 2 条/)
     assert.ok(find(host, el => el.props['aria-label'] === '区域 1'))
+    assert.equal(find(host, el => el.props['aria-label'] === '区域 2'), null)
+    const detail = find(host, el => el.props['data-requirement'] === 'finding:detail')
+    find(detail, el => el.props.class === 'wb-card-title').props.onClick(); await nextTick()
     assert.ok(find(host, el => el.props['aria-label'] === '区域 2'))
+    assert.equal(find(host, el => el.props['aria-label'] === '区域 1'), null)
     assert.equal(find(host, el => el.props['aria-label'] === '区域 3'), null)
     await find(host, el => el.tag === 'button' && content(el) === '整理改图指令').props.onClick(); await flush()
     assert.equal(fixture.calls.filter(item => item.action === 'edit').length, 0)
@@ -571,6 +603,206 @@ test('a lost edit response queries the original Run and restores its instruction
     assert.ok(find(host, el => el.tag === 'pre'))
     assert.equal(fixture.stored.get('legacy-image:1').state.phase, 'review')
   } finally { app.unmount(); await flush(); globalThis.workbenchAPI = previous }
+})
+
+for (const status of ['needs_clarification', 'review_unavailable', 'needs_scope_confirmation']) test(`edit ${status} preserves demands and restores a waiting result without resubmitting`, async () => {
+  const fixture = offlineWorkbench(), previous = globalThis.workbenchAPI
+  let request, resolution
+  fixture.api.createComicEditInstruction = async (_pid, body) => {
+    fixture.calls.push({ action: 'edit', body }); request = body
+    resolution = { edit_status: status, run_id: 'waiting-edit', round_id: body.round_id,
+      source_image: body.image, input_sha256: 'frozen-input',
+      message: status === 'needs_clarification' ? '请确认框内需要修改的对象。' : '系统核验暂未完成，无需反复改写原文。',
+      review_diagnostics: { stage: 'final_review', diagnostic_artifact_id: 'diagnostic',
+        run_id: 'waiting-edit', source_image: body.image, round_id: body.round_id,
+        issues: [{ code: 'missing', reason: '具体的一项需要处理', requirement_ids: ['finding:edge'],
+          finding_ids: ['edge'], region_ids: ['finding:edge'], constraint_ids: [] }] },
+      candidate: status === 'review_unavailable' ? { verified: false,
+        output: { positive_prompt: '尚未核验的候选正文', negative_prompt: '', summary: '候选' } } : null,
+      correction: { used: status === 'review_unavailable', stage: 'final_review' } }
+    if (status === 'needs_scope_confirmation') Object.assign(resolution, {
+      plan_fingerprint: 'bound-plan', edit_plan: { items: [], handling: [], questions: [],
+        scope_proposals: [{ item_id: 'edge', target: '边缘', bounds: [.05, .1, .9, .9], reason: '需要连接框外部分', within_scope_alternative: '原范围内只修整一部分' }] } })
+    return resolution
+  }
+  fixture.api.getComicImageRequests = async () => resolution ? [{ id: 'waiting-edit', status: 'waiting',
+    state: { media_input: request, image_edit_resolution: resolution } }] : []
+  globalThis.workbenchAPI = fixture.api
+  const props = { projectId: 'project', conversationId: 'conversation', task: basis.task_context.task, legacyImages: [] }
+  const host = node('root'), app = renderer.createApp(Optimize, props)
+  app.mount(host)
+  try {
+    await flush()
+    find(host, el => el.tag === 'img' && el.props.src === 'blob:legacy-image').props.onLoad()
+    find(host, el => el.props['aria-label'] === '加入建议 1').props.onChange(); await flush()
+    await find(host, el => el.tag === 'button' && content(el) === '整理改图指令').props.onClick(); await flush()
+    assert.match(content(host), status === 'needs_clarification' ? /需要确认具体需求/ : status === 'needs_scope_confirmation' ? /需要确认影响范围/ : /系统核验暂未完成/)
+    assert.match(content(host), /具体的一项需要处理/)
+    assert.equal(fixture.stored.get('legacy-image:1').state.phase, 'editing')
+    assert.equal(fixture.stored.get('legacy-image:1').state.instruction_artifact_id, null)
+    assert.equal(find(host, el => el.tag === 'button' && content(el).includes('确认并复制')), null)
+  } finally { app.unmount(); await flush() }
+  const reopenedHost = node('root'), reopened = renderer.createApp(Optimize, props)
+  reopened.mount(reopenedHost)
+  try {
+    await flush()
+    assert.match(content(reopenedHost), /具体的一项需要处理/)
+    assert.equal(fixture.calls.filter(item => item.action === 'edit').length, 1)
+    assert.equal(fixture.calls.filter(item => item.action === 'confirm').length, 0)
+    if (status === 'needs_clarification') {
+      await find(reopenedHost, el => el.tag === 'button' && content(el) === '查看并处理待确认问题').props.onClick(); await flush()
+      assert.equal(fixture.calls.filter(item => item.action === 'edit').length, 1)
+    }
+    await find(reopenedHost, el => el.tag === 'button' && content(el) === '返回需求').props.onClick(); await flush()
+    const input = await openSupplement(reopenedHost)
+    input.props['onUpdate:modelValue']('只改变已定位对象的颜色'); input.props.onInput(); await flush()
+    assert.equal(find(reopenedHost, el => el.props['data-operation'] === 'edit-resolution'), null)
+  } finally { reopened.unmount(); await flush(); globalThis.workbenchAPI = previous }
+})
+
+for (const scenario of ['local', 'whole', 'multiple']) test(`scope approval generates a prompt once with a collapsed plan; ${scenario}`, async () => {
+  const whole = scenario === 'whole'
+  const fixture = offlineWorkbench(), previous = globalThis.workbenchAPI
+  const compile = fixture.api.createComicEditInstruction
+  let pending, submitted, release, submissions = 0
+  fixture.api.createComicEditInstruction = async (...args) => {
+    submissions++
+    const body = args[1]
+    if (body.plan_confirmation) {
+      submitted = body
+      await new Promise(resolve => { release = resolve })
+      const result = await compile(...args)
+      result.scope.unified_plan = { items: [], handling: [], questions: [],
+        scope_proposals: [{ item_id: 'edge', target: '边缘', bounds: [.05, .1, .9, .9] }] }
+      return result
+    }
+    pending = body
+    return { edit_status: 'needs_scope_confirmation', run_id: 'scope-run', plan_fingerprint: 'scope-fingerprint',
+      source_image: body.image, round_id: body.round_id, message: '确认影响范围',
+      review_diagnostics: { stage: 'plan', issues: [] },
+      edit_plan: { contract: 'unified-edit-plan-2', items: Array.from({ length: 20 }, (_, index) => ({ item_id: String(index), target: '边缘', attribute: '清晰度', desired_state: '清晰', preserve: ['原色'] })),
+        handling: [], questions: [], scope_proposals: [{ item_id: 'edge', target: whole ? '整图亮度' : '边缘', bounds: whole ? [0, 0, 1, 1] : [.05, .1, .9, .9], reason: '连接部位在框外', within_scope_alternative: '只改框内部分' },
+          ...(scenario === 'multiple' ? [{ item_id: 'light', target: '光线', bounds: [0, 0, 1, 1], reason: '整图调整' }] : [])] } }
+  }
+  globalThis.workbenchAPI = fixture.api
+  const host = node('root'), app = renderer.createApp(Optimize, { projectId: 'project', conversationId: 'conversation', task: basis.task_context.task, legacyImages: [] })
+  app.mount(host)
+  try {
+    await flush()
+    find(host, el => el.tag === 'img' && el.props.src === 'blob:legacy-image').props.onLoad()
+    find(host, el => el.props['aria-label'] === '加入建议 1').props.onChange(); await flush()
+    await find(host, el => el.tag === 'button' && content(el) === '整理改图指令').props.onClick(); await flush()
+    const preview = find(host, el => el.props['aria-label'] === '统一修改计划')
+    assert.equal(preview.tag, 'details'); assert.notEqual(preview.props.open, true)
+    const button = find(host, el => el.tag === 'button' && content(el) === '确认范围并生成提示词')
+    assert.equal(button.props.disabled, true)
+    await button.props.onClick(); await flush()
+    assert.equal(submissions, 1)
+    const check = find(host, el => el.tag === 'input' && el.props.value === 'edge' && el.props.type === 'checkbox')
+    check.props['onUpdate:modelValue'](['edge']); await flush()
+    if (scenario === 'multiple') {
+      assert.equal(button.props.disabled, true)
+      await button.props.onClick(); await flush()
+      assert.equal(submissions, 1)
+      const second = find(host, el => el.tag === 'input' && el.props.value === 'light' && el.props.type === 'checkbox')
+      second.props['onUpdate:modelValue'](['edge', 'light']); await flush()
+    }
+    assert.equal(button.props.disabled, false)
+    const action = button.props.onClick(); await flush()
+    await button.props.onClick(); await flush()
+    assert.equal(submissions, 2)
+    assert.equal(submitted.edit_scope.region_semantics, 'locator')
+    assert.deepEqual(submitted.edit_scope.regions, pending.edit_scope.regions)
+    assert.deepEqual(submitted.plan_confirmation, { run_id: 'scope-run', fingerprint: 'scope-fingerprint', accepted_item_ids: scenario === 'multiple' ? ['edge', 'light'] : ['edge'] })
+    release(); await action; await flush()
+    assert.equal(find(host, el => el.tag === 'button' && content(el) === '确认范围并生成提示词'), null)
+    assert.match(content(host), /仅柔化光线并改善选中边缘/)
+    assert.equal(find(host, el => el.props.class === 'wb-proposed-region'), null)
+    assert.equal(fixture.calls.filter(item => item.action === 'edit').length, 1)
+    assert.equal(fixture.calls.filter(item => item.action === 'confirm').length, 0)
+  } finally { release?.(); app.unmount(); await flush(); globalThis.workbenchAPI = previous }
+})
+
+test('old pending plans can generate from saved demands without replaying obsolete questions or frames', async () => {
+  const fixture = offlineWorkbench(), previous = globalThis.workbenchAPI
+  const compile = fixture.api.createComicEditInstruction
+  let requests = 0, original
+  fixture.api.createComicEditInstruction = async (...args) => {
+    requests++
+    const body = args[1]
+    if (requests > 1) {
+      assert.deepEqual(body.edit_scope, original.edit_scope)
+      assert.equal(body.plan_confirmation, undefined)
+      return compile(...args)
+    }
+    original = body
+    return { edit_status: 'needs_clarification', run_id: 'obsolete-run', source_image: body.image,
+      round_id: body.round_id, message: '旧范围不明确', review_diagnostics: { stage: 'plan', issues: [] },
+      edit_plan: { contract: 'unified-edit-plan-1', items: [], handling: [], questions: [],
+        scope_proposals: [{ item_id: 'keep', target: '只需保留的内容', bounds: [0, 0, .5, .5] }] } }
+  }
+  globalThis.workbenchAPI = fixture.api
+  const host = node('root'), app = renderer.createApp(Optimize, { projectId: 'project', conversationId: 'conversation', task: basis.task_context.task, legacyImages: [] })
+  app.mount(host)
+  try {
+    await flush()
+    find(host, el => el.tag === 'img' && el.props.src === 'blob:legacy-image').props.onLoad()
+    find(host, el => el.props['aria-label'] === '加入建议 1').props.onChange(); await flush()
+    await find(host, el => el.tag === 'button' && content(el) === '整理改图指令').props.onClick(); await flush()
+    assert.equal(requests, 1)
+    assert.equal(find(host, el => el.props.class === 'wb-proposed-region'), null)
+    assert.doesNotMatch(content(host), /旧范围不明确/)
+    await find(host, el => el.tag === 'button' && content(el) === '按当前需求生成提示词').props.onClick(); await flush()
+    assert.equal(requests, 2)
+    assert.match(content(host), /仅柔化光线并改善选中边缘/)
+  } finally { app.unmount(); await flush(); globalThis.workbenchAPI = previous }
+})
+
+for (const failed of [false, true]) test(`fresh edited result checks regression once and preserves version choice; failure=${failed}`, async () => {
+  const fixture = offlineWorkbench(), previous = globalThis.workbenchAPI
+  const result = { ...image, version: 2, artifact_id: 'result', parent: basis.source_image, instruction_artifact_id: 'edit' }
+  fixture.api.getComicImages = async () => [result]
+  fixture.api.getComicImageVersions = async () => ({ versions: [result, image], next_before: null, selection: null })
+  fixture.api.getComicWorkbench = async () => ({ version: 0, state: { auto_analyze: true } })
+  fixture.api.getComicImageReports = async () => ({ items: [], next_cursor: null })
+  fixture.api.compareComicImages = async (_pid, body) => {
+    fixture.calls.push({ action: 'comparison', body })
+    if (failed) throw new TypeError('连接中断')
+    return { output: { summary: '目标部分实现，但出现退步', changes: [
+      { check_id: 'one', status: 'satisfied', evidence: '边缘已清晰' },
+      { check_id: 'two', status: 'not_satisfied', evidence: '颜色未改变' }],
+      preservation: [{ check_id: 'keep', status: 'not_satisfied', evidence: '背景结构受损' }],
+      new_problems: ['新增重影'], recommendation: 'retain_before', limitations: [] } }
+  }
+  globalThis.workbenchAPI = fixture.api
+  const host = node('root'), props = { projectId: 'project', conversationId: 'conversation', task: basis.task_context.task, legacyImages: [], newImport: { image_id: image.image_id, version: 2 } }
+  const app = renderer.createApp(Optimize, props)
+  app.mount(host)
+  try {
+    await flush()
+    assert.equal(fixture.calls.filter(item => item.action === 'comparison').length, 0)
+    find(host, el => el.tag === 'img' && el.props.src === 'blob:result').props.onLoad(); await flush()
+    const sent = fixture.calls.find(item => item.action === 'comparison').body
+    assert.deepEqual(sent.before, basis.source_image)
+    assert.deepEqual(sent.after, props.newImport)
+    assert.equal(sent.instruction_artifact_id, 'edit')
+    if (failed) assert.match(content(host), /连接中断/)
+    else {
+      assert.match(content(host), /已解决：边缘已清晰/)
+      assert.match(content(host), /未解决：颜色未改变/)
+      assert.match(content(host), /新增重影/)
+      assert.match(content(host), /建议保留旧版/)
+    }
+    assert.equal(fixture.calls.filter(item => item.action === 'analysis' || item.action === 'adopt').length, 0)
+    assert.equal(fixture.calls.filter(item => item.action === 'comparison').length, 1)
+  } finally { app.unmount(); await flush() }
+  const reopened = renderer.createApp(Optimize, { ...props, newImport: undefined }), nextHost = node('root')
+  reopened.mount(nextHost)
+  try {
+    await flush()
+    find(nextHost, el => el.tag === 'img' && el.props.src === 'blob:result').props.onLoad(); await flush()
+    assert.equal(fixture.calls.filter(item => item.action === 'comparison').length, 1)
+  } finally { reopened.unmount(); await flush(); globalThis.workbenchAPI = previous }
 })
 
 test('file read failure is visible with retry and matching-original recovery, without model submission', async () => {

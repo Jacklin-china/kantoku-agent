@@ -1,3 +1,5 @@
+import type { ConversationMessage, CoreRun } from '../../types'
+
 // 从真实执行摘要决定显示层级，不在 UI 推算节点成功或生成状态。
 export const directorNodeLabels: Record<string, string> = {
   creative_understanding: '创意理解', visual_direction: '视觉导演',
@@ -227,6 +229,75 @@ export function mergeChatTurnsByTime(
     if (a.role !== b.role) return a.role === 'user' ? -1 : 1
     return a.id.localeCompare(b.id)
   })
+}
+
+interface DirectorTranscriptEntry {
+  execution: { run_id: string }
+  text: string
+  answer?: string
+  label?: string
+}
+
+/** 将持久化消息、历史 Run 和待提交输入投影为同一条聊天时间线。 */
+export function buildDirectorChatTurns(
+  messages: ConversationMessage[],
+  runs: Record<string, CoreRun>,
+  transcript: DirectorTranscriptEntry[],
+  pendingText: string,
+  pendingRequestId: string,
+  previousRunIds: string[],
+): MergedChatTurn[] {
+  const persisted: MergedChatTurn[] = messages.map(item => ({
+    id: item.id, role: item.role === 'user' ? 'user' : 'assistant',
+    content: item.role === 'assistant' && runs[item.run_id ?? '']?.state.generation_incomplete === true
+      ? '本轮方案的系统内部检查尚未完成，候选内容已保留。请进入方案重新执行内部检查。'
+      : item.role === 'assistant' && item.type === 'plan' ? quickDirectorMessage(item.content) : item.content,
+    artifactId: item.artifact_id ?? undefined, runId: item.run_id ?? undefined, at: item.created_at,
+  }))
+  const knownTurns = new Set(messages.filter(item => item.run_id).map(item => `${item.run_id}:${item.role}`))
+  const derived: MergedChatTurn[] = []
+  for (const entry of transcript) {
+    if (Object.values(runs).some(run => (run.state.quick_creation as Record<string, unknown> | undefined)?.director_run_id === entry.execution.run_id)) continue
+    const run = runs[entry.execution.run_id]
+    const inputMessageId = (run?.state.creative_context as Record<string, unknown> | undefined)?.input_message_id
+    const savedUser = messages.find(item => item.role === 'user'
+      && (item.run_id === entry.execution.run_id || item.id === inputMessageId))
+    // 历史 Run 早于消息落库，用 Run 的开始时间还原它在对话中的位置。
+    const at = savedUser?.created_at ?? run?.started_at ?? ''
+    if (entry.text && !run?.state.task_system && !savedUser) derived.push({ id: `run-user-${entry.execution.run_id}`, role: 'user', content: entry.text, runId: entry.execution.run_id, at })
+    // 没有正式回答时，用执行状态作占位。
+    const answer = entry.answer || entry.label
+    if (answer && !knownTurns.has(`${entry.execution.run_id}:assistant`)) derived.push({ id: `run-ai-${entry.execution.run_id}`, role: 'assistant', content: answer, runId: entry.execution.run_id, at })
+  }
+  // 未落库的输入保持在时间线末尾；同一请求已有消息时不重复显示。
+  if (pendingText && !messages.some(item => item.role === 'user'
+      && ((pendingRequestId && item.event_id === `director-request:${pendingRequestId}`)
+        || (item.content === pendingText && item.run_id && !previousRunIds.includes(item.run_id))))
+      && !derived.some(item => item.role === 'user' && item.content === pendingText
+        && item.runId && !previousRunIds.includes(item.runId))) {
+    derived.push({ id: 'pending-user', role: 'user', content: pendingText, at: '' })
+  }
+  return mergeChatTurnsByTime(persisted, derived)
+}
+
+/** 根据工作区已有事实呈现步骤，不推断视频或其他尚未完成的产物。 */
+export function directorProductionSteps(state: {
+  planIncomplete: boolean; hasPlan: boolean; hasPrompt: boolean; hasImage: boolean
+  hasSelected: boolean; hasStory: boolean; storyConfirmed: boolean; hasStoryExport: boolean
+  activeNavigation: string
+}): { id: string; label: string; hint: string; status: 'done' | 'current' | 'todo' }[] {
+  const { planIncomplete, hasPlan, hasPrompt, hasImage, hasSelected, hasStory, storyConfirmed, hasStoryExport, activeNavigation } = state
+  const steps = [
+    { id: 'plan', label: '画面方案', hint: planIncomplete ? '内部检查未完成' : hasPlan ? '方案已保存' : '描述画面或导入图片', done: hasPlan },
+    { id: 'prompt', label: '生图指令', hint: hasPrompt ? '指令已就绪' : '确认后整理提示词', done: hasPrompt },
+    { id: 'images', label: '图片工作台', hint: hasSelected ? '已采用图片，可继续修改' : hasImage ? '查看图片并持续修改' : '导入图片开始修改', done: hasSelected },
+    { id: 'story', label: '故事编排', hint: storyConfirmed ? '故事已确认' : hasStory ? '故事草稿已保存' : '选图后排镜头', done: storyConfirmed },
+    { id: 'export', label: '导出材料', hint: hasStoryExport ? '素材包已导出' : storyConfirmed ? '可导出文字与图片' : '确认故事后导出', done: hasStoryExport },
+    { id: 'video', label: '视频生成', hint: storyConfirmed ? '镜头已就绪' : '确认故事后开始', done: false },
+  ]
+  return steps.map(({ id, label, hint, done }) => ({
+    id, label, hint, status: activeNavigation === id ? 'current' : done ? 'done' : 'todo',
+  }))
 }
 
 // 编辑只投影公开决策叶子，绑定身份、用户硬约束和审核结论保持只读。

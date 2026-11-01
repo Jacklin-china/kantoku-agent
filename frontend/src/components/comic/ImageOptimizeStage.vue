@@ -11,8 +11,9 @@ import {
   getArtifactContentUrl, getComicImageReport, getComicImageReports, getComicImages, getComicImageVersions,
   getComicProject, getComicImageRequests, getComicReviewDraft, getComicWorkbench, importComicImage, restoreComicImageFile,
   saveComicReviewDraft, saveComicWorkbench, selectComicImage,
-  type ComicComparison, type ComicEditInstruction, type ComicEditRegion, type ComicEditScope,
+  type ComicComparison, type ComicEditInstruction, type ComicEditResolution, type ComicEditRegion, type ComicEditScope,
   type ComicEditDiagnostics, type ComicImageAnalysis, type ComicImageRef, type ComicImageView, type ComicInstructionTarget, type ComicMediaWrite, type ComicReviewDraft,
+  type ComicPlanConfirmation,
 } from '../../services/core'
 
 const props = defineProps<{ projectId: string; conversationId: string; task: string; legacyImages: ComicImageView[]; briefVersion?: number; initialView?: string; newImport?: ComicImageRef }>()
@@ -22,6 +23,12 @@ const owner = props.conversationId, projectId = props.projectId
 const families = ref<ComicImageView[]>([]), versions = ref<ComicImageView[]>([])
 const current = ref<ComicImageView | null>(null), base = ref<ComicImageView | null>(null)
 const analysis = ref<ComicImageAnalysis | null>(null), instructions = ref<ComicEditInstruction[]>([])
+const acceptedElements = ref<string[]>([])
+const attributeLabels: Record<string, string> = { face: '面容', hair: '发型', clothing: '服装', shape: '外形', color: '颜色', material: '材质', position: '位置', action: '动作', presence: '是否入镜', environment: '环境', art_style: '画风', identity: '身份', appearance: '外观', lighting: '光影', composition: '构图' }
+const adoptionElements = computed(() => (analysis.value?.basis.references?.established_elements ?? [])
+  .filter(item => item.entity_id && item.attribute)
+  .map(item => ({ ...item, entity_id: item.entity_id!, attribute: item.attribute!, key: `${item.entity_id}:${item.attribute}`, label: `${item.target} · ${attributeLabels[item.attribute!] ?? item.attribute}` })))
+watch(() => current.value?.artifact_id, () => { acceptedElements.value = [] })
 const reportCursor = ref<string | null>(null), nextVersion = ref<number | null>(null)
 const draft = ref<ComicReviewDraft | null>(null), draftVersion = ref(0), workspaceVersion = ref(0)
 const remoteDraft = ref<{ version: number; state: ComicReviewDraft | null } | null>(null)
@@ -33,6 +40,7 @@ const wholeFindingIds = ref<string[]>([]), instructionTarget = ref<ComicInstruct
 const scopeDirty = ref(false), expandedItem = ref(''), drawingFinding = ref('')
 const panelTab = ref<'requirements' | 'analysis'>('requirements'), editDiagnostics = ref<ComicEditDiagnostics | null>(null)
 const diagnosticsOpen = ref(false)
+const editResolution = ref<ComicEditResolution | null>(null)
 const workbenchElement = ref<HTMLElement | null>(null), canvasElement = ref<HTMLElement | null>(null)
 const panelElement = ref<HTMLElement | null>(null)
 const canvasSize = ref({ width: 0, height: 0 }), panelHeight = ref(0), workbenchHeight = ref(0)
@@ -154,10 +162,22 @@ const candidateRegions = computed(() => (analysis.value?.output.findings ?? []).
       || wholeFindingIds.value.includes(item.finding_id) || regions.value.some(region => region.finding_id === item.finding_id)) return []
   return [{ id: 'finding:' + item.finding_id, number: index + 1, bounds: item.region, selected: false }]
 }))
-const overlays = computed(() => onBase.value ? [...candidateRegions.value,
+const overlays = computed(() => {
+  const all = onBase.value ? [...candidateRegions.value,
   ...regions.value.map((item, index) => ({ id: item.region_id,
     number: item.finding_id ? (analysis.value?.output.findings.findIndex(f => f.finding_id === item.finding_id) ?? -1) + 1 : item.label || '手动' + (index + 1),
-    bounds: item.bounds, selected: true }))] : [])
+    bounds: item.bounds, selected: true }))] : []
+  return focus.value ? all.filter(item => item.id === focus.value) : all.filter(item => item.selected).slice(0, 1)
+})
+const approvedScopeItems = ref<string[]>([])
+const displayedPlan = computed(() => editResolution.value?.edit_plan ?? visibleInstruction.value?.scope.unified_plan)
+const outdatedPlan = computed(() => !!editResolution.value?.edit_plan?.contract && editResolution.value.edit_plan.contract !== 'unified-edit-plan-2')
+const previewScopeItem = ref('')
+const proposalOverlays = computed(() => {
+  if (!onBase.value || outdatedPlan.value || editResolution.value?.edit_status !== 'needs_scope_confirmation') return []
+  const proposals = displayedPlan.value?.scope_proposals ?? []
+  return proposals.filter(item => item.item_id === (previewScopeItem.value || proposals[0]?.item_id))
+})
 const modifications = computed(() => [
   ...(draft.value?.selected_finding_ids ?? []).map(id => {
     const finding = analysis.value?.output.findings.find(item => item.finding_id === id)
@@ -184,7 +204,8 @@ function regionalScope(): ComicEditScope {
   const local = regions.value.length > 0 || pendingModifications.value.length > 0
   return { mode: global ? local ? 'mixed' : 'whole' : 'regions',
     regions: regions.value.map(item => ({ ...item, bounds: [...item.bounds] })),
-    whole_finding_ids: [...wholeFindingIds.value], instruction_target: { ...instructionTarget.value } }
+    whole_finding_ids: [...wholeFindingIds.value], instruction_target: { ...instructionTarget.value },
+    region_semantics: draft.value?.edit_scope?.region_semantics ?? (draft.value?.edit_scope ? 'strict' : 'locator') }
 }
 function snapshot(): ComicReviewDraft | null {
   return draft.value ? { ...draft.value, image: { ...draft.value.image }, selected_finding_ids: [...draft.value.selected_finding_ids],
@@ -275,6 +296,7 @@ function edit(save = true): void {
   if (error.value === operationErrors.value.edit) error.value = ''
   operationErrors.value.edit = ''
   editDiagnostics.value = null
+  editResolution.value = null
   diagnosticsOpen.value = false
   if (!scopeDirty.value && draft.value.edit_scope && !draft.value.edit_scope.instruction_target) draft.value.round_id = crypto.randomUUID()
   scopeDirty.value = true
@@ -305,7 +327,7 @@ function applyDraft(value: ComicReviewDraft): ComicReviewDraft {
     : { mode: value.edit_scope?.mode === 'whole' ? 'whole' : 'selected_regions' }
   regions.value = value.edit_scope?.regions.map(item => ({ ...item, bounds: [...item.bounds] })) ?? []
   focus.value = ''; drawing.value = false; drawingFinding.value = ''; expandedItem.value = ''; removedSelection.value = null; historyInstruction.value = null
-  diagnosticsOpen.value = false; editDiagnostics.value = null; panelTab.value = 'requirements'
+  diagnosticsOpen.value = false; editDiagnostics.value = null; editResolution.value = null; panelTab.value = 'requirements'
   return value
 }
 function toggleAutoAnalyze(): void { autoAnalyze.value = !autoAnalyze.value; void savePreference() }
@@ -467,7 +489,18 @@ async function analyzeNewImport(): Promise<void> {
   emit('importConsumed', imageRef(image))
   if (autoAnalyze.value && !analysis.value && !previewErrors.value[image.artifact_id]
       && !autoAnalysisStarted.has(key(image))) {
-    autoAnalysisStarted.add(key(image)); await analyze(image)
+    autoAnalysisStarted.add(key(image))
+    if (image.parent && image.instruction_artifact_id) {
+      const before = await resolveVersion(image.parent)
+      if (!before || unavailable(before)) { operationErrors.value.compare = '修改前版本不可用，暂不能检查退步。'; return }
+      await perform('compare', async () => {
+        const report = await compareComicImages(projectId, { ...await body(), before: imageRef(before),
+          after: imageRef(image), instruction_artifact_id: image.instruction_artifact_id! })
+        if (disposed || !same(image, base.value)) return
+        current.value = image; comparisonKey.value = key(before); compareBPicked.value = true
+        comparison.value = true; comparisonReport.value = report; await preview(before)
+      })
+    } else await analyze(image)
   }
 }
 async function chooseFamily(id: string): Promise<void> {
@@ -607,8 +640,9 @@ async function requireCompleteScope(): Promise<boolean> {
   }
   return true
 }
-async function organize(): Promise<void> {
+async function organize(confirmation?: ComicPlanConfirmation): Promise<void> {
   if (!base.value || unavailable(base.value) || !draft.value || operation.value || organizing.value || drag) return
+  if (!confirmation && !outdatedPlan.value && ['needs_scope_confirmation', 'needs_clarification'].includes(editResolution.value?.edit_status ?? '')) { diagnosticsOpen.value = true; return }
   if (pendingEdit.value?.uncertain) { await checkEditRequest(); return }
   organizing.value = true; operationErrors.value.edit = ''; error.value = ''
   try {
@@ -623,10 +657,11 @@ async function organize(): Promise<void> {
     if (!saved.edit_scope) throw new Error('请选择整图调整，或框选本轮需要修改的区域。')
     const request: EditRequest = { ...await body(), image: saved.image,
       task: saved.task, round_id: saved.round_id, analysis_artifact_id: saved.analysis_artifact_id,
-      selected_finding_ids: saved.selected_finding_ids, instruction: saved.instruction, edit_scope: saved.edit_scope }
+      selected_finding_ids: saved.selected_finding_ids, instruction: saved.instruction, edit_scope: saved.edit_scope,
+      ...(confirmation ? { plan_confirmation: confirmation } : {}) }
     pendingEdit.value = { request, snapshot: fingerprint, uncertain: false }
     await perform('edit', async () => {
-      let result: ComicEditInstruction
+      let result: ComicEditInstruction | ComicEditResolution
       try { result = await createComicEditInstruction(projectId, request) }
       catch (failure) {
         if (pendingEdit.value?.request.request_id === request.request_id) pendingEdit.value.uncertain = !(failure && typeof failure === 'object' && 'httpStatus' in failure)
@@ -634,6 +669,12 @@ async function organize(): Promise<void> {
       }
       pendingEdit.value = null
       if (disposed || !same(base.value, source)) return
+      if ('review_diagnostics' in result) {
+        if (JSON.stringify(snapshot()) === fingerprint) showEditResolution(result)
+        else feedback.value = '原请求的理解结果已保留；当前需求已变化，可以重新整理。'
+        return
+      }
+      editResolution.value = null; editDiagnostics.value = null; approvedScopeItems.value = []
       instructions.value.unshift(result)
       if (JSON.stringify(snapshot()) !== fingerprint) { feedback.value = '指令已保存到历史；本轮需求已变化，请重新整理。'; return }
       draft.value!.instruction_artifact_id = result.artifact_id; draft.value!.phase = 'review'
@@ -645,6 +686,21 @@ async function organize(): Promise<void> {
   } catch (failure) {
     if (!disposed) operationErrors.value.edit = fail(failure)
   } finally { organizing.value = false }
+}
+function showEditResolution(result: ComicEditResolution): void {
+  approvedScopeItems.value = []
+  previewScopeItem.value = ''
+  editResolution.value = result; editDiagnostics.value = result.review_diagnostics
+  diagnosticsOpen.value = true; panelTab.value = 'requirements'; operationErrors.value.edit = ''
+  if (result.edit_status === 'needs_scope_confirmation' && base.value) {
+    current.value = base.value; comparison.value = false; fitView()
+  }
+}
+async function confirmPlanScope(accept: boolean): Promise<void> {
+  const result = editResolution.value
+  if (!result?.plan_fingerprint || (accept && (!approvedScopeItems.value.length || result.edit_plan?.scope_proposals.some(item => !approvedScopeItems.value.includes(item.item_id))))) return
+  await organize({ run_id: result.run_id, fingerprint: result.plan_fingerprint,
+    accepted_item_ids: accept ? [...approvedScopeItems.value] : [] })
 }
 async function checkEditRequest(recover = false): Promise<void> {
   if (checkingRequest.value || !draft.value || !base.value) return
@@ -667,6 +723,12 @@ async function checkEditRequest(recover = false): Promise<void> {
       && request.analysis_artifact_id === draft.value.analysis_artifact_id
       && JSON.stringify(request.selected_finding_ids) === JSON.stringify(draft.value.selected_finding_ids)
       && stableScope(request.edit_scope) === stableScope(snapshot()?.edit_scope)
+    const resolution = task.state.image_edit_resolution as ComicEditResolution | undefined
+    if (task.status === 'waiting' && resolution) {
+      pendingEdit.value = null
+      if (matchesDraft) showEditResolution(resolution)
+      return
+    }
     if (['running', 'pending', 'waiting'].includes(task.status)) {
       pendingEdit.value ??= { request, snapshot: matchesDraft ? JSON.stringify(snapshot()) : '', uncertain: true }
       operationErrors.value.edit = '原整理请求尚未结束；请核对原请求状态，避免重复提交。'
@@ -802,10 +864,15 @@ async function adopt(): Promise<void> {
   if (!image || !family || unavailable(image)) return
   await perform('select', async () => {
     await selectComicImage(image.image_id, { ...await body(), version: image.version,
-      expected_selection_version: family.selection?.selection_version ?? 0 })
+      expected_selection_version: family.selection?.selection_version ?? 0,
+      ...(acceptedElements.value.length ? { accepted_visual_changes: adoptionElements.value
+        .filter(item => acceptedElements.value.includes(item.key)).map(item => ({
+          entity_id: item.entity_id, target: item.target, attributes: [item.attribute],
+          quote: `${item.label}按当前图片更新`, operation: 'change' as const })) } : {}) })
     if (!disposed) {
       family.selection = { selected_version: image.version, selection_version: (family.selection?.selection_version ?? 0) + 1 }
       feedback.value = '已采用 v' + image.version + '；其他版本仍保留。'
+      acceptedElements.value = []
       publishState()
     }
   })
@@ -1187,6 +1254,9 @@ onBeforeUnmount(() => {
               <div ref="boundsElement" class="wb-image-bounds" :style="imageStyle" @pointerdown="startDraw" @pointermove="move" @pointerup="endMove" @pointercancel="endMove($event, true)">
                 <img :src="previewUrl(current)" :alt="current.filename" draggable="false" @load="imageLoaded(current, $event)" @error="decodeError(current)" />
                 <div class="wb-overlay">
+                  <div v-for="proposal in proposalOverlays" :key="'proposal:' + proposal.item_id"
+                    class="wb-proposed-region" :style="regionStyle(proposal.bounds)" role="img"
+                    :aria-label="'建议影响范围：' + proposal.target"><span>{{ proposal.target }} · {{ editResolution ? '建议范围' : '已确认范围' }}</span></div>
                   <div v-for="region in overlays" :key="region.id" class="wb-region" :class="{ selected: region.selected, focused: focus === region.id }"
                     :style="regionStyle(region.bounds)" role="button" tabindex="0" :aria-label="'区域 ' + region.number"
                     @pointerdown.stop="startMove($event, region.id)" @keydown="nudge($event, region.id)" @focus="focus = region.id; selectRegionRequirement(region.id)">
@@ -1200,8 +1270,12 @@ onBeforeUnmount(() => {
               </div>
             </template>
             <div v-else class="wb-empty">
-              <ImageOff :size="28" />
-              <p>{{ current ? previewErrors[current.artifact_id] || (error ? '图片读取未完成，请重新读取工作台或导入图片。' : '正在读取图片…') : '导入第一张图片开始修改' }}</p>
+              <!-- 空画布不是一块占位：这里用一个带像素外框的徽章 + 明确的投放区，
+                   让人一眼看出"图片该放进来"，而不是一块飘在暗场里的小虚线圈。 -->
+              <span class="wb-drop-mark" aria-hidden="true"><ImageOff :size="26" /></span>
+              <p>{{ current ? previewErrors[current.artifact_id] || (error ? '图片读取未完成，请重新读取工作台或导入图片。' : '正在读取图片…') : '把第一张图片放进这个框' }}</p>
+              <!-- 空画布上也要能直接开工，不该逼用户回头去顶栏找导入按钮。 -->
+              <ComicImageImport v-if="!current" class="wb-import wb-import--empty" :disabled="!!operation || loading" :uploading="operation === 'upload'" label="导入第一张图片" @upload="stageImport" />
               <template v-if="current && previewErrors[current.artifact_id]">
                 <button v-if="unavailable(current)" class="ui-button sm" @click="initialize">重新读取工作台</button>
                 <button v-else class="ui-button sm" @click="preview(current, true)">重试读取</button>
@@ -1236,11 +1310,16 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div v-if="current" class="wb-actions wb-image-actions">
-          <button class="ui-button sm" :disabled="!!operation || unavailable(current) || !ready[current.artifact_id] || adopted === current.version" @click="adopt"><Check :size="14" />{{ unavailable(current) ? '图片不可用' : adopted === current.version ? '当前已采用' : '采用此版本' }}</button>
+          <button class="ui-button sm" :disabled="!!operation || unavailable(current) || !ready[current.artifact_id] || (adopted === current.version && !acceptedElements.length)" @click="adopt"><Check :size="14" />{{ unavailable(current) ? '图片不可用' : adopted === current.version && !acceptedElements.length ? '当前已采用' : '采用此版本' }}</button>
           <button v-if="!onBase" class="ui-button primary sm" :disabled="!!operation || unavailable(current)" @click="makeBase(current)">以 v{{ current.version }} 开始修改</button>
           <a v-if="previewUrl(current)" class="ui-button quiet sm" :href="previewUrl(current)" :download="current.filename"><Download :size="14" />下载当前图片</a>
           <button v-if="compact && versions.length && !historyOpen && !comparison" class="ui-button quiet sm wb-version-toggle" @click="versionsExpanded = !versionsExpanded">{{ versionsExpanded ? '收起版本' : '查看版本（' + versions.length + '）' }}</button>
         </div>
+        <details v-if="current && adoptionElements.length" class="pane-note">
+          <summary>额外接受此图中的设定变化</summary>
+          <p>只勾选你明确同意更新的属性；采用时仍需图像证实，其他设定沿用原依据。</p>
+          <label v-for="item in adoptionElements" :key="item.key"><input v-model="acceptedElements" type="checkbox" :value="item.key" :disabled="!!operation" />{{ item.label }}</label>
+        </details>
         <!-- 版本芯片条与「全部版本」入口在比较视图下让位给图片池：同一批版本不该出现两处。
              「采用此版本／下载当前图片」这一行动作仍然保留，它们作用于当前查看的版本。 -->
         <div v-if="versions.length && !comparison && (!compact || versionsExpanded || historyOpen)" class="wb-version-strip" aria-label="图片版本">
@@ -1259,11 +1338,20 @@ onBeforeUnmount(() => {
         <div v-if="comparison && comparisonReport" class="wb-compare-foot">
           <div class="wb-report">
             <p>{{ comparisonReport.output.summary }}</p>
-            <p v-for="check in [...comparisonReport.output.changes, ...comparisonReport.output.preservation]" :key="check.check_id">
-              {{ check.status === 'satisfied' ? '已满足' : check.status === 'not_satisfied' ? '未满足' : '无法确定' }}：{{ check.evidence }}
-            </p><small v-for="limitation in comparisonReport.output.limitations" :key="limitation">{{ limitation }}</small>
+            <strong>本轮目标</strong>
+            <p v-for="check in comparisonReport.output.changes" :key="check.check_id">{{ check.status === 'satisfied' ? '已解决' : check.status === 'not_satisfied' ? '未解决' : '无法确定' }}：{{ check.evidence }}</p>
+            <strong>保留内容</strong>
+            <p v-for="check in comparisonReport.output.preservation" :key="check.check_id">{{ check.status === 'satisfied' ? '已保留' : check.status === 'not_satisfied' ? '出现损伤' : '无法确定' }}：{{ check.evidence }}</p>
+            <strong>新增问题</strong><p v-for="problem in comparisonReport.output.new_problems" :key="problem">{{ problem }}</p>
+            <small v-if="!comparisonReport.output.new_problems?.length">未报告新的明确问题；仍请核对实际图片。</small>
+            <p v-if="comparisonReport.output.recommendation === 'retain_before'">建议保留旧版，本次修改可能有退步。</p>
+            <p v-else-if="comparisonReport.output.recommendation === 'consider_after'">可以考虑新版，由你决定是否采用。</p>
+            <p v-else>目前不足以判断新版更好，可继续保留旧版。</p>
+            <button class="ui-button sm" @click="otherImage && viewVersion(otherImage)">查看旧版</button>
+            <small v-for="limitation in comparisonReport.output.limitations" :key="limitation">{{ limitation }}</small>
           </div>
         </div>
+        <p v-if="operationErrors.compare" class="workspace-error" role="status">{{ operationErrors.compare }}</p>
       </div>
       <aside ref="panelElement" class="wb-panel" :class="{ 'is-plain': comparison }">
         <template v-if="base && draft">
@@ -1274,7 +1362,12 @@ onBeforeUnmount(() => {
             <button :aria-pressed="panelTab === 'requirements'" @click="panelTab = 'requirements'; diagnosticsOpen = false">本轮需求（{{ modifications.length + (draft.instruction.trim() ? 1 : 0) }}）</button>
             <button :aria-pressed="panelTab === 'analysis'" @click="panelTab = 'analysis'; diagnosticsOpen = false">分析建议（{{ analysis?.output.findings.length ?? 0 }}）</button>
           </nav>
-          <div class="wb-panel-scroll" :class="{ 'wb-editor': !(visibleInstruction && (historyInstruction || draft.phase === 'review')) }">
+          <div class="wb-panel-scroll" :class="{ 'wb-editor': !(visibleInstruction && (historyInstruction || draft.phase === 'review')), 'wb-resolution': diagnosticsOpen }">
+            <details v-if="displayedPlan" class="wb-plan-preview" aria-label="统一修改计划">
+              <summary>查看已理解的修改与保留内容</summary>
+              <p v-for="item in displayedPlan.items" :key="item.item_id">{{ item.operation === 'preserve' ? '保留' : '修改' }}：{{ item.target }} · {{ item.attribute }} → {{ item.desired_state }}<small v-if="item.preserve.length">保留：{{ item.preserve.join('、') }}</small></p>
+              <p v-for="item in displayedPlan.handling" :key="item.requirement_ids.join(',')">{{ item.action === 'manual_override' ? '已按人工要求替代 AI 建议' : '已合并同向需求' }}：{{ item.reason }}</p>
+            </details>
             <template v-if="visibleInstruction && (historyInstruction || draft.phase === 'review')">
               <small v-if="historyInstruction">历史指令，仅针对其原图片版本和当时需求。</small>
               <p>{{ visibleInstruction.scope.edit_scope?.mode === 'mixed' ? '修改范围：局部与整图分别授权' : visibleInstruction.scope.edit_scope?.mode === 'whole' ? '修改范围：整图' : visibleInstruction.scope.edit_scope ? '修改范围：已确认区域' : '历史指令未记录区域定位' }}</p>
@@ -1286,9 +1379,20 @@ onBeforeUnmount(() => {
             <template v-else>
               <div v-if="diagnosticsOpen" class="wb-diagnostics">
                 <button class="ui-button quiet sm" @click="diagnosticsOpen = false"><ArrowLeft :size="14" />返回需求</button>
+                <template v-if="editResolution">
+                  <strong>{{ outdatedPlan ? '可按当前需求重新生成' : editResolution.edit_status === 'needs_clarification' ? '需要确认具体需求' : editResolution.edit_status === 'needs_scope_confirmation' ? '需要确认影响范围' : '系统核验暂未完成' }}</strong>
+                  <p>{{ outdatedPlan ? '需求整理规则已更新，原需求和选区已保留。点击下方按钮继续生成提示词。' : editResolution.message }}</p>
+                  <template v-if="!outdatedPlan && editResolution.edit_status === 'needs_scope_confirmation'">
+                    <label v-for="proposal in displayedPlan?.scope_proposals ?? []" :key="proposal.item_id" class="wb-scope-confirm" @mouseenter="previewScopeItem = proposal.item_id" @focusin="previewScopeItem = proposal.item_id"><input v-model="approvedScopeItems" type="checkbox" :value="proposal.item_id" />{{ proposal.target }}：{{ proposal.reason }}<small v-if="proposal.within_scope_alternative">保留原范围时：{{ proposal.within_scope_alternative }}</small></label>
+                    <small>虚线仅预览当前项目的建议范围，不会画进原图。以上范围全部勾选后，点击下方“确认范围并生成提示词”；不接受某项时先返回调整需求。</small>
+                    <button class="ui-button sm" :disabled="!!operation || organizing" @click="confirmPlanScope(false)">保留原范围，返回调整需求</button>
+                  </template>
+                  <details v-if="editResolution.candidate"><summary>查看尚未通过核验的候选指令</summary><p>此候选不能确认或用于新版本回传。</p><pre>{{ finalImagePrompt(editResolution.candidate.output) }}</pre></details>
+                  <small v-if="editResolution.error_id">错误编号：{{ editResolution.error_id }}</small>
+                </template>
                 <p class="workspace-error">{{ operationErrors.edit }}</p>
-                <p>修改需求和选区已保留。以下是本次整理或核验未通过的原因。</p>
-                <article v-for="(issue, index) in editDiagnostics?.issues ?? []" :key="index">
+                <p v-if="!outdatedPlan">修改需求和选区已保留。<span v-if="editDiagnostics?.issues.length">以下是本次需要处理的问题。</span></p>
+                <article v-for="(issue, index) in outdatedPlan ? [] : editDiagnostics?.issues ?? []" :key="index">
                   <p>{{ issue.reason }}</p>
                   <small v-if="issue.constraint_ids.length && !diagnosticTarget(issue)">涉及创作约束，不能通过扩大选区自动覆盖。</small>
                   <button v-if="diagnosticTarget(issue)" class="ui-button sm" @click="diagnosticsOpen = false; revealRequirement(diagnosticTarget(issue))">查看对应需求</button>
@@ -1355,14 +1459,17 @@ onBeforeUnmount(() => {
                     <section class="wb-analysis-result" aria-label="图片分析结果" role="status">
                       <strong>{{ analysis.output.findings.length ? `分析完成 · ${analysis.output.findings.length} 条建议` : '分析完成 · 未发现明确偏差' }}</strong>
                       <p class="wb-summary">{{ analysis.output.summary }}</p>
+                      <small v-if="analysis.analysis_policy !== 'evidence-review-2'">历史分析使用旧策略，重新分析可启用证据与局部复核。</small>
+                      <strong v-if="analysis.output.recommendation === 'retain'">建议保留原图，可选建议不必执行。</strong>
                       <small v-if="!analysis.output.findings.length">本次没有需要加入的修改建议。你仍可直接框选，或填写自己的修改要求。</small>
                     </section>
                     <button class="ui-button quiet sm" @click="useManualInput">仅按我的需求修改</button>
                     <div class="wb-findings">
                       <div v-for="(finding, index) in analysis.output.findings" :key="finding.finding_id" class="wb-finding" :class="{ 'is-current': focus === 'finding:' + finding.finding_id }">
+                        <small class="wb-finding-category">{{ finding.category === 'clear_deviation' ? '明确偏差' : finding.category === 'optional_improvement' ? '可选优化' : '无法确定' }} · {{ finding.risk_level === 'low' ? '较低风险' : '需谨慎修改' }}</small>
                         <label><input type="checkbox" :aria-label="'加入建议 ' + (index + 1)" :checked="draft.selected_finding_ids.includes(finding.finding_id)" :disabled="operation === 'analysis'" @change="toggleFinding(finding.finding_id)" /><span><strong class="wb-clamp">{{ index + 1 }}. {{ finding.observation }}</strong></span></label>
                         <button v-if="finding.region" class="ui-button quiet sm" @click="locate(regions.find(item => item.finding_id === finding.finding_id)?.region_id ?? 'finding:' + finding.finding_id)">定位</button><small v-else>待定位</small>
-                        <details class="wb-finding-detail"><summary>查看分析全文</summary><p>{{ finding.observation }}</p><p>{{ finding.suggested_change }}</p><small v-if="finding.uncertainty">{{ finding.uncertainty }}</small><small v-if="draft.dismissed_finding_region_ids?.includes(finding.finding_id)">已移出本轮，重新勾选可加入。</small></details>
+                        <details class="wb-finding-detail"><summary>查看证据、收益与风险</summary><p>{{ finding.observation }}</p><p v-for="evidence in finding.evidence" :key="evidence">可见证据：{{ evidence }}</p><p>{{ finding.suggested_change }}</p><p v-if="finding.goal">目标：{{ finding.goal }}</p><p v-if="finding.expected_benefit">预期收益：{{ finding.expected_benefit }}</p><p v-if="finding.preserve?.length">保留：{{ finding.preserve.join('、') }}</p><p v-if="finding.risk">修改风险：{{ finding.risk }}</p><small v-if="finding.uncertainty">{{ finding.uncertainty }}</small><small v-if="draft.dismissed_finding_region_ids?.includes(finding.finding_id)">已移出本轮，重新勾选可加入。</small></details>
                       </div>
                     </div>
                     <details><summary>建议保留与分析限制</summary><p v-for="item in analysis.output.protected_features" :key="item">{{ item }}</p><small v-for="item in analysis.output.limitations" :key="item">{{ item }}</small></details>
@@ -1380,15 +1487,26 @@ onBeforeUnmount(() => {
             </template>
             <template v-else>
               <small class="wb-scope-summary" role="status">{{ scopeSummary }}</small>
-              <button class="ui-button primary" :disabled="!!operation || organizing || checkingRequest || !ready[base.artifact_id] || (!draft.instruction.trim() && !draft.selected_finding_ids.length && !regions.some(item => item.instruction.trim()))" @click="organize">{{ checkingRequest ? '正在核对原请求…' : pendingEdit?.uncertain ? '核对原请求状态' : operation === 'edit' ? '正在整理…' : organizing ? '正在保存修改需求…' : '整理改图指令' }}</button>
+              <button v-if="!outdatedPlan && editResolution?.edit_status === 'needs_scope_confirmation'" class="ui-button primary" :disabled="!!operation || organizing || checkingRequest || !approvedScopeItems.length || displayedPlan?.scope_proposals.some(item => !approvedScopeItems.includes(item.item_id))" @click="confirmPlanScope(true)">{{ operation === 'edit' ? '正在生成提示词…' : '确认范围并生成提示词' }}</button>
+              <button v-else-if="!outdatedPlan && editResolution?.edit_status === 'needs_clarification'" class="ui-button primary" @click="diagnosticsOpen = true">查看并处理待确认问题</button>
+              <button v-else class="ui-button primary" :disabled="!!operation || organizing || checkingRequest || !ready[base.artifact_id] || (!draft.instruction.trim() && !draft.selected_finding_ids.length && !regions.some(item => item.instruction.trim()))" @click="organize()">{{ checkingRequest ? '正在核对原请求…' : pendingEdit?.uncertain ? '核对原请求状态' : operation === 'edit' ? '正在生成提示词…' : organizing ? '正在保存修改需求…' : outdatedPlan ? '按当前需求生成提示词' : '整理改图指令' }}</button>
               <button v-if="operationErrors.edit" class="wb-error-summary" role="alert" data-operation="edit" :title="operationErrors.edit" @click="diagnosticsOpen = true">{{ operationErrors.edit }} · 查看原因</button>
+              <button v-else-if="editResolution" class="ui-button quiet sm" data-operation="edit-resolution" @click="diagnosticsOpen = true">{{ editResolution.edit_status === 'needs_clarification' ? '查看待确认的一项' : '查看系统核验结果' }}</button>
             </template>
             <small role="status">{{ saveState }}</small>
             <small v-if="feedback" class="wb-feedback" role="status">{{ feedback }}</small>
             <details v-if="saveError" class="workspace-error"><summary>{{ saveError }}</summary><button class="ui-button quiet sm" @click="saveDraft">重试保存</button><button class="ui-button quiet sm" @click="reloadDraft">读取服务端草稿核对</button></details>
           </footer>
         </template>
-        <div v-else class="wb-empty"><p>导入图片后，选择修改范围和填写需求。</p></div>
+        <div v-else class="wb-empty wb-empty--panel">
+          <strong>还没有可修改的图片</strong>
+          <p>导入图片后，这里才会出现修改范围与本轮需求。</p>
+          <ol class="wb-steps">
+            <li>导入一张图片，或从素材库挑一张</li>
+            <li>框选要改的区域，或要求整图重绘</li>
+            <li>写下这一轮的具体要求，再交给模型</li>
+          </ol>
+        </div>
       </aside>
     </div>
   </section>
@@ -1397,11 +1515,11 @@ onBeforeUnmount(() => {
 <style scoped>
 /* 圆角与投影直接贴在图片表面，随图片移动与缩放；工作区没有独立相框。 */
 .image-workbench { display:flex; flex:1; flex-direction:column; min-height:0; width:100%;
-  --wb-radius-image:12px;
-  --wb-img-shadow:0 0 0 1px rgba(20,24,31,.07), 0 2px 10px rgba(20,24,31,.18), 0 1px 2px rgba(20,24,31,.10); }
+  --wb-radius-image:0px;
+  --wb-img-shadow:0 0 0 3px var(--ink), 5px 5px 0 rgba(0,0,0,.35); }
 .wb-viewbar, .wb-panel-heading { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .wb-panel h4 { margin:0; }
-.wb-layout { display:grid; flex:1; min-height:0; grid-template-columns:minmax(0,1fr) 380px; gap:var(--space-5); align-items:stretch; }
+.wb-layout { display:grid; flex:1; min-height:0; grid-template-columns:minmax(0,1fr) minmax(300px,360px); gap:var(--space-5); align-items:stretch; }
 .workspace-error { color: var(--danger); overflow-wrap: anywhere; }
 .wb-panel .workspace-error small { display: block; margin-top: 6px; color: var(--text-secondary); }
 .wb-main, .wb-panel { min-width:0; min-height:0; }.wb-main { position:relative; display:flex; flex-direction:column; overflow:hidden; }.wb-viewbar { margin-bottom:var(--space-3); font-size:var(--font-meta); flex-shrink:0; }
@@ -1413,12 +1531,12 @@ onBeforeUnmount(() => {
 .wb-auto-pill::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--border-strong); transition:background var(--motion-fast); }
 .wb-auto-pill[aria-pressed='true'] { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); }
 .wb-auto-pill[aria-pressed='true']::before { background:var(--accent); }
-.wb-import { display:flex; flex:1; flex-direction:column; min-height:260px; overflow:hidden; border:0; padding:0; }.wb-import :deep(.image-import-controls) { flex-shrink:0; order:-1; margin:0 !important; padding:0 0 var(--space-2); }
+.wb-import { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; border:0; padding:0; }.wb-import :deep(.image-import-controls) { flex-shrink:0; order:-1; margin:0 !important; padding:0 0 var(--space-2); }
 /* 删除按钮跟在导入提示后面，靠右收口；常态安静，悬停才显红。 */
 .wb-import-delete { margin-left:auto; }
 .wb-import-delete:hover:not(:disabled) { border-color:var(--danger-border); background:var(--danger-soft); color:var(--danger); }
 .wb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.wb-canvas { position:relative; display:grid; flex:1; min-height:220px; place-items:center; overflow:hidden; touch-action:none;
+.wb-canvas { position:relative; display:grid; flex:1; min-height:100px; place-items:center; overflow:hidden; touch-action:none;
   cursor:grab; }
 .wb-viewport { position:absolute; overflow:hidden;
   border-radius:var(--wb-radius-image); box-shadow:var(--wb-img-shadow); }
@@ -1457,7 +1575,7 @@ onBeforeUnmount(() => {
 .is-drawing { cursor: crosshair; }
 .wb-empty { min-height: 240px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; padding: 20px; text-align: center; }
 /* 右侧面板由"硬分割线"改为一张软卡：与画布灯箱同级，但回到浅色，避免整列转暗与外壳割裂。 */
-.wb-panel { border:1px solid var(--border-muted); border-radius:var(--radius-panel); background:var(--surface-subtle); padding:var(--space-4); display:flex; flex-direction:column; gap:var(--space-3); overflow:hidden; }
+.wb-panel { border:3px solid var(--ink); border-radius:0; background:var(--paper-2); padding:var(--space-4); display:flex; flex-direction:column; gap:var(--space-3); overflow:hidden; box-shadow:4px 4px 0 rgba(0,0,0,.3); }
 .wb-panel-heading { flex-shrink:0; }
 .wb-panel-scroll { display:flex; flex:1; flex-direction:column; gap:var(--space-3); min-height:0; overflow-y:auto; overscroll-behavior:contain; padding-right:var(--space-2); scrollbar-gutter:stable; }
 .wb-panel-scroll > * { flex-shrink:0; }
@@ -1466,7 +1584,7 @@ onBeforeUnmount(() => {
 .wb-panel-footer p { margin:0; font-size:var(--font-meta); }
 .wb-scope-summary { color:var(--text-secondary); }
 .wb-panel label { display: flex; gap: 8px; align-items: flex-start; }.wb-panel input[type=checkbox], .wb-panel input[type=radio] { margin-top: 3px; }
-.wb-panel textarea, .wb-panel input:not([type]), .wb-panel select, .wb-main select { width: 100%; min-width: 0; border: 1px solid var(--border-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font: inherit; font-size: 13px; padding: 9px; }
+.wb-panel textarea, .wb-panel input:not([type]), .wb-panel select, .wb-main select { width: 100%; min-width: 0; border: 2px solid var(--ink); border-radius: 0; background: var(--surface); color: var(--text-primary); font: inherit; font-size: 13px; padding: 9px; }
 .wb-panel textarea { resize:none; }.wb-panel details p { font-size:var(--font-meta); }.wb-panel details small { display:block; margin-top:var(--space-1); }
 .wb-main select { width:auto; max-width:320px; }.wb-findings { display:flex; flex-direction:column; gap:var(--space-3); padding-top:var(--space-3); }
 .wb-finding { display:flex; flex-wrap:wrap; gap:var(--space-1); align-items:start; }.wb-finding label { flex:1; }.wb-finding span { min-width:0; }.wb-finding-detail { flex-basis:100%; padding-left:24px; }
@@ -1497,6 +1615,8 @@ onBeforeUnmount(() => {
 .wb-detail-scroll label { flex-direction:column; }.wb-detail-scroll > label { flex-direction:row; align-items:center; }.wb-detail-scroll > label select { flex:1; }.detail-only .wb-requirement-list { display:none; }.detail-only .wb-active-detail { flex:1; margin:0; border:0; padding:0; }
 .wb-analysis-page, .wb-diagnostics { overflow-y:auto; min-height:0; display:flex; flex:1; flex-shrink:1 !important; flex-direction:column; gap:var(--space-3); }
 .wb-analysis-page > *, .wb-diagnostics > * { flex-shrink:0; }.wb-diagnostics { font-size:var(--font-meta); }
+.wb-editor.wb-resolution { overflow-y:auto; }
+.wb-resolution > .wb-diagnostics { flex:0 0 auto; overflow:visible; }
 .wb-error-summary { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-align:left; color:var(--danger); border:0; padding:0; background:none; font:inherit; font-size:var(--font-meta); cursor:pointer; }
 .wb-version-toggle { align-self:flex-start; }.is-compact .wb-import :deep(.image-import-controls small) { display:none; }
 .wb-scope-tag { flex-shrink:0; font-size:var(--font-kicker); color:var(--text-secondary); }
@@ -1583,7 +1703,7 @@ onBeforeUnmount(() => {
 .wb-instruction { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 52vh; overflow-y: auto; font: inherit; font-size: 13px; line-height: 1.7; margin: 0; padding: 12px; background: var(--surface-subtle, #edf0f2); border-radius: var(--radius-control); }
 .wb-history-item { display: block; width: 100%; text-align: left; margin-top: 8px; padding: 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); color: var(--text-primary); background: var(--surface); }
 .wb-feedback { font-size: 13px; color: var(--accent); }small { color: var(--text-muted); line-height: 1.6; }
-@container image-stage (max-width: 959px) {
+@container image-stage (max-width: 799px) {
   .image-workbench { overflow-y:auto; overscroll-behavior:contain; }
   .wb-layout { display:flex; flex:none; flex-direction:column; }
   .wb-main { overflow:visible; flex-shrink:0; }
@@ -1599,5 +1719,27 @@ onBeforeUnmount(() => {
   .wb-compare-slot { height:clamp(260px,50vh,480px); }
   .wb-compare-foot { max-height:none; }
 }
+.wb-proposed-region { position:absolute; border:2px dashed var(--warning, #a76716); background:rgba(180,120,30,.06); pointer-events:none; }
+.wb-proposed-region span { position:absolute; top:0; left:0; padding:3px 6px; background:var(--surface); color:var(--text-primary); font-size:12px; }
+.wb-plan-preview { padding:var(--space-3); border:1px solid var(--border); border-radius:var(--radius-md); }
+.wb-plan-preview[open] { max-height:min(25vh,240px); overflow-y:auto; overscroll-behavior:contain; }
+.wb-plan-preview p, .wb-plan-preview small { display:block; margin:8px 0; }
+.wb-scope-confirm { display:block; padding:8px 0; }
+.wb-plan-preview button { margin:4px; }
+.wb-finding-category { display:block; color:var(--text-secondary); margin-bottom:6px; }
+.wb-main { padding:12px; border:3px solid var(--ink); background:var(--paper); color:var(--ink); box-shadow:5px 5px 0 #0009; }
+.wb-viewbar { gap:10px; padding-bottom:10px; border-bottom:3px solid var(--ink); }
+.wb-viewbar-left > span { color:var(--text-secondary); }
+.wb-canvas { border:3px solid var(--ink); background:#091329; }
+.wb-empty { color:#e2ebf9; }
+.wb-view-tools { border:3px solid var(--ink); border-radius:0; box-shadow:4px 4px 0 #0008; }
+.wb-panel { background:var(--paper); }
+.wb-panel-heading { margin:calc(-1 * var(--space-4)); margin-bottom:0; padding:12px 14px; border-bottom:3px solid var(--ink); background:var(--ink-2); color:var(--gold-light); }
+.wb-panel-tabs { gap:6px; }
+.wb-panel-tabs button { border-radius:0; }
+.wb-image-actions { gap:8px; padding-top:8px; }
+.wb-version-strip button { border:2px solid var(--ink); border-radius:0; }
+.wb-version-strip button.current { border-color:var(--ink); background:var(--gold-light); box-shadow:3px 3px 0 var(--ink); }
+.wb-panel.is-plain { border-color:var(--ink); background:var(--paper); }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
 </style>

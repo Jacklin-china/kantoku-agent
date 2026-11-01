@@ -36,8 +36,11 @@ def plan_storyboard(
 ) -> ComicStoryboardPlan:
     """用当前 Brief/Director/相关资产动态规划，不使用固定镜数或镜头模板。"""
     single_image = director.execution_policy == "single_image"
+    event = task or (director.creative_decision.intent_summary
+                     if director.creative_decision else "")
     if (single_image and not locked_context and director.director_plan
-            and director.director_plan.character_presence and director.cinematography):
+            and director.director_plan.character_presence and director.cinematography
+            and len(event) <= 2000):
         # 单幅构图已由导演选定，不再交给分镜模型拆成环境/反应/特写序列。
         plan, camera = director.director_plan, director.cinematography
         refs = {
@@ -49,7 +52,8 @@ def plan_storyboard(
             title=director.creative_decision.intent_summary[:200], description=plan.visual_strategy,
             shots=[ComicShotDraft(
                 purpose=director.creative_decision.intent_summary,
-                subject=plan.character_presence, action=plan.character_pose,
+                # 当前事件与人物姿态独立；保留坐姿不表示沿用上一镜的行动。
+                subject=plan.character_presence, action=event,
                 environment=plan.subject_environment_relation,
                 emotion=director.creative_decision.emotional_target,
                 shot_size=camera.shot_size, camera_angle=camera.camera_angle,

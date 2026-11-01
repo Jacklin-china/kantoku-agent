@@ -8,7 +8,7 @@ import EmptyState from '../components/EmptyState.vue'
 import { presenterFor } from '../domains/presenters'
 import { navigate } from '../router'
 import {
-  cancelBatch, cancelRun, createBatch, decideApproval, getApprovals, getBatches, getRuns,
+  cancelBatch, cancelRun, decideApproval, getApprovals, getBatches, getRuns,
 } from '../services/core'
 import type { CoreApproval, CoreBatch, CoreRun } from '../types'
 
@@ -31,7 +31,6 @@ const approvals = ref<CoreApproval[]>([])
 const batches = ref<CoreBatch[]>([])
 const busy = ref(false)
 const error = ref('')
-const creating = ref(false)
 let timer: number | undefined
 
 const pending = computed(() => approvals.value.filter((item) => item.decision === 'pending'))
@@ -43,9 +42,12 @@ const focusBatch = computed(() => batches.value.find((item) => item.id === props
 
 async function refresh(): Promise<void> {
   const [runData, approvalData, batchData] = await Promise.all([getRuns(), getApprovals(), getBatches()])
-  if (runData) runs.value = runData
-  if (approvalData) approvals.value = approvalData
-  if (batchData) batches.value = batchData
+  if (runData) {
+    const hiddenIds = new Set(runData.filter((run) => run.domain === 'commerce').map((run) => run.id))
+    runs.value = runData.filter((run) => run.domain !== 'commerce')
+    if (approvalData) approvals.value = approvalData.filter((item) => !hiddenIds.has(item.run_id))
+  }
+  if (batchData) batches.value = batchData.filter((batch) => !batch.runs.some((run) => run.domain === 'commerce'))
 }
 
 async function decide(approval: CoreApproval, action: 'approve' | 'reject' | 'revise', response: Record<string, unknown>): Promise<void> {
@@ -73,24 +75,6 @@ async function cancelOneBatch(batch: CoreBatch): Promise<void> {
   try { await cancelBatch(batch.id); await refresh() }
   catch (taskError) { error.value = taskError instanceof Error ? taskError.message : '取消失败' }
   finally { busy.value = false }
-}
-
-async function createDemo(): Promise<void> {
-  creating.value = true
-  try {
-    await createBatch({
-      name: 'Commerce 5 Run Demo',
-      workflow: 'commerce.production.v1',
-      concurrency_limit: 2,
-      items: ['便携阅读灯', '保温水杯', '桌面收纳架', '旅行颈枕', '无线鼠标'].map((requirement) => ({ requirement, locale: 'ru-RU' })),
-    })
-    active.value = 'batches'
-    await refresh()
-  } catch (taskError) {
-    error.value = taskError instanceof Error ? taskError.message : 'Demo 创建失败'
-  } finally {
-    creating.value = false
-  }
 }
 
 function runTitle(run: CoreRun): string {
@@ -132,11 +116,6 @@ onBeforeUnmount(() => { if (timer !== undefined) window.clearInterval(timer) })
       <div>
         <h1>{{ tabs.find((item) => item.id === active)?.label ?? '任务中心' }}</h1>
         <p>Run、Batch 与 Approval 的统一管理入口；普通流程请在 Domain Workspace 内完成。</p>
-      </div>
-      <div class="page-actions">
-        <button class="ui-button" :disabled="creating" @click="createDemo">
-          {{ creating ? '创建中……' : '创建 5 商品 Mock Demo' }}
-        </button>
       </div>
     </header>
 
@@ -224,7 +203,7 @@ onBeforeUnmount(() => { if (timer !== undefined) window.clearInterval(timer) })
           <td class="table-actions"><button class="text-action" @click="navigate({ name: 'task_batch', batchId: batch.id })">详情</button><button v-if="batchCanCancel(batch)" class="text-action danger-text" :disabled="busy" @click="cancelOneBatch(batch)">取消</button></td>
         </tr></tbody>
       </table></div>
-      <EmptyState v-if="!batches.length" title="暂无批次" description="创建 Mock Demo 后会运行 5 个真实 Commerce Run。" />
+      <EmptyState v-if="!batches.length" title="暂无批次" description="已有批次会显示在这里。" />
     </section>
 
     <section v-else class="surface task-table-surface">

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 from kantoku.config import KantokuError, ToolError, get_settings
 from kantoku.config.settings import ROOT
 from kantoku.evaluation import (
+    audit_image_workbench_suite,
     load_consistency_suite,
     load_suite,
     render_consistency_report,
@@ -23,18 +25,18 @@ from kantoku.tools.storyboard import generate_storyboard
 
 def run(argv: Sequence[str] | None = None) -> int:
     """解析参数并串行运行；limit 可用于先做低成本冒烟。"""
-    parser = argparse.ArgumentParser(description="运行 M1 分镜生成评测（会调用真实模型）")
+    parser = argparse.ArgumentParser(description="运行分镜、Prompt 一致性或图片工作台对照验收")
     parser.add_argument(
         "--kind",
-        choices=("storyboard", "consistency"),
+        choices=("storyboard", "consistency", "image-workbench"),
         default="storyboard",
-        help="storyboard 会调用模型；consistency 仅离线检查 Prompt",
+        help="storyboard 会调用模型；consistency/image-workbench 只读离线核验",
     )
     parser.add_argument(
         "--suite",
         type=Path,
         default=None,
-        help="JSONL 评测集路径",
+        help="评测集路径（图片工作台为 JSON，其他为 JSONL）",
     )
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--limit", type=int, help="仅运行前 N 条，用于控制试跑成本")
@@ -43,8 +45,15 @@ def run(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit 必须大于 0")
+    if args.kind == "image-workbench" and (args.case or args.limit is not None or args.output):
+        parser.error("图片工作台入口只读完整对照集，不支持 --case/--limit/--output")
 
     try:
+        if args.kind == "image-workbench":
+            report = audit_image_workbench_suite(
+                args.suite or ROOT / "evals" / "image-workbench.json")
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if report["quality_improvement_verified"] else 1
         if args.kind == "consistency":
             suite = args.suite or ROOT / "evals" / "consistency.jsonl"
             consistency_cases = load_consistency_suite(suite)

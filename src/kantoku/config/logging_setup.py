@@ -15,7 +15,7 @@ from loguru import logger
 
 from kantoku.config import ConfigError, get_settings
 from kantoku.config.runtime_paths import get_runtime_paths, validate_runtime_path
-from kantoku.config.settings import ENV_PATH
+from kantoku.config.settings import ENV_PATH, _read_managed_key, observed_secrets
 
 # Optional override used by isolated tests; production resolves at initialization.
 LOG_DIR: Path | None = None
@@ -37,12 +37,20 @@ _SECRET_PATTERNS = (
 def _known_secrets() -> set[str]:
     """Read sensitive values without ever including them in a log record."""
     names = re.compile(r"(?i)(key|token|password|secret|cookie|authorization)")
-    values = {value for key, value in os.environ.items() if names.search(key) and len(value) >= 8}
+    values = observed_secrets()
+    values.update(value for key, value in os.environ.items()
+                  if names.search(key) and len(value) >= 8)
     with suppress(OSError):
         values.update(
             value for key, value in dotenv_values(ENV_PATH, encoding="utf-8").items()
             if names.search(key) and value and len(value) >= 8
         )
+    with suppress(ConfigError, OSError):
+        llm = getattr(get_settings(), "llm", None)
+        name = getattr(llm, "api_key_env", "")
+        value = _read_managed_key(name) if name else None
+        if value and len(value) >= 8:
+            values.add(value)
     return values
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -11,8 +13,11 @@ from kantoku.config.settings import ROOT
 from kantoku.evaluation import (
     ConsistencyEvalCase,
     EvalCase,
+    audit_image_workbench_suite,
     evaluate_case,
     evaluate_consistency_case,
+    image_workbench_input_hash,
+    image_workbench_quality_metrics,
     load_consistency_suite,
     load_suite,
     render_consistency_report,
@@ -34,6 +39,60 @@ def _case(*, required: list[str] | None = None) -> EvalCase:
             "rubric": ["人物连续"],
         }
     )
+
+
+def test_workbench_template_cannot_claim_real_quality_improvement():
+    report = audit_image_workbench_suite(ROOT / "evals" / "image-workbench.json")
+    assert report["status"] == "pending" and not report["quality_improvement_verified"]
+    assert report["eligible_counts"] == {"images": 0, "manual_requests": 0, "edit_pairs": 0}
+    assert report["paid_calls"] == 0 and not report["baseline_ready"]
+
+
+def test_workbench_metrics_require_real_rework_reduction_and_safe_ambiguity():
+    images = [{"candidate": {"correct_suggestions": 9, "incorrect_suggestions": 1}}] * 24
+    manual = [{"clarity": "clear", "candidate": {"understood_correctly": index < 19}}
+        for index in range(20)] + [{"clarity": "ambiguous", "candidate": {
+            "unauthorized_expansion": False, "would_clarify": True}} for _ in range(10)]
+    pairs = [{"baseline": {"first_fix_success": False, "non_target_damage": False,
+                           "rounds_to_usable": 2},
+              "candidate": {"first_fix_success": True, "non_target_damage": False,
+                            "rounds_to_usable": 1}} for _ in range(12)]
+    assert image_workbench_quality_metrics(images, manual, pairs)["thresholds_met"]
+    manual[-1]["candidate"]["unauthorized_expansion"] = True
+    assert not image_workbench_quality_metrics(images, manual, pairs)["thresholds_met"]
+    manual[-1]["candidate"]["unauthorized_expansion"] = False
+    for pair in pairs:
+        pair["candidate"] = dict(pair["baseline"])
+    assert not image_workbench_quality_metrics(images, manual, pairs)["thresholds_met"]
+
+
+def test_workbench_receipts_bind_actual_inputs_and_reject_fake_sources(tmp_path):
+    from PIL import Image
+
+    photo = tmp_path / "fixture.png"
+    Image.new("RGB", (2, 2)).save(photo)
+    row = {"id": "offline-fixture", "subject": "测试", "style": "测试", "issue_type": "测试",
+        "image_path": str(photo), "sha256": hashlib.sha256(photo.read_bytes()).hexdigest(),
+        "task": "检查边缘", "constraints": [], "references": [], "expected_issues": [],
+        "preserve": ["轮廓"], "human_verified": True, "reviewer": "offline-test"}
+    row["input_sha256"] = image_workbench_input_hash(row, "images")
+    # Receipt labels exercise validation only; this one synthetic fixture never meets the suite.
+    row["baseline"] = row["candidate"] = {"input_sha256": row["input_sha256"],
+        "model": "test", "result_source": "real_model", "correct_suggestions": 1,
+        "incorrect_suggestions": 0}
+    suite = {"contract": "image-workbench-eval-1", "images": [row]}
+    path = tmp_path / "suite.json"
+    def audit():
+        path.write_text(json.dumps(suite), encoding="utf-8")
+        result = audit_image_workbench_suite(path)
+        assert not result["quality_improvement_verified"] and result["paid_calls"] == 0
+        return result["eligible_counts"]["images"]
+    assert audit() == 1
+    row["task"] = "改变了输入"
+    assert audit() == 0
+    row["task"] = "检查边缘"
+    row["candidate"] = {**row["baseline"], "result_source": "mock"}
+    assert audit() == 0
 
 
 def _board(characters: list[str] | None = None) -> Storyboard:

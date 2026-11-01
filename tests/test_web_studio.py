@@ -27,7 +27,7 @@ from kantoku.core.conversations import (
     MessageRole,
     MessageType,
 )
-from kantoku.core.runtime.models import ArtifactType, ExecutionStatus
+from kantoku.core.runtime.models import ArtifactType, ExecutionStatus, RuntimeEventType
 from kantoku.core.runtime.store import RuntimeStore
 from kantoku.domains.comic import services as comic_services
 from kantoku.perception import report, review
@@ -36,6 +36,85 @@ from kantoku.schemas.qc import QcResult
 from kantoku.shells import web_studio
 from kantoku.tools import archive, studio
 from kantoku.tools.image_gen import LocalFakeImageProvider
+
+
+def _legacy_commerce(app: web_studio.StudioApplication, **state):
+    store = app.runtime_store
+    run = store.create_run("commerce", "commerce.production.v1", state, "candidate_approval")
+    run = store.update_run(run.id, status=ExecutionStatus.WAITING, state=state,
+                           current_node="candidate_approval")
+    store.create_approval(run.id, "candidate_approval", {"kind": "candidate_approval"})
+    store.create_artifact(type=ArtifactType.DOCUMENT, run_id=run.id,
+                          conversation_id=state.get("conversation_id"), node_id="requirement",
+                          source="commerce.requirement", metadata={"mock": True})
+    return run
+
+
+def test_retired_commerce_preserves_history_but_cannot_execute(
+    app: web_studio.StudioApplication,
+) -> None:
+    # Build a legacy record directly in the isolated runtime, as if it existed
+    # before the application stopped offering the commerce workflow.
+    legacy = _legacy_commerce(app, requirement="lamp")
+    approval = app.runtime_store.approval_for_node(legacy.id, "candidate_approval")
+    assert approval is not None
+    app.runtime_store.create_artifact(
+        type=ArtifactType.IMAGE, run_id=legacy.id, node_id="legacy", source="generic",
+    )
+    other = app.runtime_store.create_run("comic", "offline", {}, "node")
+    kept = app.runtime_store.create_artifact(
+        type=ArtifactType.IMAGE, run_id=other.id, node_id="node", source="generic",
+    )
+    artifacts = app.list_core_artifacts(legacy.id)
+
+    operations = (
+        lambda: app.create_conversation({"domain": "commerce"}),
+        lambda: app.create_core_run({"domain": "commerce", "state": {"requirement": "lamp"}}),
+        lambda: app.enqueue_core_run({"domain": "commerce", "state": {"requirement": "lamp"}}),
+        lambda: app.create_core_batch({"workflow": "commerce.production.v1", "items": [{}]}),
+        lambda: app.resume_core_run(legacy.id),
+        lambda: app.decide_core_approval(approval.id, "approve", {}),
+    )
+    for operation in operations:
+        with pytest.raises(ToolError, match="电商功能已停用"):
+            operation()
+
+    assert app.runtime_store.get_run(legacy.id) == legacy
+    assert app.runtime_store.get_approval(approval.id) == approval
+    assert app.list_core_artifacts(legacy.id) == artifacts
+    assert app.query_core_artifacts(domain="commerce") == []
+    assert {item["id"] for item in app.query_core_artifacts()} == {kept.id}
+    visible_runs = app.runtime_store.list_runs(exclude_domain="commerce")
+    assert [item.id for item in visible_runs] == [other.id]
+    assert all(item["domain"] != "commerce" for item in app.list_core_skills())
+
+
+def test_commerce_messages_are_hidden_without_removing_other_conversation_history(
+    app: web_studio.StudioApplication,
+) -> None:
+    conversation_id = app.create_conversation({})["id"]
+    normal = app.runtime_store.add_conversation_message(
+        conversation_id, role=MessageRole.USER, type=MessageType.TEXT, content="ordinary chat",
+    )
+    retired_input = app.runtime_store.add_conversation_message(
+        conversation_id, role=MessageRole.USER, type=MessageType.TEXT, content="old commerce",
+    )
+    run = _legacy_commerce(app, requirement="lamp", conversation_id=conversation_id,
+                           message_id=retired_input.id)
+    retired_reply = app.runtime_store.add_conversation_message(
+        conversation_id, role=MessageRole.ASSISTANT, type=MessageType.TEXT,
+        content="old commerce result", run_id=run.id,
+    )
+    app.runtime_store.update_conversation(conversation_id, title=retired_input.content)
+    shown = app.conversation(conversation_id)
+    assert [item["id"] for item in shown["messages"]] == [normal.id]
+    assert run.id not in shown["related_run_ids"]
+    assert {item.id for item in app.runtime_store.list_conversation_messages(conversation_id)} == {
+        normal.id, retired_input.id, retired_reply.id,
+    }
+    listed = next(item for item in app.list_conversations() if item["id"] == conversation_id)
+    assert listed["title"] == normal.content
+    assert app.runtime_store.get_conversation(conversation_id).title == retired_input.content
 
 
 @pytest.fixture
@@ -130,6 +209,19 @@ def server(app: web_studio.StudioApplication) -> Iterator[int]:
         thread.join()
 
 
+@pytest.fixture
+def legacy_server(app: web_studio.StudioApplication) -> Iterator[int]:
+    server = web_studio.make_legacy_server(app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_port
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def test_http_root_and_session_boundary(server: int, app: web_studio.StudioApplication) -> None:
     connection = HTTPConnection("127.0.0.1", server, timeout=5)
     try:
@@ -167,6 +259,259 @@ def test_http_root_and_session_boundary(server: int, app: web_studio.StudioAppli
         assert state["budgets"] == {}
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize(
+    ("path", "collection"),
+    [
+        ("/api/runs", "runs"),
+        ("/api/approvals", "approvals"),
+        ("/api/batches", "batches"),
+        ("/api/artifacts", "artifacts"),
+        ("/api/conversations", "conversations"),
+        ("/api/comic/works", "works"),
+        ("/api/skills", "skills"),
+    ],
+)
+def test_http_read_collection_contract(
+    server: int, app: web_studio.StudioApplication, path: str, collection: str,
+) -> None:
+    """The API boundary retains authentication, tracing, and collection shape."""
+    connection = HTTPConnection("127.0.0.1", server, timeout=5)
+    try:
+        connection.request("GET", path)
+        denied = connection.getresponse()
+        assert denied.status == 403
+        denied.read()
+
+        connection.request("GET", path, headers={
+            "X-Studio-Token": app.token,
+            "X-Trace-ID": "trace-collection-contract",
+        })
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.getheader("Content-Type") == "application/json; charset=utf-8"
+        assert response.getheader("Cache-Control") == "no-store"
+        assert response.getheader("X-Trace-ID") == "trace-collection-contract"
+        assert isinstance(json.loads(response.read())[collection], list)
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("path", [
+    "/api/auth/status", "/api/session", "/api/runs", "/api/approvals", "/api/batches",
+    "/api/artifacts", "/api/conversations", "/api/comic/works", "/api/skills",
+])
+def test_fastapi_read_contract_matches_legacy(legacy_server, app, path):
+    """Run both transports against the same isolated application and data."""
+    from fastapi.testclient import TestClient
+
+    from kantoku.shells.fastapi_studio import create_fastapi_app
+
+    headers = {"X-Studio-Token": app.token, "X-Trace-ID": "trace-contract-comparison"}
+    connection = HTTPConnection("127.0.0.1", legacy_server, timeout=5)
+    try:
+        connection.request("GET", path, headers=headers)
+        original = connection.getresponse()
+        expected_status = original.status
+        expected = json.loads(original.read())
+        expected_headers = {name: original.getheader(name) for name in (
+            "Content-Type", "Cache-Control", "X-Trace-ID", "Content-Security-Policy",
+        )}
+    finally:
+        connection.close()
+    with TestClient(create_fastapi_app(app), base_url="http://127.0.0.1:8000") as client:
+        response = client.get(path, headers=headers)
+        assert response.status_code == expected_status
+        assert response.json() == expected
+        assert {name: response.headers.get(name) for name in expected_headers} == expected_headers
+        assert client.get(path, headers={"Host": "attacker.example"}).status_code == 403
+        if path not in {"/api/auth/status", "/api/session"}:
+            assert client.get(path).status_code == 403
+
+
+def test_fastapi_authentication_lifecycle(app):
+    from fastapi.testclient import TestClient
+
+    from kantoku.shells.fastapi_studio import create_fastapi_app
+
+    with TestClient(create_fastapi_app(app), base_url="http://127.0.0.1:8000") as client:
+        credentials = {"username": "user1", "password": "test-password"}
+        assert client.post("/api/auth/register", json=credentials).status_code == 403
+        registered = client.post("/api/auth/register", json=credentials,
+                                 headers={"X-Kantoku-Login": "1"})
+        assert registered.status_code == 200
+        assert "HttpOnly" in registered.headers["set-cookie"]
+        assert client.get("/api/session").json() == {"token": app.token}
+        assert client.get("/api/runs", headers={"X-Studio-Token": app.token}).status_code == 200
+        docs = client.get("/docs")
+        assert docs.status_code == 200
+        assert "/docs/assets/swagger-ui-bundle.js" in docs.text
+        assert "script-src 'self'" in docs.headers["Content-Security-Policy"]
+        assert client.get("/docs/assets/swagger-ui-bundle.js").status_code == 200
+        assert client.get("/openapi.json").status_code == 200
+        logged_out = client.post("/api/auth/logout", headers={"X-Studio-Token": app.token})
+        assert logged_out.status_code == 200
+        assert client.get("/api/session").status_code == 401
+        assert client.get("/docs").status_code == 401
+        assert client.get("/api/runs", headers={"X-Studio-Token": app.token}).status_code == 401
+        assert client.post("/api/auth/login", json=credentials,
+                           headers={"X-Kantoku-Login": "1"}).status_code == 200
+
+
+def test_fastapi_core_run_reads_match_existing_http(legacy_server, app):
+    from fastapi.testclient import TestClient
+
+    from kantoku.shells.fastapi_studio import create_fastapi_app
+
+    run = app.runtime_store.create_run("studio", "test.workflow", {}, "step")
+    headers = {"X-Studio-Token": app.token}
+    paths = [f"/api/runs/{run.id}", f"/api/runs/{run.id}/events?after=0",
+             f"/api/runs/{run.id}/artifacts"]
+    with TestClient(create_fastapi_app(app), base_url="http://127.0.0.1:8000") as client:
+        for path in paths:
+            connection = HTTPConnection("127.0.0.1", legacy_server, timeout=5)
+            try:
+                connection.request("GET", path, headers=headers)
+                legacy = connection.getresponse()
+                expected = json.loads(legacy.read())
+                response = client.get(path, headers=headers)
+                assert response.status_code == legacy.status == 200
+                assert response.json() == expected
+            finally:
+                connection.close()
+
+
+def test_fastapi_comic_work_reads_match_existing_http(legacy_server, app):
+    from fastapi.testclient import TestClient
+
+    from kantoku.shells.fastapi_studio import create_fastapi_app
+
+    work = app.comic_workspace.create({"request_id": "fastapi-parity-work", "title": "测试"})
+    work_id = work["work_id"]
+    headers = {"X-Studio-Token": app.token}
+    paths = [f"/api/comic/works/{work_id}", f"/api/comic/works/{work_id}/conversation",
+             f"/api/comic/works/{work_id}/image-tasks", f"/api/comic/works/{work_id}/settings",
+             f"/api/comic/works/{work_id}/story"]
+    with TestClient(create_fastapi_app(app), base_url="http://127.0.0.1:8000") as client:
+        for path in paths:
+            connection = HTTPConnection("127.0.0.1", legacy_server, timeout=5)
+            try:
+                connection.request("GET", path, headers=headers)
+                legacy = connection.getresponse()
+                expected = json.loads(legacy.read())
+                response = client.get(path, headers=headers)
+                assert response.status_code == legacy.status == 200
+                assert response.json() == expected
+            finally:
+                connection.close()
+
+
+def test_fastapi_registered_write_route_matches_http(legacy_server, app, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from kantoku.shells.fastapi_studio import create_fastapi_app
+
+    monkeypatch.setattr(app, "create_comic_shot", lambda storyboard_id, data: {
+        "storyboard_id": storyboard_id, "request": data,
+    })
+    path = "/api/comic/storyboards/story-123/shots"
+    headers = {"X-Studio-Token": app.token, "Content-Type": "application/json"}
+    connection = HTTPConnection("127.0.0.1", legacy_server, timeout=5)
+    try:
+        connection.request("POST", path, body=json.dumps({"title": "shot"}), headers=headers)
+        original = connection.getresponse()
+        expected_status, expected = original.status, json.loads(original.read())
+    finally:
+        connection.close()
+    with TestClient(create_fastapi_app(app), base_url="http://127.0.0.1:8000") as client:
+        response = client.post(path, json={"title": "shot"}, headers=headers)
+        assert response.status_code == expected_status == 201
+        assert response.json() == expected
+        schema = client.get("/openapi.json").json()
+        assert "/api/comic/storyboards/{storyboard_id}/shots" in schema["paths"]
+
+
+def test_fastapi_event_stream_supports_resume_and_token(app):
+    from fastapi.testclient import TestClient
+
+    from kantoku.shells.fastapi_studio import create_fastapi_app
+
+    run = app.runtime_store.create_run("studio", "test.workflow", {}, "step")
+    app.runtime_store.append_event(run.id, RuntimeEventType.RUN_STARTED)
+    app.runtime_store.append_event(run.id, RuntimeEventType.RUN_COMPLETED)
+    app.runtime_store.update_run(run.id, status=ExecutionStatus.COMPLETED,
+                                 state={}, current_node="__end__")
+    with TestClient(create_fastapi_app(app), base_url="http://127.0.0.1:8000") as client:
+        path = f"/api/runs/{run.id}/events/stream"
+        assert client.get(path).status_code == 403
+        result = client.get(path, params={"token": app.token}, headers={"Last-Event-ID": "1"})
+        assert result.status_code == 200
+        assert "id: 1\n" not in result.text
+        assert "id: 2\n" in result.text
+        assert "event: end\n" in result.text
+
+
+def test_fastapi_shutdown_closes_active_event_stream(app):
+    run = app.runtime_store.create_run("studio", "test.workflow", {}, "step")
+    server = web_studio.make_server(app)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = HTTPConnection("127.0.0.1", server.server_port, timeout=10)
+    try:
+        connection.request("GET", f"/api/runs/{run.id}/events/stream?token={app.token}")
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.readline() == b": keep-alive\n"
+        server.shutdown()
+        assert response.read() == b"\n"
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+    finally:
+        connection.close()
+        server.server_close()
+        thread.join(timeout=10)
+
+
+def test_fastapi_disconnected_image_stream_keeps_background_job(server, app, monkeypatch):
+    provider = app.image_service.provider
+    original_query = provider.query
+    started, release = threading.Event(), threading.Event()
+
+    def waiting_query(provider_job_id):
+        started.set()
+        assert release.wait(10)
+        return original_query(provider_job_id)
+
+    monkeypatch.setattr(provider, "query", waiting_query)
+    conversation = app.create_conversation({"interaction_mode": "autonomous"})
+    request_id = "fastapi-disconnect-image"
+    connection = HTTPConnection("127.0.0.1", server, timeout=10)
+    try:
+        connection.request("POST", f"/api/conversations/{conversation['id']}/messages/stream",
+            body=json.dumps({"content": "生成一张小鸟图片", "generation_request_id": request_id}),
+            headers={"Content-Type": "application/json", "X-Studio-Token": app.token})
+        response = connection.getresponse()
+        assert response.status == 200
+        while True:
+            line = response.readline()
+            assert line, "stream ended before image generation began"
+            if b"event: image_generating" in line:
+                break
+        assert started.wait(5)
+        response.close()
+        connection.close()
+    finally:
+        release.set()
+        connection.close()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if app.runtime_store.get_media_job(request_id).status == MediaJobStatus.COMPLETED:
+            break
+        time.sleep(0.02)
+    assert app.runtime_store.get_media_job(request_id).status == MediaJobStatus.COMPLETED
+    assert provider.submit_count == 1
+    assert len(app.runtime_store.list_artifacts(conversation_id=conversation["id"])) == 1
 
 
 def test_http_artifact_trash_restore_and_version_boundary(
@@ -238,7 +583,8 @@ def test_http_trace_and_error_id_match_structured_log(
         assert any(record["extra"]["trace_id"] == headers["X-Trace-ID"]
                    and "request start" in record["message"] for record in records)
         assert any(record["extra"]["error_id"] == failure["error_id"]
-                   and "web_studio.py" in record["message"] for record in records)
+                   and ("web_studio.py" in record["message"]
+                        or "fastapi_studio.py" in record["message"]) for record in records)
         assert app.token not in json.dumps(records)
     finally:
         connection.close()
@@ -484,133 +830,58 @@ def test_human_reject_closes_rework_without_paid_generation(
     assert budget.summarize_budget("rejected").task_count == 1
 
 
-def test_core_api_run_approval_restart_resume_and_artifact(
-    server: int,
-    app: web_studio.StudioApplication,
+def test_retired_commerce_http_preserves_legacy_artifacts(
+    server: int, app: web_studio.StudioApplication,
 ) -> None:
-    """HTTP Core API 使用数据库状态，并可由新应用实例继续。"""
+    legacy = _legacy_commerce(app, requirement="lamp")
+    approval = app.runtime_store.approval_for_node(legacy.id, "candidate_approval")
+    assert approval is not None
+    headers = {"X-Studio-Token": app.token, "Content-Type": "application/json"}
     connection = HTTPConnection("127.0.0.1", server, timeout=5)
-    headers = {
-        "X-Studio-Token": app.token,
-        "Content-Type": "application/json",
-    }
     try:
-        connection.request(
-            "POST",
-            "/api/runs",
-            body=json.dumps({
-                "domain": "commerce",
-                "state": {"requirement": "便携阅读灯"},
-            }),
-            headers=headers,
-        )
+        connection.request("POST", "/api/runs", json.dumps({
+            "domain": "commerce", "state": {"requirement": "lamp"},
+        }), headers=headers)
         response = connection.getresponse()
-        run = json.loads(response.read())
-        assert response.status == 201
-        assert run["status"] == "waiting"
-        assert run["current_node"] == "candidate_approval"
-        run_id = run["id"]
-
-        connection.request("GET", "/api/approvals", headers={"X-Studio-Token": app.token})
+        assert response.status == 400
+        response.read()
+        connection.request("POST", f"/api/approvals/{approval.id}/approve", "{}", headers)
         response = connection.getresponse()
-        approvals = json.loads(response.read())["approvals"]
-        approval_id = approvals[0]["id"]
-        connection.request(
-            "POST",
-            f"/api/approvals/{approval_id}/approve",
-            body="{}",
-            headers=headers,
-        )
+        assert response.status == 400
+        response.read()
+        connection.request("GET", f"/api/runs/{legacy.id}/artifacts", headers=headers)
         response = connection.getresponse()
         assert response.status == 200
-        candidate_result = json.loads(response.read())
-        assert candidate_result["decision"] == "approve"
-        assert candidate_result["current_node"] == "publish_approval"
-
-        restarted = web_studio.StudioApplication()
-        publish = restarted.runtime_store.approval_for_node(run_id, "publish_approval")
-        assert publish is not None
-        completed = restarted.decide_core_approval(publish.id, "approve", {})
-        assert completed["status"] == "completed"
-        assert completed["state"]["marketplace_draft"]["mock"] is True
-
-        connection.request(
-            "GET",
-            f"/api/runs/{run_id}/artifacts",
-            headers={"X-Studio-Token": app.token},
-        )
-        response = connection.getresponse()
-        artifacts = json.loads(response.read())["artifacts"]
-        assert response.status == 200
-        assert artifacts[0]["metadata"]["mock"] is True
-
-        connection.request(
-            "GET",
-            f"/api/artifacts?domain=commerce&run_id={run_id}",
-            headers={"X-Studio-Token": app.token},
-        )
-        response = connection.getresponse()
-        global_artifacts = json.loads(response.read())["artifacts"]
-        assert response.status == 200
-        assert {item["id"] for item in global_artifacts} == {
-            item["id"] for item in artifacts
-        }
-        connection.request(
-            "GET",
-            f"/api/artifacts/{artifacts[0]['id']}",
-            headers={"X-Studio-Token": app.token},
-        )
-        response = connection.getresponse()
-        assert json.loads(response.read())["id"] == artifacts[0]["id"]
-
-        connection.request("GET", "/api/skills", headers={"X-Studio-Token": app.token})
+        assert json.loads(response.read())["artifacts"]
+        connection.request("GET", "/api/skills", headers=headers)
         response = connection.getresponse()
         skills = json.loads(response.read())["skills"]
         assert response.status == 200
-        assert {item["domain"] for item in skills} >= {"comic", "commerce"}
+        assert any(item["domain"] == "comic" for item in skills)
+        assert all(item["domain"] != "commerce" for item in skills)
         assert all(not str(item["handler_ref"]).startswith("C:\\") for item in skills)
+        restarted = web_studio.StudioApplication()
+        try:
+            assert restarted.runtime_store.get_run(legacy.id) == legacy
+            assert restarted.runtime_store.get_approval(approval.id) == approval
+        finally:
+            restarted.runner.close()
     finally:
         connection.close()
 
 
-def test_core_batch_http_api_lists_and_cancels(
-    server: int,
-    app: web_studio.StudioApplication,
+def test_retired_commerce_batch_http_rejected(
+    server: int, app: web_studio.StudioApplication,
 ) -> None:
     connection = HTTPConnection("127.0.0.1", server, timeout=5)
-    headers = {"X-Studio-Token": app.token, "Content-Type": "application/json"}
     try:
-        connection.request(
-            "POST",
-            "/api/batches",
-            body=json.dumps({
-                "name": "HTTP five product demo",
-                "workflow": "commerce.production.v1",
-                "concurrency_limit": 2,
-                "items": [{"requirement": f"product {index}"} for index in range(5)],
-            }),
-            headers=headers,
-        )
+        connection.request("POST", "/api/batches", json.dumps({
+            "workflow": "commerce.production.v1", "items": [{"requirement": "lamp"}],
+        }), headers={"X-Studio-Token": app.token, "Content-Type": "application/json"})
         response = connection.getresponse()
-        batch = json.loads(response.read())
-        assert response.status == 201
-        assert batch["status"] == "waiting"
-        assert len(batch["runs"]) == 5
-
-        connection.request("GET", "/api/batches", headers=headers)
-        response = connection.getresponse()
-        assert any(item["id"] == batch["id"] for item in json.loads(response.read())["batches"])
-        connection.request("GET", f"/api/batches/{batch['id']}", headers=headers)
-        response = connection.getresponse()
-        assert json.loads(response.read())["id"] == batch["id"]
-        connection.request(
-            "POST", f"/api/batches/{batch['id']}/cancel", body="{}", headers=headers
-        )
-        response = connection.getresponse()
-        cancelled = json.loads(response.read())
-        assert response.status == 200
-        assert cancelled["status"] == "cancelled"
-        assert all(run["status"] == "cancelled" for run in cancelled["runs"])
+        assert response.status == 400
+        response.read()
+        assert app.runtime_store.list_batches() == []
     finally:
         connection.close()
 
@@ -1588,39 +1859,14 @@ def test_home_fast_domain_persists_and_uses_shared_image_capability(
         app.set_fast_domain(conversation_id, "unknown")
 
 
-def test_home_fast_commerce_reuses_workflow_without_professional_approvals(
-    app: web_studio.StudioApplication, monkeypatch: pytest.MonkeyPatch,
+def test_home_fast_commerce_selection_is_unavailable(
+    app: web_studio.StudioApplication,
 ) -> None:
-    monkeypatch.setattr(app.runner, "submit", lambda execute: execute())
     conversation = app.create_conversation({"interaction_mode": "autonomous"})
     conversation_id = conversation["id"]
-    app.set_fast_domain(conversation_id, "commerce")
-
-    events = list(app.stream_conversation(conversation_id, {
-        "content": "帮我制作一个便携阅读灯的 Ozon 商品 Listing",
-    }))
-    intent = next(payload for name, payload in events if name == "intent")
-    assert intent["tool"] == "workflow.start"
-    run = next(payload for name, payload in events if name == "run")
-    stored = app.runtime_store.get_run(run["id"])
-    assert run["id"] in {
-        item.id for item in app.runtime_store.list_runs(
-            interaction_mode=InteractionMode.AUTONOMOUS,
-        )
-    }
-    assert stored.status.value == "completed"
-    assert stored.state["execution_mode"] == "fast"
-    assert stored.state["data_mode"] == "demo"
-    assert stored.state["marketplace_draft"]["mock"] is True
-    assert app.runtime_store.approval_for_node(run["id"], "candidate_approval") is None
-    assert app.runtime_store.approval_for_node(run["id"], "publish_approval") is None
-    assert run["id"] not in {item["id"] for item in app.list_core_runs()}
-    assert any(
-        message["run_id"] == run["id"]
-        for message in app.conversation(conversation_id)["messages"]
-    )
-    assert any("Mock" in payload["content"] for name, payload in events if name == "message"
-               and payload["role"] == "assistant")
+    with pytest.raises(ToolError):
+        app.set_fast_domain(conversation_id, "commerce")
+    assert not app.runtime_store.list_runs(conversation_id=conversation_id)
     assert app.conversation(conversation_id)["domain"] is None
 
 
@@ -1945,7 +2191,7 @@ def test_fast_domain_http_switch_and_guided_rejection(
     headers = {"X-Studio-Token": app.token, "Content-Type": "application/json"}
     connection = HTTPConnection("127.0.0.1", server, timeout=5)
     try:
-        for domain in ("comic", "commerce", "studio", None):
+        for domain in ("comic", "studio", None):
             connection.request(
                 "PATCH", f"/api/conversations/{home['id']}",
                 body=json.dumps({"fast_domain": domain}), headers=headers,
@@ -1953,6 +2199,13 @@ def test_fast_domain_http_switch_and_guided_rejection(
             response = connection.getresponse()
             assert response.status == 200
             assert json.loads(response.read())["domain"] == domain
+        connection.request(
+            "PATCH", f"/api/conversations/{home['id']}",
+            body=json.dumps({"fast_domain": "commerce"}), headers=headers,
+        )
+        response = connection.getresponse()
+        assert response.status == 400
+        response.read()
         connection.request(
             "PATCH", f"/api/conversations/{guided['id']}",
             body=json.dumps({"fast_domain": "commerce"}), headers=headers,

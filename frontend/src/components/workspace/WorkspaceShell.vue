@@ -101,7 +101,8 @@ onBeforeUnmount(() => observer?.disconnect())
 .ws-shell-new:disabled { opacity:.45; cursor:not-allowed; }
 .ws-shell-recent { display:flex; flex-direction:column; flex:1; min-height:0; padding-top:var(--space-6); }
 .ws-shell-main { position:relative; display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; }
-.ws-shell-top { display:flex; align-items:center; flex-shrink:0; gap:var(--space-3); height:60px; padding:var(--space-2) var(--space-6); background:transparent; }
+/* 顶栏只放「现在在哪 / 能做什么」，压到 46px，腾出的高度全部给内容。 */
+.ws-shell-top { display:flex; align-items:center; flex-shrink:0; gap:var(--space-2); height:46px; padding:4px var(--space-6); background:transparent; }
 .ws-shell-toggle { display:grid; place-items:center; flex:0 0 30px; width:30px; height:var(--control-sm); border:0; border-radius:var(--radius-dialog); background:transparent; color:var(--text-secondary); cursor:pointer; transition:background var(--duration-fast) var(--ease-standard); }
 .ws-shell-toggle:hover { background:var(--surface-subtle); }
 .ws-shell-collapse { display:grid; place-items:center; flex:0 0 30px; width:30px; height:var(--control-sm); border:0; border-radius:var(--radius-dialog); background:transparent; color:var(--text-secondary); cursor:pointer; transition:background var(--duration-fast) var(--ease-standard); }

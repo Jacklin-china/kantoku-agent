@@ -10,7 +10,7 @@ export interface DomainSkill {
 }
 
 export interface DomainDefinition {
-  id: 'comic' | 'commerce' | 'ads' | 'studio'
+  id: 'comic' | 'ads' | 'studio'
   name: string
   label: string
   icon: string
@@ -34,19 +34,6 @@ export const domains: DomainDefinition[] = [
     skills: [
       { id: 'storyboard', name: 'Storyboard Generation', description: '将剧本拆解为结构化分镜。', status: 'available', requiredTools: ['LLM', 'Storyboard Tool'] },
       { id: 'character-consistency', name: 'Character Consistency', description: '按镜头裁剪角色、场景与连续性约束。', status: 'available', requiredTools: ['Persona Memory', 'Prompt Factory'] },
-    ],
-  },
-  {
-    id: 'commerce',
-    name: 'Commerce',
-    label: '电商',
-    icon: 'CO',
-    description: '跨境商品研究、定价、本地化、素材质检与发布审批；外部平台当前使用显式 Mock Adapter。',
-    status: 'available',
-    capabilities: ['Product Research', 'Pricing', 'Localization', 'Product Assets', 'Marketplace Draft'],
-    workflows: ['Commerce Production v1'],
-    skills: [
-      { id: 'listing-draft', name: 'Listing Draft', description: '生成并本地化平台 Listing 草稿；Marketplace Adapter 当前为 Mock。', status: 'available', requiredTools: ['Mock Marketplace Adapter'] },
     ],
   },
   {
@@ -78,5 +65,5 @@ export const domains: DomainDefinition[] = [
 ]
 
 export function domainById(id: string): DomainDefinition {
-  return domains.find((domain) => domain.id === id) ?? domains[3]
+  return domains.find((domain) => domain.id === id) ?? domains.find((domain) => domain.id === 'studio')!
 }

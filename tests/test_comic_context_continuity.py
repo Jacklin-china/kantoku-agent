@@ -859,7 +859,9 @@ def test_single_frame_uses_director_not_an_unrequested_environment_sequence(app,
     assert len(board["shots"]) == 1
     shot = board["shots"][0]
     assert shot["subject"] == spec.director_plan.character_presence
-    assert shot["action"] == spec.director_plan.character_pose
+    assert shot["action"] == spec.creative_decision.intent_summary
+    assert app.comic_projects.get_director(project_id).director_plan.character_pose == (
+        spec.director_plan.character_pose)
     assert shot["environment"] == spec.director_plan.subject_environment_relation
     assert shot["shot_size"] == spec.cinematography.shot_size
     assert shot["camera_angle"] == spec.cinematography.camera_angle

@@ -45,11 +45,11 @@ function fixture(initial = view) {
     getArtifactContentUrl: async id => { calls.push(['preview', id]); return 'blob:' + id },
     saveComicStory: async (owner, body) => {
       calls.push(['save', clone(body), owner]); const version = body.expected_story_version + 1
-      current = { ...current, story: { ...current.story, ...clone(body.draft), version, anchor_project_id: body.anchor_project_id, content_sha256: 'content-v' + version, fixed_images: [image, second] }, review: null, confirmation: null, exports: [] }
+      current = { ...current, story: { ...current.story, ...clone(body.draft), version, anchor_project_id: body.anchor_project_id, content_sha256: 'content-v' + version, fixed_images: [image, second] }, can_confirm: false, review: null, confirmation: null, exports: [] }
       versions.unshift(clone(current.story)); return clone(current)
     },
     generateComicStory: async (owner, body) => { calls.push(['generate', clone(body), owner]); return clone(current) },
-    reviewComicStory: async (owner, body) => { calls.push(['review', clone(body), owner]); current.review = { status: 'pass', validation_requested: true, findings: [] }; return clone(current) },
+    reviewComicStory: async (owner, body) => { calls.push(['review', clone(body), owner]); current.can_confirm = true; current.review = { status: 'pass', validation_requested: true, findings: [] }; return clone(current) },
     confirmComicStory: async (owner, body) => { calls.push(['confirm', clone(body), owner]); current.confirmation = { confirmed: true }; return clone(current) },
     restoreComicStory: async (owner, body) => { calls.push(['restore', clone(body), owner]); current.story.version++; current.confirmation = null; return clone(current) },
     adoptComicStoryCandidate: async (owner, body) => { calls.push(['candidate', clone(body), owner]); current.story.version++; return clone(current) },
@@ -177,20 +177,17 @@ test('AI draft reuses the filled framework: no checkbox and no instruction neede
   } finally { await f.controller.dispose() }
 })
 
-test('generated internal review cannot confirm until the user validates, and every edit locks it again', async () => {
-  const internal = { ...clone(view), review: { ...clone(view.review), validation_requested: false }, confirmation: null }
+test('AI draft can confirm without manual validation, while every edit requires validation again', async () => {
+  const internal = { ...clone(view), can_confirm: true, review: { ...clone(view.review), validation_requested: false }, confirmation: null }
   const f = fixture(internal); await f.controller.load('chat')
   const render = () => renderToString(createSSRApp({ render: () => h(StoryStage, { stage: 'story', workbench: f.controller }) }))
   try {
-    assert.equal(f.controller.canConfirm.value, false)
-    assert.match(await render(), /初稿已完成内部检查/)
-    assert.match(await render(), /<button[^>]*disabled[^>]*>确认当前故事<\/button>/)
-    assert.equal(await f.controller.mutate('confirm'), false)
-    assert.equal(f.calls.some(call => call[0] === 'confirm'), false)
-    await f.controller.mutate('review')
     assert.equal(f.controller.canConfirm.value, true)
+    assert.match(await render(), /初稿已完成内部检查/)
+    assert.doesNotMatch(await render(), /<button[^>]*disabled[^>]*>确认当前故事<\/button>/)
     await f.controller.mutate('confirm')
     assert.equal(f.controller.canExport.value, true)
+    assert.equal(f.calls.some(call => call[0] === 'review' || call[0] === 'generate'), false)
     f.controller.state.draft.shots[0].camera = '修改运镜'; f.controller.changed()
     assert.equal(f.controller.canConfirm.value, false)
     assert.equal(f.controller.canExport.value, false)
@@ -198,6 +195,28 @@ test('generated internal review cannot confirm until the user validates, and eve
     assert.equal(f.calls.filter(call => call[0] === 'confirm').length, 1)
     await f.controller.mutate('review'); await f.controller.mutate('confirm')
     assert.equal(f.controller.canExport.value, true)
+  } finally { await f.controller.dispose() }
+})
+
+test('manual story can validate directly without AI arrangement, saving current edits first', async () => {
+  const f = fixture({ ...clone(view), review: null, confirmation: null, can_confirm: false })
+  await f.controller.load('chat')
+  const render = () => renderToString(createSSRApp({ render: () => h(StoryStage, { stage: 'story', workbench: f.controller }) }))
+  try {
+    const camera = '先跟随角色向前移动，再缓慢升高机位。'.repeat(12)
+    const transition = '镜头向远处竹林移动，保留人物的离场方向。'.repeat(10)
+    f.controller.state.draft.shots[0].camera = camera
+    f.controller.state.draft.shots[0].transition = transition
+    f.controller.changed()
+    const html = await render()
+    assert.match(html, /<textarea[^>]*aria-label="镜头 1 的运镜"[^>]*>/)
+    assert.match(html, /<textarea[^>]*aria-label="镜头 1 的转场"[^>]*>/)
+    assert.match(html, /<button(?![^>]*disabled)[^>]*>校验当前故事<\/button>/)
+    await f.controller.mutate('review')
+    assert.deepEqual(f.calls.filter(call => ['save', 'review', 'generate'].includes(call[0])).map(call => call[0]), ['save', 'review'])
+    assert.equal(f.calls.find(call => call[0] === 'save')[1].draft.shots[0].camera, camera)
+    assert.equal(f.controller.state.draft.shots[0].transition, transition)
+    assert.equal(f.controller.canConfirm.value, true)
   } finally { await f.controller.dispose() }
 })
 
@@ -407,13 +426,75 @@ test('CAS conflict preserves local content and explicit resave uses current serv
   } finally { await f.controller.dispose() }
 })
 
-test('failed generated candidates are recoverable and adopted candidates do not reappear', async () => {
+test('content conflicts show a waiting candidate and concrete advice while retaining the current story', async () => {
+  const initial = { ...clone(view), can_confirm: false, review: null, confirmation: null }
+  const f = fixture(initial)
+  const candidateDraft = { ...clone(draft), shots: [{ ...clone(shot), action: '候选中的动作，尚待处理' }] }
+  const candidateReview = { status: 'needs_revision', findings: [{ severity: 'error', shot_id: shot.shot_id,
+    field: 'action', message: '相邻镜头的道具衔接缺失。', suggestion: '补充交接动作，保持两张图片各自的起始状态。' }] }
+  const result = { ...clone(initial), generation_status: 'needs_revision', candidate_run_id: 'waiting-story',
+    candidate_draft: candidateDraft, candidate_review: candidateReview }
+  const pending = { id: 'waiting-story', status: 'waiting', state: { story_candidate: { draft: candidateDraft, review: candidateReview }, story_result: result } }
+  f.api.generateComicStory = async () => { f.calls.push(['generate']); f.setTasks([pending]); return clone(result) }
+  await f.controller.load('chat')
+  try {
+    assert.equal(await f.controller.mutate('generate'), true)
+    assert.equal(f.controller.state.error, '')
+    assert.equal(f.controller.state.draft.shots[0].action, shot.action)
+    assert.equal(f.controller.state.candidateRunId, 'waiting-story')
+    assert.equal(f.controller.canConfirm.value, false)
+    const html = await renderToString(createSSRApp({ render: () => h(StoryStage, { stage: 'story', workbench: f.controller }) }))
+    assert.match(html, /候选镜头 1 · 动作/)
+    assert.match(html, /补充交接动作/)
+    assert.match(html, /继续 AI 整理/)
+    assert.doesNotMatch(html, /载入候选继续编辑/)
+    assert.match(html, /候选中的动作，尚待处理/)
+    await f.controller.load()
+    assert.equal(f.controller.state.candidateRunId, 'waiting-story')
+    assert.equal(f.controller.state.candidate.review.findings[0].message, candidateReview.findings[0].message)
+    assert.equal(f.calls.filter(call => call[0] === 'generate').length, 1)
+    f.api.generateComicStory = async (owner, body) => {
+      f.calls.push(['refine', clone(body), owner])
+      assert.equal(body.candidate_run_id, 'waiting-story')
+      assert.deepEqual(body.draft, candidateDraft)
+      assert.equal(f.controller.state.draft.shots[0].action, shot.action)
+      const ready = { ...clone(initial), generation_status: 'ready', can_confirm: true,
+        story: { ...clone(initial.story), ...candidateDraft, version: 2 },
+        review: { status: 'pass', findings: [] }, candidate_run_id: 'waiting-story' }
+      f.setView(ready)
+      return ready
+    }
+    await f.controller.mutate('refine')
+    assert.equal(f.calls.some(call => call[0] === 'candidate'), false)
+    f.setTasks([pending, { id: 'loaded', status: 'completed', state: { story_result: { generation_status: 'ready', candidate_run_id: 'waiting-story' } } }])
+    await f.controller.load()
+    assert.equal(f.controller.state.candidateRunId, '')
+    assert.equal(f.controller.state.candidate, null)
+  } finally { await f.controller.dispose() }
+})
+
+test('legacy failed generation shows its saved review without replacing current input or submitting models', async () => {
   const f = fixture()
-  f.setTasks([{ id: 'failed-run', status: 'failed', state: { story_candidate: { draft }, media_input: { request_id: 'old' } } }])
+  f.setTasks([{ id: 'old-failure', status: 'failed', state: { story_candidate: { draft,
+    review: { status: 'needs_revision', findings: [{ shot_id: shot.shot_id, field: 'camera', severity: 'error',
+      message: '候选运镜互相矛盾。', suggestion: '明确先后移动的顺序。' }] } } } }])
+  await f.controller.load('chat')
+  try {
+    const html = await renderToString(createSSRApp({ render: () => h(StoryStage, { stage: 'story', workbench: f.controller }) }))
+    assert.match(html, /候选运镜互相矛盾/)
+    assert.match(html, /明确先后移动的顺序/)
+    assert.deepEqual(clone(f.controller.state.draft), draft)
+    assert.equal(f.calls.some(call => ['generate', 'review', 'candidate'].includes(call[0])), false)
+  } finally { await f.controller.dispose() }
+})
+
+test('known older candidates do not reappear after a newer story is delivered', async () => {
+  const f = fixture()
+  const pending = { id: 'failed-run', status: 'failed', state: { story_candidate: { draft, request: { expected_story_version: 1 } }, media_input: { request_id: 'old' } } }
+  f.setTasks([pending])
   await f.controller.load('chat'); assert.equal(f.controller.state.candidateRunId, 'failed-run')
-  await f.controller.mutate('candidate')
-  f.setTasks([{ id: 'failed-run', status: 'failed', state: { story_candidate: { draft } } },
-    { id: 'adopted-run', status: 'completed', state: { story_result: { candidate_run_id: 'failed-run' } } }])
+  f.setView({ ...clone(view), story: { ...clone(story), version: 2 } })
+  f.setTasks([pending])
   try { await f.controller.load(); assert.equal(f.controller.state.candidateRunId, '') }
   finally { await f.controller.dispose() }
 })
@@ -589,6 +670,20 @@ test('unavailable adopted versions retain identity but cannot preview, join a sh
       关闭按钮落到工作台页眉下面，空白处也点不到（用户因此回不去）；
    ② Esc 绑在 window 而不是弹层自身 —— 焦点被点到外壳后弹层收不到按键；
    ③ 保留可见的关闭按钮、画布空白处关闭，并在关闭后还原滚动位置。 */
+test('pending AI improvements remain visible and the export offers the complete video prompt', async () => {
+  const f=fixture(); await f.controller.load('chat')
+  f.api.generateComicStory=async()=>({...clone(view),generation_status:'needs_revision',
+    candidate_run_id:'polish',candidate_draft:clone(draft),candidate_review:{status:'warning',
+      findings:[{severity:'warning',shot_id:shot.shot_id,field:'camera',message:'运镜需要协调',suggestion:'调整起始景别'}]}})
+  try {
+    assert.equal(await f.controller.mutate('generate'),true)
+    assert.match(f.controller.state.notice,/1 项待修正或优化/)
+    assert.equal(f.controller.state.draft.shots[0].camera,shot.camera)
+    const html=await renderToString(createSSRApp({render:()=>h(StoryStage,{stage:'export',workbench:f.controller})}))
+    assert.match(html,/完整视频生成提示词/); assert.match(html,/复制完整视频提示词/)
+  } finally { await f.controller.dispose() }
+})
+
 test('the enlarged image preview is a full-screen layer that always offers a way back', () => {
   const source = readFileSync(new URL('../src/components/comic/ComicFlowStage.vue', import.meta.url), 'utf8')
   const template = source.slice(source.indexOf('<template>'))
@@ -602,4 +697,22 @@ test('the enlarged image preview is a full-screen layer that always offers a way
   const viewer = readFileSync(new URL('../src/components/ui/ImageViewport.vue', import.meta.url), 'utf8')
   assert.match(viewer, /defineEmits<\{ error: \[\]; empty: \[\] \}>/)
   assert.match(viewer, /@click\.self="zoom <= 1 && emit\('empty'\)"/)
+})
+
+test('saved story advice and an unapplied AI candidate are explicitly distinguished', async () => {
+  const initial = clone(view)
+  initial.review = { status: 'warning', validation_requested: true, findings: [
+    { severity: 'warning', shot_id: shot.shot_id, field: 'camera', message: '旧故事的运镜建议' }] }
+  const f = fixture(initial)
+  await f.controller.load('chat')
+  try {
+    f.controller.state.candidateRunId = 'pending'
+    f.controller.state.candidate = { draft: clone(draft), review: { status: 'needs_revision', findings: [
+      { severity: 'error', shot_id: shot.shot_id, field: 'transition', message: '候选需要补全转场' }] } }
+    const html = await renderToString(createSSRApp({ render: () => h(StoryStage, { stage: 'story', workbench: f.controller }) }))
+    assert.match(html, /当前已保存故事的校验结果/)
+    assert.match(html, /整理候选尚未应用，以下建议属于当前已保存故事/)
+    assert.match(html, /旧故事的运镜建议/)
+    assert.match(html, /候选需要补全转场/)
+  } finally { await f.controller.dispose() }
 })

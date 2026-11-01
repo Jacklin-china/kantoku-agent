@@ -8,6 +8,7 @@ import re
 from contextlib import ExitStack
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from kantoku.config import ToolError, get_settings
@@ -24,6 +25,25 @@ from kantoku.core.llm import chat
 from kantoku.domains.comic.critic import require_approved_director
 from kantoku.domains.comic.models import DirectorSpecDraft
 from kantoku.shells.web_studio import StudioApplication
+
+
+def acceptance_input_upper(messages, *, model, base_url):
+    """文本按 UTF-8 字节保守估算；官方 Flash 图片用已公布的单图 token 上界。"""
+    bounded, image_tokens = [], 0
+    for message in messages:
+        content = message["content"]
+        if isinstance(content, list) and (model == "deepseek-flash"
+                and urlsplit(base_url).hostname == "api.deepseek.com"):
+            parts = []
+            for part in content:
+                if part.get("type") == "image_url":
+                    # https://api-docs.deepseek.com/guides/vision/#token-usage
+                    image_tokens += 1024
+                else:
+                    parts.append(part)
+            content = parts
+        bounded.append({**message, "content": content})
+    return len(json.dumps(bounded, ensure_ascii=False).encode()) + 2048 + image_tokens
 
 
 def verify_semantic_media(app: StudioApplication, report: dict, *,
@@ -244,6 +264,8 @@ def verify_story_export(app, report, args):
     import hashlib
     import zipfile
 
+    snapshot = (json.loads(args.story_snapshot.read_text(encoding="utf-8"))
+                if getattr(args, "story_snapshot", None) else None)
     cid = app.create_conversation({"interaction_mode": "guided", "domain": "comic"})["id"]
     images, originals, projects = [], {}, []
     for index, path in enumerate([args.image, *(args.additional_image or [])]):
@@ -254,6 +276,9 @@ def verify_story_export(app, report, args):
         def common(request_id, pid=pid):
             return {"conversation_id": cid, "request_id": request_id,
                 "expected_project_version": app.comic_projects.get(pid).project.current_version}
+        if snapshot and hashlib.sha256(path.read_bytes()).hexdigest() != snapshot[
+                "images"][index]["sha256"]:
+            raise ToolError("验收图片与原故事快照的内容指纹不一致")
         imported = app.import_comic_image(pid, {**common(f"import-{index}"),
             **acceptance_image_input(path)})
         image = {"image_id": imported["image_id"], "version": imported["version"]}
@@ -261,18 +286,69 @@ def verify_story_export(app, report, args):
             "version": image["version"], "expected_selection_version": 0})
         images.append(image)
         originals[imported["artifact_id"]] = hashlib.sha256(path.read_bytes()).hexdigest()
-    item = {"id": "story-export", "conversation_id": cid, "source_projects": projects}
+    item = {"id": "story-export", "project_id": projects[0],
+            "conversation_id": cid, "source_projects": projects}
     report["cases"].append(item)
     def story_request(request_id, version):
         return {"conversation_id": cid, "request_id": request_id,
             "anchor_project_id": projects[0], "expected_story_version": version,
             "expected_project_version": app.comic_projects.get(projects[0]).project.current_version}
-    generated = app.comic_story_operation(cid, "generate", {**story_request("generate", 0),
-        "instruction": args.task, "images": images})
+    extra, version = {}, 0
+    if snapshot:
+        from kantoku.domains.comic.models import ComicStoryDraft, ImageVersionRef
+
+        draft = ComicStoryDraft.model_validate(snapshot["draft"])
+        replacements = {(entry["image"]["image_id"], entry["image"]["version"]): image
+                        for entry, image in zip(snapshot["images"], images, strict=True)}
+        sources = []
+        for source in snapshot["source_contexts"]:
+            original = source["image"]
+            sources.append({**source, "image": replacements[
+                (original["image_id"], original["version"]) ]})
+        def source_contexts(selected, **_kwargs):
+            selected_keys = {(image["image_id"], image["version"]) for image in selected}
+            return [source for source in sources if (source["image"]["image_id"],
+                                                    source["image"]["version"]) in selected_keys]
+        app.comic_stories._source_contexts = source_contexts
+        for shot in draft.shots:
+            shot.image = ImageVersionRef.model_validate(replacements[
+                (shot.image.image_id, shot.image.version)])
+        extra["draft"] = draft.model_dump(mode="json")
+        original = app.comic_story_operation(cid, "save", {**story_request("save-original", 0),
+                                                            **extra})
+        version = original["story"]["version"]
+        instruction = draft.instruction
+        item["source_run_id"] = snapshot.get("source_run_id")
+    else:
+        instruction = args.task
+    try:
+        generated = app.comic_story_operation(cid, "generate", {
+            **story_request("generate", version), "instruction": instruction, "images": images,
+            **extra})
+    except Exception:
+        failed = next((run for run in app.runtime_store.list_runs(project_id=projects[0])
+                       if run.state.get("request_id") == "generate"), None)
+        if failed:
+            item["failed_candidate"] = failed.state.get("story_candidate")
+            item["story_attempts"] = failed.state.get("story_attempts", [])
+        raise
     item["generated"] = generated
-    if generated["review"]["status"] != "pass":
+    if generated.get("run_id"):
+        run = app.runtime_store.get_run(generated["run_id"])
+        item["story_attempts"] = run.state.get("story_attempts", [])
+    if (generated.get("generation_status") != "ready" or not generated.get("story")
+            or generated["review"]["status"] != "pass" or generated["review"]["findings"]):
         raise ToolError("真实故事仍有待处理核验意见，未模拟确认或继续导出")
     version = generated["story"]["version"]
+    reviewed = app.comic_story_operation(cid, "review", story_request("review", version))
+    item["manual_review"] = reviewed["review"]
+    # 额外独立重查，防止只依赖整理阶段缓存就把真实质量验收判为通过。
+    item["fresh_review"] = app.comic_stories._review_output(
+        app.comic_stories._draft(generated["story"]), generated["story"]["fixed_images"],
+        app._comic_constraint_model, generated["story"]["source_contexts"])
+    if any(result["status"] != "pass" or result["findings"] for result in (
+            reviewed["review"], item["fresh_review"])):
+        raise ToolError("整理后的主动校验或额外独立重查仍有问题，真实验收未通过")
     confirmed = app.comic_story_operation(cid, "confirm", story_request("confirm", version))
     item["confirmation"] = "qa_fixture_after_actual_story_review_not_production_approval"
     exported = app.comic_story_operation(cid, "exports", story_request("export", version))
@@ -293,6 +369,10 @@ def _run(persistent_manager, cleanup) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--allow-paid", action="store_true")
     parser.add_argument("--max-cny", type=Decimal, default=Decimal("2"))
+    parser.add_argument("--additional-cny", type=Decimal, default=Decimal("0"),
+                        help="明确授权的原故事预算累计追加额度，不重置累计费用，最多 2 元")
+    parser.add_argument("--story-snapshot", type=Path,
+                        help="隔离验收的原故事、固定图片哈希和来源快照")
     parser.add_argument("--suite",
                         choices=("director", "context", "semantic-media", "image-review",
                                  "story-export"),
@@ -312,7 +392,12 @@ def _run(persistent_manager, cleanup) -> int:
     if (args.suite == "story-export"
             and args.budget_id != "comic-backend-three-modules-20261012"):
         parser.error("故事模块实测必须复用原三模块累计预算身份")
-    if not args.allow_paid or not Decimal("0") < args.max_cny <= Decimal("2"):
+    if (not args.additional_cny.is_finite() or not Decimal("0") <= args.additional_cny <= 2
+        or (args.additional_cny and (args.suite != "story-export"
+            or args.budget_id != "comic-backend-three-modules-20261012"))):
+        parser.error("追加额度仅用于原故事预算身份，且须在 [0, 2] 元内")
+    if (not args.allow_paid or not args.max_cny.is_finite()
+            or not Decimal("0") < args.max_cny <= 2 + args.additional_cny):
         parser.error("必须显式允许付费，且额度在 (0, 2] 元内")
     settings = get_settings()
     price = settings.llm.pricing_cny_per_million_by_model.get(settings.llm.model_chat)
@@ -320,7 +405,7 @@ def _run(persistent_manager, cleanup) -> int:
         parser.error("当前文本模型缺少配置的保守单价，禁止未知费用实测")
     vision_price = settings.llm.pricing_cny_per_million_by_model.get(settings.llm.model_vision)
     if args.suite in {"image-review", "story-export"}:
-        if not args.image or not args.image.is_file() or not args.task:
+        if not args.image or not args.image.is_file() or not (args.task or args.story_snapshot):
             parser.error("图片相关验收必须指定 --image、--task")
         if args.suite == "image-review" and not args.edit_request:
             parser.error("图片验收必须指定 --image、--task、--edit-request")
@@ -331,7 +416,7 @@ def _run(persistent_manager, cleanup) -> int:
     # 仅修改本进程的存储位置；模型/端点/密钥/输出上限仍读取 settings.yaml。
     manager = persistent_manager
     budget_catalog = manager.catalog  # 保留锁登记时的句柄，后续切库仍由它释放锁。
-    ledger_path, budget_lock, prior_spend = None, None, Decimal("0")
+    ledger_path, budget_lock, prior_spend, ledger = None, None, Decimal("0"), {}
     if args.suite in {"semantic-media", "image-review", "story-export"} or args.budget_id:
         if not args.budget_id or not re.fullmatch(r"[a-z0-9-]{1,64}", args.budget_id):
             parser.error("模块验收必须指定稳定的 --budget-id（小写字母、数字、短横线）")
@@ -368,19 +453,21 @@ def _run(persistent_manager, cleanup) -> int:
 
     def persist_budget() -> None:
         if ledger_path:
-            atomic_write_text(ledger_path, json.dumps({"budget_id": args.budget_id,
+            atomic_write_text(ledger_path, json.dumps({**ledger, "budget_id": args.budget_id,
                 "limit_cny": str(args.max_cny), "used_cny": str(prior_spend + spend),
-                "last_report": None, "last_suite": args.suite, "call_count": len(calls),
+                "last_report": None, "last_suite": args.suite,
+                "call_count": ledger.get("call_count", 0) + len(calls),
                 "billing_note": "未知用量保留调用上界；按配置单价保守估算"}, ensure_ascii=False),
                 file_type="audit", owner="paid-acceptance")
 
-    def model(messages: list[dict], *, vision=False) -> str:
+    def model(messages: list[dict], *, vision=False, return_response=False):
         nonlocal spend
         selected_price = vision_price if vision else price
         model_name = settings.llm.model_vision if vision else settings.llm.model_chat
         maximum = settings.llm.vision_max_tokens if vision else settings.llm.max_tokens
         # UTF-8 字节数 + 消息协议余量作为输入 token 保守上界；不假定缓存命中。
-        upper_input = len(json.dumps(messages, ensure_ascii=False).encode()) + 2048
+        upper_input = acceptance_input_upper(messages, model=model_name,
+            base_url=settings.llm.vision_base_url if vision else settings.llm.base_url)
         upper_cost = (upper_input * selected_price.input_cny
                       + maximum * selected_price.output_cny) / 1_000_000
         if prior_spend + spend + upper_cost > args.max_cny:
@@ -423,10 +510,16 @@ def _run(persistent_manager, cleanup) -> int:
             schema = ConversationSummary if "previous_summary" in payload else TurnUnderstanding
             record["public_output"] = ConversationContext._parse(
                 schema, response.content or "").model_dump(mode="json")
-        return response.content or ""
+        return response if return_response else response.content or ""
 
     app._comic_director_model = model
-    app._comic_image_vision_model = lambda messages: model(messages, vision=True)
+    # 保留生产图片准备与容量边界，只在共享 SDK 调用处加入既有验收费记录。
+    from unittest.mock import patch
+
+    from kantoku.shells import web_studio
+
+    cleanup.enter_context(patch.object(web_studio, "vision_chat",
+        lambda messages, **_kwargs: model(messages, vision=True, return_response=True)))
     report: dict = {"model": settings.llm.model_chat, "limit_cny": str(args.max_cny),
                     "pricing": price.model_dump(mode="json"), "cases": [], "calls": calls,
                     "suite": args.suite, "expected_cases": 4,

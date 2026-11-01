@@ -138,6 +138,7 @@ onBeforeUnmount(() => {
 
 const domainOf = (artifact: CoreArtifact): string => {
   const schema = String(artifact.metadata.schema_name ?? '')
+  if (artifact.source.startsWith('commerce.') || schema.startsWith('commerce.')) return 'commerce'
   const prefix = schema.split('.')[0] || artifact.source.split('.')[0]
   if (['commerce', 'comic', 'studio'].includes(prefix)) return prefix
   return runs.value.find((run) => run.id === artifact.run_id)?.domain ?? 'studio'
@@ -145,6 +146,7 @@ const domainOf = (artifact: CoreArtifact): string => {
 
 const visible = computed(() => artifacts.value.filter((item) => {
   const origin = artifactOrigin(item)
+  if (domainOf(item) === 'commerce') return false
   // 资产库只保留图片与提示词：其余类型一律不进入列表，也不进入全选范围。
   if (!assetTypes.includes(item.type)) return false
   if (typeFilter.value !== 'all' && item.type !== typeFilter.value) return false
@@ -163,69 +165,99 @@ onMounted(() => void refresh())
 
 <template>
   <WorkspacePage identity="资产" subtitle="全局历史产物" :active-page="activeCategory" :navigation="shellNavigation" @select-page="selectCategory">
-  <main class="page assets-page">
-    <header class="page-header">
-      <div>
-        <span class="section-kicker">全局历史产物</span>
+  <main class="page assets-page px-page">
+    <div class="px-wrap">
+      <header class="px-pghd">
+        <span class="px-pghd__kick">GLOBAL OUTPUTS · 本机资产库</span>
         <h1>资产</h1>
         <p>资产库只保留图片与提示词。删除后可在回收站恢复，作品引用和历史内容会保留；在回收站彻底删除会同时删除磁盘文件，且不可恢复。</p>
-      </div>
-      <div class="asset-filters">
-        <select v-model="domainFilter" :disabled="busy" class="ui-select" aria-label="按领域筛选">
-          <option value="all">全部领域</option><option value="commerce">Commerce</option><option value="comic">Comic</option><option value="studio">Studio</option>
-        </select>
-        <select v-model="typeFilter" :disabled="busy" class="ui-select" aria-label="按类型筛选">
-          <option value="all">全部类型</option>
-          <option value="image">图片</option>
-          <option value="prompt">提示词</option>
-        </select>
-        <select v-model="originFilter" :disabled="busy" class="ui-select" aria-label="按来源状态筛选">
-          <option value="all">全部来源</option><option value="real">真实内容</option><option value="mock">模拟数据（Mock）</option><option value="blocked">已阻止</option><option value="unknown">来源未确认</option>
-        </select>
-        <select v-model="timeFilter" :disabled="busy" class="ui-select" aria-label="按时间筛选">
-          <option value="all">全部时间</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option>
-        </select>
-      </div>
-    </header>
+      </header>
 
-    <div class="asset-management">
-      <button class="ui-button sm" :aria-pressed="lifecycle === 'active'" :disabled="busy" @click="switchLifecycle('active')">正常资产</button>
-      <button class="ui-button sm" :aria-pressed="lifecycle === 'trashed'" :disabled="busy" @click="switchLifecycle('trashed')">回收站</button>
-      <button class="ui-button sm" :disabled="busy || loading" @click="selected = []; refresh()">刷新列表</button>
-      <button v-if="displayed.length" class="ui-button sm" :disabled="busy || loading" @click="selectDisplayed">{{ allDisplayedSelected ? '取消全选' : '全选当前显示' }}</button>
-      <span v-if="selected.length">已选 {{ selected.length }} 项</span>
-      <template v-if="lifecycle === 'active'">
-        <button class="ui-button sm" :disabled="!selected.length || busy || loading" @click="confirmTrash(selectedItems)">批量删除</button>
-      </template>
-      <template v-else>
-        <button class="ui-button sm" :disabled="!selected.length || busy || loading" @click="changeItems(selectedItems, 'restore')">恢复所选</button>
-        <button class="ui-button sm" :disabled="!selected.length || busy || loading" @click="confirmPurge(selectedItems)">删除</button>
-        <button class="ui-button sm" :disabled="!displayed.length || busy || loading" @click="confirmPurge(displayed)">全部删除</button>
-      </template>
+      <section class="px-sheet">
+        <div class="px-sheet-hd">
+          <span class="lbl">筛选</span>
+          <span class="n">{{ lifecycle === 'active' ? '正常资产' : '回收站' }} · {{ visible.length }} 项</span>
+        </div>
+        <div class="px-sheet-bd">
+          <div class="px-frow">
+            <label class="px-fsel"><span>领域</span>
+              <select v-model="domainFilter" :disabled="busy" aria-label="按领域筛选">
+                <option value="all">全部领域</option><option value="comic">Comic</option><option value="studio">Studio</option>
+              </select>
+            </label>
+            <label class="px-fsel"><span>类型</span>
+              <select v-model="typeFilter" :disabled="busy" aria-label="按类型筛选">
+                <option value="all">全部类型</option>
+                <option value="image">图片</option>
+                <option value="prompt">提示词</option>
+              </select>
+            </label>
+            <label class="px-fsel"><span>来源</span>
+              <select v-model="originFilter" :disabled="busy" aria-label="按来源状态筛选">
+                <option value="all">全部来源</option><option value="real">真实内容</option><option value="mock">模拟数据（Mock）</option><option value="blocked">已阻止</option><option value="unknown">来源未确认</option>
+              </select>
+            </label>
+            <label class="px-fsel"><span>时间</span>
+              <select v-model="timeFilter" :disabled="busy" aria-label="按时间筛选">
+                <option value="all">全部时间</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="px-frow px-frow--acts">
+            <button class="px-btn" :aria-pressed="lifecycle === 'active'" :disabled="busy" @click="switchLifecycle('active')">正常资产</button>
+            <button class="px-btn" :aria-pressed="lifecycle === 'trashed'" :disabled="busy" @click="switchLifecycle('trashed')">回收站</button>
+            <button class="px-btn" :disabled="busy || loading" @click="selected = []; refresh()">刷新列表</button>
+            <button v-if="displayed.length" class="px-btn" :disabled="busy || loading" @click="selectDisplayed">{{ allDisplayedSelected ? '取消全选' : '全选当前显示' }}</button>
+            <span class="sp" />
+            <span v-if="selected.length" class="px-cnt">已选 {{ selected.length }} 项</span>
+            <template v-if="lifecycle === 'active'">
+              <button class="px-btn" :disabled="!selected.length || busy || loading" @click="confirmTrash(selectedItems)">批量删除</button>
+            </template>
+            <template v-else>
+              <button class="px-btn" :disabled="!selected.length || busy || loading" @click="changeItems(selectedItems, 'restore')">恢复所选</button>
+              <button class="px-btn" :disabled="!selected.length || busy || loading" @click="confirmPurge(selectedItems)">删除</button>
+              <button class="px-btn" :disabled="!displayed.length || busy || loading" @click="confirmPurge(displayed)">全部删除</button>
+            </template>
+          </div>
+        </div>
+      </section>
+
+      <p v-if="busy" class="px-status" role="status">正在处理资产，请稍候…</p>
+      <p v-if="loading" class="px-status" role="status">正在读取资产…</p>
+      <p v-if="feedback" class="px-status is-ok" role="status">{{ feedback }}</p>
+      <p v-if="loadError" class="px-status is-err" role="alert">{{ loadError }} <button class="px-link" :disabled="busy || loading" @click="refresh">重新读取列表</button></p>
+      <div v-if="failures.length" class="px-status is-err" role="alert"><p>{{ failures.length }} 项未完成，请刷新核实后重试：</p><ul><li v-for="failure in failures" :key="failure.id">{{ failure.name }}：{{ failure.reason }}</li></ul></div>
+
+      <p v-if="visible.length" class="px-result">显示 {{ displayed.length }} / {{ visible.length }} 个产物；全选仅包括当前显示的 {{ displayed.length }} 项</p>
+
+      <section v-if="visible.length" class="px-listframe">
+        <div class="px-listframe-hd"><span>产物清单</span><span class="n">{{ displayed.length }} / {{ visible.length }}</span></div>
+        <div class="asset-grid">
+          <ArtifactCard
+            v-for="item in displayed"
+            :key="item.id"
+            :artifact="item"
+            :domain="domainOf(item)"
+            manageable
+            :selected="selected.includes(item.id)"
+            :busy="busy || loading"
+            @select="selectArtifact(item.id, $event)"
+            @trash="confirmTrash([item])"
+            @restore="changeItems([item], 'restore')"
+            @purge="confirmPurge([item])"
+          />
+        </div>
+        <div v-if="displayed.length < visible.length" class="px-listframe-ft">
+          <button class="px-btn" @click="limit += 48">加载更多</button>
+          <span class="px-tiny">还有 {{ visible.length - displayed.length }} 项未显示</span>
+        </div>
+      </section>
+
+      <EmptyState v-if="!visible.length && !loading && !loadError" :title="lifecycle === 'trashed' ? '回收站为空' : '暂无产物'" :description="lifecycle === 'trashed' ? '已删除的资产会在这里保留，可随时恢复。' : '任务产物会进入这里，也可调整筛选条件。'" />
+
+      <p class="px-pgnote">删除只把资产移入回收站：媒体文件、作品引用与历史记录都保留；在回收站彻底删除才同时删除磁盘文件。来源未确认的产物不会被当成真实内容统计，也不会按 0 计费。</p>
     </div>
-    <p v-if="busy" role="status">正在处理资产，请稍候…</p>
-    <p v-if="loading" role="status">正在读取资产…</p>
-    <p v-if="feedback" role="status">{{ feedback }}</p>
-    <p v-if="loadError" role="alert">{{ loadError }} <button class="text-action" :disabled="busy || loading" @click="refresh">重新读取列表</button></p>
-    <div v-if="failures.length" role="alert"><p>{{ failures.length }} 项未完成，请刷新核实后重试：</p><ul><li v-for="failure in failures" :key="failure.id">{{ failure.name }}：{{ failure.reason }}</li></ul></div>
-    <p v-if="visible.length" class="asset-result-count">显示 {{ displayed.length }} / {{ visible.length }} 个产物；全选仅包括当前显示的 {{ displayed.length }} 项</p>
-    <section v-if="visible.length" class="asset-grid">
-      <ArtifactCard
-        v-for="item in displayed"
-        :key="item.id"
-        :artifact="item"
-        :domain="domainOf(item)"
-        manageable
-        :selected="selected.includes(item.id)"
-        :busy="busy || loading"
-        @select="selectArtifact(item.id, $event)"
-        @trash="confirmTrash([item])"
-        @restore="changeItems([item], 'restore')"
-        @purge="confirmPurge([item])"
-      />
-    </section>
-    <button v-if="displayed.length < visible.length" class="ui-button asset-load-more" @click="limit += 48">加载更多</button>
-    <EmptyState v-if="!visible.length && !loading && !loadError" :title="lifecycle === 'trashed' ? '回收站为空' : '暂无产物'" :description="lifecycle === 'trashed' ? '已删除的资产会在这里保留，可随时恢复。' : '任务产物会进入这里，也可调整筛选条件。'" />
     <dialog ref="confirmation" class="asset-trash-dialog" aria-label="删除资产确认" @close="confirmationClosed">
       <h2>删除 {{ pending.length }} 项资产？</h2>
       <p>这些资产将移入回收站，可随时恢复。媒体文件、作品引用和历史记录会保留。</p>
@@ -245,10 +277,12 @@ onMounted(() => void refresh())
 </template>
 
 <style scoped>
-.asset-management { display: flex; flex-wrap: wrap; align-items: center; gap:8px; margin-bottom:16px; font-size: 13px; }
-.asset-management [aria-pressed="true"] { background: var(--sidebar-selected); }
-.asset-trash-dialog { width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; padding:24px; border: 1px solid var(--border); border-radius: 12px; color: var(--text-primary); background: var(--surface); }
-.asset-trash-dialog::backdrop { background: rgb(23 26 31 / .45); }
-.asset-trash-dialog h2 { margin-top:0; font-size: 18px; }
-.asset-trash-dialog p, .asset-trash-dialog li { font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+/* 弹窗留在页面里：原型没有弹窗，但删除确认是真实存在的破坏性操作，必须有。
+   统一成同一套纸卡语言，避免这里成为唯一的圆角白卡。 */
+.asset-management { display: flex; flex-wrap: wrap; align-items: center; gap:8px; margin-top:12px; font-size: 12px; }
+.asset-trash-dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; padding:20px 22px 18px; border:4px solid var(--ink); border-radius: 0; color: var(--ink); background: var(--paper); box-shadow: 10px 10px 0 rgba(0,0,0,.55); }
+.asset-trash-dialog::backdrop { background: rgb(10 10 10 / .58); }
+.asset-trash-dialog h2 { margin:0 0 8px; font-size: 17px; font-weight: 900; letter-spacing: .02em; }
+.asset-trash-dialog p, .asset-trash-dialog li { font-size: 12.5px; line-height: 1.7; overflow-wrap: anywhere; }
+.asset-trash-dialog ul { margin:8px 0; padding-left:18px; color:#5e5340; }
 </style>

@@ -1,4 +1,4 @@
-"""Comic 与 Commerce 共用同一 Core 的端到端测试。"""
+"""Comic 使用共享 Core 的端到端测试。"""
 
 from __future__ import annotations
 
@@ -6,19 +6,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from kantoku.adapters.commerce import (
-    MockMarketplaceAdapter,
-    MockSourceAdapter,
-    MockTranslationAdapter,
-)
 from kantoku.config import ExternalJobPending
-from kantoku.config.settings import ROOT
 from kantoku.core.runtime.graph import GraphRuntime
 from kantoku.core.runtime.models import ApprovalDecision, ExecutionStatus
 from kantoku.core.runtime.store import RuntimeStore
-from kantoku.core.skills import SkillLoader, SkillRegistry
 from kantoku.domains.comic import ComicState, build_comic_workflow
-from kantoku.domains.commerce import CommerceState, build_commerce_workflow
 
 
 class FakeComicServices:
@@ -150,29 +142,3 @@ def test_comic_revision_loops_once_and_requests_new_approval(tmp_path: Path) -> 
     assert waiting_again.state["rework_count"] == 1
     assert services.generated == 2
     assert store.list_approvals(pending_only=True)[0].id != first.id
-
-
-def test_commerce_mock_workflow_uses_same_runtime(tmp_path: Path) -> None:
-    store = RuntimeStore(tmp_path / "commerce.db")
-    runtime = GraphRuntime(store)
-    skills = SkillRegistry()
-    SkillLoader(ROOT / "skills", project_root=ROOT).load(skills)
-    workflow = build_commerce_workflow(
-        MockSourceAdapter(), MockMarketplaceAdapter(), skills, MockTranslationAdapter()
-    )
-    runtime.register(workflow)
-    waiting = runtime.start(workflow.id, CommerceState(requirement="portable lamp"))
-    assert waiting.status is ExecutionStatus.WAITING
-    assert waiting.state["mock"] is True
-
-    approval = store.list_approvals(pending_only=True)[0]
-    store.decide_approval(approval.id, ApprovalDecision.APPROVE)
-    completed = runtime.resume(waiting.id)
-    assert completed.status is ExecutionStatus.WAITING
-    assert completed.current_node == "publish_approval"
-    publish = store.list_approvals(pending_only=True)[0]
-    store.decide_approval(publish.id, ApprovalDecision.APPROVE)
-    finished = runtime.resume(waiting.id)
-    assert finished.status is ExecutionStatus.COMPLETED
-    assert finished.state["marketplace_draft"]["mock"] is True
-    assert all(item.metadata["mock"] is True for item in store.list_artifacts(finished.id))

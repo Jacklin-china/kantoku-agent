@@ -29,6 +29,8 @@ from .models import (
     ComicAsset,
     ComicPromptArtifact,
     ComicStoryDraft,
+    ComicStoryFinding,
+    ComicStoryFindingAudits,
     ComicStoryReviewOutput,
     ComicStoryShot,
     CreativeConstraint,
@@ -36,8 +38,10 @@ from .models import (
     ImageVersionRef,
 )
 from .prompts import prompt_constraints
+from .story_structure import structural_findings
 
-STORY_CONTRACT = "comic-story-3"
+STORY_CONTRACT = "comic-story-14"
+STORY_REPAIR_LIMIT = 6
 STORY_SEMANTICS = (
     "这是由静态图片发展为视频的故事。图片及其生成来源描述起始画面，角色/物体身份、固定资产与"
     "明确持续生效的硬要求必须保持；起始姿态和机位不等于整段视频必须静止。"
@@ -53,6 +57,29 @@ STORY_SEMANTICS = (
     "user_intent若存在，是本次整理前的用户框架，须保留其叙事目标、合法事件、角色及对白；"
     "有错的执行方式可调整，并补足前后动作衔接，时长、运镜和转场须协调，不要求逐字照抄。"
     "user_intent为空时，以当前draft及instruction为目标，不追溯旧稿撤销用户新编辑。"
+    "user_intent中的执行方式是待整理的旧框架，不是当前稿事实或不可更改的硬要求；"
+    "允许修正姿态、速度、武器衔接及机位执行方式，已纠正的旧矛盾不能继续判为当前错误。"
+    "每张图的来源要求只在该图对应镜头的起始画面生效，不把相邻图的道具或机位倒灌到本镜。"
+    "来源之间有差异时，可以用合理的先后动作交代衔接，不强行抹平各图事实；"
+    "只有明确持续身份或禁令才跨镜保持，无法同时满足的明确要求应指出，不能反复换一种改法。"
+    "景别和相机移动是不同维度，特写可跟随主体；先后切换机位不是同时冲突。"
+    "节奏快慢、重复站立或建议缩短镜头通常是warning；只有可说明的物理/时序或硬要求冲突才是error。"
+    "程度或局部效果须按当前文字的明确范围判断，不能把局部微弱效果推断为全局强烈效果，"
+    "也不能仅因近义表达不逐字相同就判为来源冲突。"
+    "已满足合理连续性、可执行性和本轮要求的方案可通过，不为给出建议而新增审美偏好、"
+    "额外剧情或重复修正；所有发现仍须有当前稿的具体依据。"
+    "单镜的时间顺序是图片起始状态→action→transition→下一镜图片起始状态；"
+    "camera在这一过程中执行，duration_seconds须容纳本镜动作和转场。"
+    "transition中已明确发生的取物、换持或移动是有效剧情，不要求action重复写一遍；"
+    "上一镜取物后、下一镜已经持有该物是顺接，不能反称为缺少取物。"
+    "持续约束和起始画面不得为统一称谓而改写。建议本身也须符合全部相关图片来源，"
+    "不能建议把一图的固定道具改成另一图的道具；应说明物品放回何处、从何处取出及先后动作。"
+    "对连续三个起始画面各自要求 A、B、A 的情形，分别安排 A→B 和 B→A 两次衔接，"
+    "不能把后三镜的道具统一成 B；起始画面要求必须落在各自对应的镜头。"
+    "shot_boundaries明确切镜前后的边界：两张起始图之间必需的换持、起身或移位，"
+    "须在前镜action/transition内完成，不能放在已经具有新状态的后镜开头重演。"
+    "不要按来源数组的顺序猜镜头归属，应核对applies_to_shots与shot_source_map；"
+    "同图可以重复入镜，每次都须检查它自己的前后边界。"
 )
 _SUFFIXES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 
@@ -500,62 +527,8 @@ class ComicStoryService:
         "transition": "转场", "image": "图片",
     }
 
-    @classmethod
-    def _structural_findings(cls, draft):
-        """先查能确定性判断的结构问题：指到镜头与字段，并给出改法。
-
-        这类问题不需要模型，结论也不会因重跑而漂移；模型只负责内容一致性。
-        """
-        findings = []
-        suggestions = {
-            "action": "补充这一镜的动作，写清画面中的主体做了什么。",
-            "camera": "补充这一镜的运镜，写清相机的运动方向或固定机位。",
-            "transition": "补充与下一镜的衔接方式；最后一镜可填写结束方式。",
-        }
-        for field, label in (("title", "故事标题"), ("summary", "故事概述")):
-            if not getattr(draft, field).strip():
-                findings.append({
-                    "severity": "error", "code": "missing_" + field, "shot_id": None,
-                    "field": field, "evidence": "（空）", "message": f"缺少{label}。",
-                    "suggestion": f"补充{label}，说明这段故事的主题或主要情节。",
-                })
-        if not draft.shots:
-            findings.append({
-                "severity": "error", "code": "missing_shots", "shot_id": None,
-                "field": "image", "evidence": "（还没有镜头）",
-                "message": "故事还没有任何镜头，无法核验。",
-                "suggestion": "在右侧「本作品的已采用图片」勾选图片后点「AI 整理初稿」，"
-                              "或点「添加镜头」逐个补充。",
-            })
-            return findings
-        for index, shot in enumerate(draft.shots, 1):
-            for field, label, code in (
-                ("action", "动作", "missing_action"),
-                ("camera", "运镜", "missing_camera"),
-                ("transition", "转场", "missing_transition"),
-            ):
-                if not str(getattr(shot, field)).strip():
-                    findings.append({
-                        "severity": "error", "code": code, "shot_id": shot.shot_id,
-                        "field": field, "evidence": "（空）",
-                        "message": f"镜头 {index} 缺少{label}。",
-                        "suggestion": suggestions[field],
-                    })
-            if shot.duration_seconds is None:
-                findings.append({
-                    "severity": "error", "code": "missing_duration", "shot_id": shot.shot_id,
-                    "field": "duration_seconds", "evidence": "（未填写）",
-                    "message": f"镜头 {index} 缺少时长。",
-                    "suggestion": "填写 0.1–60 秒之间的时长，按讲述节奏估算即可。",
-                })
-            elif not 0.1 <= shot.duration_seconds <= 60:
-                findings.append({
-                    "severity": "error", "code": "duration_conflict", "shot_id": shot.shot_id,
-                    "field": "duration_seconds", "evidence": str(shot.duration_seconds),
-                    "message": f"镜头 {index} 的时长超出有效范围。",
-                    "suggestion": "将这一镜的时长改为 0.1–60 秒，再重新校验。",
-                })
-        return findings
+    # 兼容已有服务和测试调用；规则本身集中在 story_structure.py。
+    _structural_findings = staticmethod(structural_findings)
 
     @staticmethod
     def _structural_review(findings):
@@ -575,6 +548,23 @@ class ComicStoryService:
             and payload.get("content_sha256") == story["content_sha256"]
             and payload.get("contract") == STORY_CONTRACT
             and payload.get("model") == model
+        )
+
+    @staticmethod
+    def _review_allows_confirmation(story, review):
+        """主动校验或同一生成运行的内部复核均可授权当前内容；恢复候选须主动校验。"""
+        return bool(
+            review
+            and review.get("contract") == STORY_CONTRACT
+            and review.get("content_sha256") == story.get("content_sha256")
+            and review.get("story_version") == story.get("version")
+            and review["status"] != "needs_revision"
+            and not any(item["severity"] == "error" for item in review["findings"])
+            and (review.get("validation_requested") or (
+                story.get("source") == "model_generated"
+                and story.get("run_id")
+                and review.get("run_id") == story["run_id"]
+            ))
         )
 
     @staticmethod
@@ -628,28 +618,52 @@ class ComicStoryService:
 
     @staticmethod
     def _text(story, manifest):
+        shots = manifest["shots"]
+        timed = bool(shots) and all(isinstance(shot["duration_seconds"], (float, int))
+                                   and shot["duration_seconds"] > 0 for shot in shots)
+        total = f"{sum(shot['duration_seconds'] for shot in shots):g} 秒" if timed else "待完善"
         lines = [
-            story["title"] or "故事制作材料",
+            "完整视频生成提示词",
+            story["title"] or "故事视频",
             f"故事版本：v{story['version']}",
-            "以下为视频制作文字，请同时提供对应图片。",
+            f"制作目标：将以下 {len(shots)} 个分镜与对应参考图制作成一条完整、连贯的视频，"
+            f"目标总时长 {total}。请交付一条成片，按时间轴完整表现剧情与收尾。",
             "",
-            "故事摘要",
+            "全片叙事主线",
             story["summary"],
             "",
-            "用户需求",
+            "全片制作要求",
             story["instruction"],
+            "",
+            "跨镜连续性",
+            "保持已确认的人物、服装、道具和美术风格；每镜从对应参考图的起始状态展开。"
+            "将前镜的动作结束、人物位置、视线、运动方向及道具状态接入后镜，"
+            "不同状态之间用明确动作或转场交代，不产生无叙事依据的道具、姿态或位置跳变。"
+            "运镜跟随剧情节奏，保留动作完成过程；对白、字幕和声音按用户要求与剧情同步，"
+            "跨镜自然延续，末镜按指定收尾结束。",
+            "",
+            "参考图对应（按分镜首次使用顺序上传）",
         ]
-        for shot in manifest["shots"]:
+        references = {}
+        for shot in shots:
+            references.setdefault((shot["image_id"], shot["image_version"]), shot["filename"])
+        lines.extend(f"参考图 {index}：{filename}"
+                     for index, filename in enumerate(references.values(), 1))
+        lines += ["", "连续分镜时间轴"]
+        elapsed = 0.0
+        for shot in shots:
             duration = shot["duration_seconds"]
-            duration = duration if duration is not None else "未填写"
+            timing = (f"{elapsed:g}–{elapsed + duration:g} 秒" if timed
+                      else f"目标 {duration if duration is not None else '未填写'} 秒")
             lines += [
                 "",
-                f"镜头 {shot['sequence_number']}｜{shot['filename']}",
-                f"动作：{shot['action']}",
-                f"运镜：{shot['camera']}",
-                f"时长：{duration} 秒",
-                f"衔接：{shot['transition']}",
+                f"镜头 {shot['sequence_number']}｜{timing}｜{shot['filename']}",
+                f"画面与动作：{shot['action']}",
+                f"镜头运动：{shot['camera']}",
+                f"本镜结束与衔接：{shot['transition']}",
             ]
+            if timed:
+                elapsed += duration
         return "\n".join(lines) + "\n"
 
     def _export_record(self, artifact_id, *, connection=None):
@@ -701,6 +715,7 @@ class ComicStoryService:
             "story": story or None,
             "review": None,
             "confirmation": None,
+            "can_confirm": False,
             "export_text": "",
             "manifest": None,
             "missing_images": [],
@@ -761,6 +776,8 @@ class ComicStoryService:
                 )
             except ToolError as error:
                 result["exports"].append({**saved, "available": False, "error": str(error)})
+        result["can_confirm"] = not result["missing_images"] and self._review_allows_confirmation(
+            story, result["review"])
         return result
 
     def versions(self, conversation_id):
@@ -875,10 +892,31 @@ class ComicStoryService:
         match = re.search(pattern, value)
         return match[0] if match else None
 
+    @staticmethod
+    def _review_fields(draft):
+        """字段引用绑定位置及当前值，避免模型复述长文、混用修复前的证据。"""
+        fields = {}
+        for field in ("title", "summary", "instruction"):
+            fields[f"story.{field}:{value_hash(getattr(draft, field))[:16]}"] = {
+                "shot_id": None, "field": field}
+        for index, shot in enumerate(draft.shots, 1):
+            for field in ("action", "camera", "duration_seconds", "transition", "image"):
+                value = getattr(shot, field)
+                if isinstance(value, ImageVersionRef):
+                    value = value.model_dump(mode="json")
+                fields[f"shot.{index}.{field}:{value_hash([shot.shot_id, value])[:16]}"] = {
+                    "shot_id": shot.shot_id, "field": field}
+        return fields
+
     def _review_findings(self, draft, output):
         shots = {shot.shot_id: (index, shot) for index, shot in enumerate(draft.shots, 1)}
+        fields = self._review_fields(draft)
         checked, issues = [], []
         for index, finding in enumerate(output.findings, 1):
+            coordinate = fields.get(finding.evidence_id)
+            # 当前值绑定的引用已经唯一定位镜头；允许模型省略冗余 shot_id，不猜测显式错误身份。
+            if coordinate and finding.shot_id is None and coordinate["field"] == finding.field:
+                finding.shot_id = coordinate["shot_id"]
             position = "故事"
             if finding.shot_id:
                 entry = shots.get(finding.shot_id)
@@ -896,6 +934,22 @@ class ComicStoryService:
                 issues.append({"finding": index, "reason": "missing_shot_id",
                                "message": f"第 {index} 条故事审核缺少对应镜头身份"})
                 continue
+            if finding.evidence_id is not None:
+                if fields.get(finding.evidence_id) != {
+                    "shot_id": finding.shot_id, "field": finding.field,
+                }:
+                    expected = next(ref for ref, target in fields.items() if target == {
+                        "shot_id": finding.shot_id, "field": finding.field})
+                    issues.append({"finding": index, "field": finding.field,
+                                   "reason": "invalid_field_reference",
+                                   "expected_field_reference": expected,
+                                   "message": f"{position}的审核引用不属于当前字段，请重新校验"})
+                    continue
+                if not finding.evidence:
+                    finding.evidence = (
+                        value.model_dump_json()
+                        if isinstance(value, ImageVersionRef) else str(value)
+                    )[:4000]
             quote = self._evidence_quote(value, finding.evidence)
             if quote is None:
                 issues.append({"finding": index, "field": finding.field,
@@ -904,6 +958,57 @@ class ComicStoryService:
                                "故事审核证据与当前字段不一致，请重新校验"})
                 continue
             finding.evidence = quote
+            if any(ref not in fields for ref in finding.related_fields):
+                issues.append({"finding": index, "reason": "invalid_related_field",
+                               "message": f"第 {index} 条审核的关联字段不属于当前故事"})
+                continue
+            if finding.timing_plan and finding.code != "duration_conflict":
+                budget_shot = shots[finding.shot_id][1] if finding.shot_id in shots else None
+                phases = {field for field in ("action", "transition")
+                          if budget_shot and getattr(budget_shot, field).strip()}
+                budget = sum(beat.seconds for beat in finding.timing_plan)
+                if (not budget_shot or not phases or budget <= 0
+                        or {beat.field for beat in finding.timing_plan} != phases
+                        or any(self._evidence_quote(
+                            getattr(budget_shot, beat.field), beat.evidence) is None
+                            for beat in finding.timing_plan)
+                        or (finding.field == "duration_seconds" and finding.severity == "error"
+                            and budget_shot.duration_seconds is not None
+                            and budget <= budget_shot.duration_seconds + 0.001)):
+                    # 保留问题本身，但不把没有充分依据的节拍表交给改稿模型。
+                    finding.timing_plan = []
+            if finding.code == "duration_conflict" and (
+                finding.severity == "error" or finding.timing_plan
+            ):
+                # 语义时长判断必须给出当前动作和转场的完整预算，不能凭动作数量逐轮加秒。
+                shot = shots[finding.shot_id][1] if finding.shot_id in shots else None
+                required = {field for field in ("action", "transition")
+                            if shot and getattr(shot, field).strip()}
+                # 只纠正可以在本镜另一个阶段唯一找到的逐字引用；绝不接纳虚构或其他镜头内容。
+                for beat in finding.timing_plan:
+                    if (shot and self._evidence_quote(
+                            getattr(shot, beat.field), beat.evidence) is None):
+                        matches = [phase for phase in required if self._evidence_quote(
+                            getattr(shot, phase), beat.evidence) is not None]
+                        if len(matches) == 1:
+                            beat.field = matches[0]
+                budget = sum(beat.seconds for beat in finding.timing_plan)
+                if (not shot or not finding.timing_plan or budget <= 0
+                    or {beat.field for beat in finding.timing_plan} != required
+                    or any(self._evidence_quote(getattr(shot, beat.field), beat.evidence) is None
+                           for beat in finding.timing_plan)
+                    or (finding.severity == "error" and shot.duration_seconds is not None
+                        and budget <= shot.duration_seconds + 0.001)):
+                    issues.append({"finding": index, "reason": "invalid_timing_plan",
+                        "message": f"{position}的时长判断缺少当前动作与转场的有效节拍预算",
+                        "required_phases": sorted(required),
+                        "provided_phases": sorted({beat.field for beat in finding.timing_plan}),
+                        "budget_seconds": budget,
+                        "quote_mismatch_beats": [index for index, beat in enumerate(
+                            finding.timing_plan) if shot and self._evidence_quote(
+                                getattr(shot, beat.field), beat.evidence) is None],
+                        "minimum_error_budget_exclusive": shot.duration_seconds if shot else None})
+                    continue
             if not finding.suggestion.strip():
                 finding.suggestion = f"请修改{self.FIELD_LABELS[finding.field]}：{finding.message}"
             checked.append(finding)
@@ -913,48 +1018,366 @@ class ComicStoryService:
         return checked, issues
 
     @staticmethod
+    def _review_response(raw):
+        """只暴露安全结构坐标；一个坏字段不能抹掉同一响应内已合法的其他发现。"""
+        issue = {"reason": "invalid_public_structure", "message": "故事模型未返回有效的公开结构"}
+        try:
+            if not isinstance(raw, str) or len(raw) > 160000:
+                raise ValueError("response_capacity")
+            text = raw.strip()
+            fenced = re.fullmatch(r"```(?:json)?\s*\n([\s\S]*?)\n```", text)
+            payload = json.loads(fenced.group(1) if fenced else text)
+        except (ValueError, TypeError):
+            return None, [{**issue, "schema_errors": [{"loc": [], "type": "json_invalid"}]}]
+        try:
+            return ComicStoryReviewOutput.model_validate(payload), []
+        except ValidationError as error:
+            allowed = {"findings", "status", "seconds", *ComicStoryFinding.model_fields}
+            diagnostics = [{"loc": [part if isinstance(part, int) or part in allowed
+                                     else "unknown_field" for part in item["loc"]],
+                            "type": item["type"]} for item in error.errors(
+                                include_input=False, include_context=False, include_url=False)[:20]]
+        # 仅把完整符合领域 Schema 的单条发现交给后续引文和时长核验；非法字段值不进入纠正。
+        findings = []
+        if isinstance(payload, dict) and isinstance(payload.get("findings"), list):
+            for item in payload["findings"][:100]:
+                try:
+                    findings.append(ComicStoryFinding.model_validate(item))
+                except ValidationError:
+                    continue
+        return ComicStoryReviewOutput(status="needs_revision", findings=findings), [
+            {**issue, "schema_errors": diagnostics}]
+
+    @staticmethod
     def _story_sources(source_contexts):
         """视频只接收有依据的起始帧来源；单图编译负向词不是用户的持续要求。"""
         return [{**{key: value for key, value in source.items() if key != "negative_prompt"},
                  "reference_role": "initial_frame"} for source in source_contexts]
 
+    @staticmethod
+    def _shot_source_map(draft, source_contexts):
+        """来源按固定图片身份关联，编号指向同一请求的 image_sources，不复制或混用来源正文。"""
+        indices = {_key(source["image"]): index for index, source in enumerate(source_contexts)}
+        return {shot.shot_id: {"image": shot.image.model_dump(mode="json"),
+                    "image_source_index": indices.get(_key(shot.image)),
+                    "previous_shot_id": draft.shots[index - 1].shot_id if index else None,
+                    "next_shot_id": (draft.shots[index + 1].shot_id
+                                     if index + 1 < len(draft.shots) else None)}
+                for index, shot in enumerate(draft.shots)} if draft else {}
+
+    def _story_context(self, draft, source_contexts, *, images=None):
+        """模型输入按镜头首次使用排序，显式列出切镜边界；不改变持久化快照与内容指纹。"""
+        positions, uses = {}, {}
+        for index, shot in enumerate(draft.shots if draft else []):
+            positions.setdefault(_key(shot.image), index)
+            uses.setdefault(_key(shot.image), []).append(shot.shot_id)
+        ordered = sorted(source_contexts, key=lambda source: positions.get(
+            _key(source["image"]), len(draft.shots) if draft else 0))
+        sources = self._story_sources(ordered)
+        for source in sources:
+            source["applies_to_shots"] = uses.get(_key(source["image"]), [])
+        mapping = self._shot_source_map(draft, ordered)
+        fields = self._review_fields(draft) if draft else {}
+        references = {(value["shot_id"], value["field"]): ref for ref, value in fields.items()}
+        boundaries = []
+        for previous, following in zip(draft.shots, draft.shots[1:], strict=False) if draft else []:
+            boundaries.append({
+                "from_shot_id": previous.shot_id, "to_shot_id": following.shot_id,
+                "from_source_index": mapping[previous.shot_id]["image_source_index"],
+                "to_source_index": mapping[following.shot_id]["image_source_index"],
+                "handoff_field": references[(previous.shot_id, "transition")],
+                "before_cut_fields": [references[(previous.shot_id, field)] for field in (
+                    "action", "camera", "transition", "duration_seconds")],
+                "after_cut_start_field": references[(following.shot_id, "action")],
+            })
+        result = {"image_sources": sources, "shot_source_map": mapping,
+                  "shot_boundaries": boundaries}
+        if images is not None:
+            result["images"] = [{key: image[key] for key in (
+                "image_id", "version", "filename", "provenance")}
+                for image in sorted(images, key=lambda item: positions.get(
+                    _key(item), len(draft.shots) if draft else 0))]
+        return result
+
+    def _audit_finding_quotes(self, draft, output, model_call, source_contexts):
+        """一次核对旧引文及跨图衔接；反证与建议更正必须绑定当前字段和真实来源。"""
+        fields = self._review_fields(draft)
+        shots = {shot.shot_id: shot for shot in draft.shots}
+        positions = {shot.shot_id: index for index, shot in enumerate(draft.shots)}
+        source_fields = {}
+        for index, source in enumerate(source_contexts):
+            requirements = [item.get("effective_requirement", item.get("requirement", ""))
+                            for item in source.get("constraints", [])
+                            if item.get("status", "active") == "active"
+                            and item.get("origin") != "model_choice"]
+            for key in ("user_requirements", "asset_requirements"):
+                requirements.extend(source.get(key, []))
+            requirements.extend(item.get("requirement", "") for item in
+                                source.get("authorized_requirements", []) if isinstance(item, dict))
+            for text in dict.fromkeys(item for item in requirements if isinstance(item, str)):
+                if text.strip():
+                    source_fields[f"source.{index}:{value_hash(text)[:16]}"] = {
+                        "image": source["image"], "quote": text}
+
+        def field_value(ref):
+            coordinate = fields[ref]
+            return getattr(shots.get(coordinate["shot_id"], draft), coordinate["field"])
+
+        suspects, references, quotes, temporal, source_refs, source_images = {}, {}, {}, {}, {}, {}
+        for index, finding in enumerate(output.findings, 1):
+            primary = next(ref for ref, coordinate in fields.items() if coordinate == {
+                "shot_id": finding.shot_id, "field": finding.field})
+            refs = {primary, *finding.related_fields}
+            fragments = re.findall(r'“([^”]+)”|"([^"\n]+)"', finding.message)
+            absent = [left or right for left, right in fragments
+                      if not any(self._evidence_quote(field_value(ref), left or right)
+                                 for ref in refs)]
+            if finding.field == "duration_seconds":
+                # 只把声称当前可用时长的数字列为待核对原文；建议或目标时长不作为现稿事实。
+                patterns = [
+                    r"(?<![\d.])(\d+(?:\.\d+)?\s*秒)(?=\s*(?:内|无法|不足|难以|不够|偏短|过短))",
+                    r"(?:当前(?:时长)?(?:为|是|仅)?|时长(?:为|是|仅)?|仅(?:有)?|只有|需在|要在)"
+                    r"\s*(\d+(?:\.\d+)?\s*秒)",
+                ]
+                for pattern in patterns:
+                    for claim in re.findall(pattern, finding.message):
+                        if (claim not in absent and self._evidence_quote(
+                                field_value(primary), claim) is None):
+                            absent.append(claim)
+            related_shots = {fields[ref]["shot_id"] for ref in refs} - {None}
+            if (finding.code in {"continuity", "transition_conflict"}
+                    and finding.shot_id in shots and len(related_shots) < 2):
+                neighbor = positions[finding.shot_id] + (1 if finding.field == "transition" else -1)
+                if 0 <= neighbor < len(draft.shots):
+                    related_shots.add(draft.shots[neighbor].shot_id)
+            images = {_key(shots[shot_id].image) for shot_id in related_shots}
+            bound_sources = {ref for ref, source in source_fields.items()
+                             if _key(source["image"]) in images}
+            cross_image = (finding.code in {"continuity", "transition_conflict", "other"}
+                           and finding.field in {"action", "transition"}
+                           and len(images) > 1 and bool(bound_sources))
+            if absent or cross_image:
+                # 当前字段正文已在 draft 中，主字段编号另列于 audit_requirements。
+                suspects[index] = finding.model_dump(mode="json", exclude={"evidence"})
+                references[index], quotes[index] = refs, absent
+                if cross_image:
+                    temporal[index] = {ref for ref, coordinate in fields.items()
+                        if coordinate["shot_id"] in related_shots and coordinate["field"] in {
+                            "action", "camera", "transition", "duration_seconds"}}
+                    source_refs[index] = bound_sources
+                    source_images[index] = images
+        if not suspects:
+            return
+        requirements = {}
+        for index in suspects:
+            requirements[index] = {
+                "primary_field_id": next(ref for ref, coordinate in fields.items()
+                    if coordinate == {"shot_id": output.findings[index - 1].shot_id,
+                                      "field": output.findings[index - 1].field}),
+                "absent_current_quotes": quotes[index],
+                "current_field_ids": sorted(temporal.get(index, references[index])),
+                "source_fields_by_image": [{"image": source_context["image"], "field_ids": [
+                    ref for ref in sorted(source_refs.get(index, set()))
+                    if _key(source_fields[ref]["image"]) == _key(source_context["image"])]}
+                    for source_context in source_contexts
+                    if _key(source_context["image"]) in source_images.get(index, set())],
+            }
+        bound_sources = {ref: source_fields[ref] for ref in
+                         sorted(set().union(*source_refs.values()))}
+        source_lookup = {(_key(item["image"]), item["quote"]): ref
+                         for ref, item in bound_sources.items()}
+        context = self._story_context(draft, source_contexts)
+        for source in context["image_sources"]:
+            image_key = _key(source["image"])
+            for section in ("constraints", "authorized_requirements"):
+                if section not in source:
+                    continue
+                compact_items = []
+                for raw_item in source[section]:
+                    if not isinstance(raw_item, dict):
+                        compact_items.append(raw_item)
+                        continue
+                    item = dict(raw_item)
+                    for field in ("effective_requirement", "requirement", "source_quote"):
+                        value = item.get(field)
+                        reference = (source_lookup.get((image_key, value))
+                                     if isinstance(value, str) else None)
+                        if reference:
+                            item.pop(field)
+                            item[field + "_ref"] = reference
+                    compact_items.append(item)
+                source[section] = compact_items
+            for section in ("user_requirements", "asset_requirements"):
+                if section in source:
+                    source[section] = [
+                        {"source_field_ref": source_lookup[(image_key, item)]}
+                        if isinstance(item, str) and (image_key, item) in source_lookup else item
+                        for item in source[section]]
+        payload = {"stage": "story_finding_audit", "draft": draft.model_dump(mode="json"),
+                   "review_fields": fields, "findings": suspects,
+                   "source_fields": bound_sources,
+                   "continuity_fields": {index: sorted(refs) for index, refs in temporal.items()},
+                   "audit_requirements": requirements,
+                   **context}
+        # 传输失败或结果未知直接停止，不借契约纠正重发付费请求。
+        raw = model_call([
+            {"role": "system", "content":
+             "核对这些审核发现是否把旧文字错误地声称为当前字段原文。当前draft是唯一现稿。"
+             "逐条返回checks：默认retain。只有整条发现仅建立在已不存在的当前原文上，"
+             "并能从对应当前字段引用反证时，才可stale_current_quote。"
+             "用户要求、图片来源、建议改写和语义概括不必逐字存在于现稿，不能据此撤销真实冲突；"
+             "同时含真实问题或无法确定时保留。不得仅因希望故事通过而撤销。"
+             "撤销须给field_id、原message内claimed_quote及现字段current_quote。只返回JSON："
+             "absent_current_quotes可能包含审核对当前镜头时长的错误数字；"
+             "建议的目标秒数不是当前时长，其他独立问题存在或无法确认时须保留。"
+             "跨图衔接还须按现稿完整时间顺序核对action和transition，不能漏看已写明的取物/换持。"
+             "只有整条衔接问题已由现稿实际动作完整满足且符合固定来源时，才可already_satisfied；"
+             "用supporting_quotes逐字引用当前主字段、相关transition及每个相关图片的source_fields依据，"
+             "也可以把supporting_quotes的值写成与键完全相同的当前字段或来源编号，"
+             "由系统提取该编号绑定的完整原文；不能使用旧编号或无关编号。"
+             "至少两个不同当前字段，不能凭空宣称通过。真实冲突、硬要求冲突、不确定均retain。"
+             "若冲突真实但原suggestion会破坏固定图片或重复无效修改，retain并给corrected_suggestion，"
+             "同样须用上述当前字段和来源原文证明应如何衔接，不能只改掉建议而放行。"
+             "非continuity_fields所列发现只允许原旧引文核对。不得改写剧情或私有推理。"
+             "audit_requirements按发现给出主字段、允许的现稿字段及每张图的合法来源编号。"
+             "image_sources中以_ref或source_field_ref结尾的来源内容，原文在source_fields对应编号中；"
+             "它与原字段等价，仍须结合保留的来源范围和用户要求判断。"
+             "衔接反证须引用主字段、至少一个transition和所列每张图的来源；编号不能跨发现借用。"
+             "单条无法核实时retain，不能省略它或为补齐证据编造引文。"
+             + STORY_SEMANTICS
+             + json.dumps(ComicStoryFindingAudits.model_json_schema(), ensure_ascii=False)},
+            {"role": "user", "content": json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":"))},
+        ])
+        removed, amendments = set(), {}
+        try:
+            audit = _parse(raw, ComicStoryFindingAudits)
+        except ToolError as error:
+            public_error(error, component="comic.story.finding_audit", run_id=current_run_id())
+            return  # 结构不合法时不能使用任何反证。
+        accepted, rejected = [], []
+        for index in suspects:
+            checks = [check for check in audit.checks if check.finding == index]
+            try:
+                if len(checks) != 1:
+                    raise ToolError("故事审核反证缺少对应发现或重复")
+                check = checks[0]
+                if check.verdict == "retain" and not check.corrected_suggestion:
+                    accepted.append(check.model_dump(mode="json"))
+                    continue
+                if check.verdict == "stale_current_quote":
+                    if (check.field_id not in references[check.finding]
+                        or check.claimed_quote not in quotes[check.finding]
+                        or not self._evidence_quote(
+                            field_value(check.field_id), check.current_quote)):
+                        raise ToolError("故事审核反证与当前字段不一致")
+                    removed.add(check.finding)
+                    accepted.append(check.model_dump(mode="json"))
+                    continue
+                allowed = temporal.get(check.finding, set())
+                sources = source_refs.get(check.finding, set())
+                supporting = dict(check.supporting_quotes)
+                for ref, text in supporting.items():
+                    if text == ref and ref in (allowed | sources):
+                        value = source_fields[ref]["quote"] if ref in sources else field_value(ref)
+                        supporting[ref] = str(value)[:4000] if value is not None else ""
+                supplied = set(supporting)
+                current = supplied & allowed
+                finding = output.findings[check.finding - 1]
+                primary = next((ref for ref in allowed if fields[ref] == {
+                    "shot_id": finding.shot_id, "field": finding.field}), None)
+                required_images = source_images.get(check.finding, set())
+                quoted_images = {_key(source_fields[ref]["image"]) for ref in supplied & sources}
+                if (not allowed or primary not in current or len(current) < 2
+                        or not any(fields[ref]["field"] == "transition" for ref in current)
+                        or not required_images or quoted_images != required_images
+                        or supplied - (allowed | sources)
+                        or any(not self._evidence_quote(
+                            source_fields[ref]["quote"] if ref in sources else field_value(ref),
+                            text)
+                            for ref, text in supporting.items())):
+                    raise ToolError("故事衔接反证缺少当前动作、转场或固定图片来源依据")
+                check.supporting_quotes = supporting
+                if check.verdict == "already_satisfied":
+                    removed.add(check.finding)
+                else:
+                    amendments[check.finding] = check.corrected_suggestion
+                accepted.append(check.model_dump(mode="json"))
+            except ToolError as error:
+                # 每条反证独立核验；失败只保留该条原问题，不丢掉其他已严格核验的结果。
+                rejected.append(index)
+                public_error(error, component="comic.story.finding_audit", finding=index,
+                             run_id=current_run_id())
+        if run_id := current_run_id():
+            run = self.runtime.get_run(run_id)
+            receipt = {"draft_sha256": value_hash(draft.model_dump(mode="json")),
+                       "findings": suspects, "checks": accepted, "retained_invalid": rejected}
+            self.runtime.update_run(run_id, status=run.status,
+                state={**run.state, "story_review_audits": [
+                    *run.state.get("story_review_audits", []), receipt][-4:]},
+                current_node=run.current_node, error=run.error)
+        for index, suggestion in amendments.items():
+            output.findings[index - 1].suggestion = suggestion
+        output.findings = [finding for index, finding in enumerate(output.findings, 1)
+                           if index not in removed]
+
     def _review_output(self, draft, images, model_call, source_contexts, *, user_intent=None):
-        sources = [
-            {key: image[key] for key in ("image_id", "version", "filename", "provenance")}
-            for image in images
-        ]
+        fields = self._review_fields(draft)
+        schema = ComicStoryReviewOutput.model_json_schema()
+        finding_schema = schema["$defs"]["ComicStoryFinding"]
+        finding_schema["properties"]["evidence_id"] = {"type": "string", "enum": list(fields)}
+        finding_schema["required"].append("evidence_id")
+        finding_schema["properties"]["related_fields"]["items"] = {
+            "type": "string", "enum": list(fields)}
         messages = [
             {
                 "role": "system",
                 "content": "独立核验公开故事中的动作、运镜、时长、衔接与用户需求的一致性。"
                 "图片身份仅为固定来源，不证明不同图片中的人物是同一角色；没有视觉证据时不要假装看过图片。"
                 "image_sources是各图片起始画面的来源依据，仅适用于使用对应图片的镜头。"
+                "shot_source_map按shot_id给出对应图片及image_sources的零起始编号；null代表无来源文字。"
                 "scoped_replacement以effective_requirement为准，不能恢复被替代的旧目标；"
                 "保留其他对象和未变属性，不把授权范围扩为整张图。"
                 + STORY_SEMANTICS +
-                "只返回给定Schema的公开JSON；finding引用实际字段的逐字evidence和shot_id，"
+                "只返回给定Schema的公开JSON；finding从review_fields选择当前字段的evidence_id，"
+                "shot_id及field与所选条目一致，finding.evidence留空，由系统从该字段提取原文。"
+                "引用编号包含当前值指纹，修改后的稿件必须使用本次编号，不能沿用修复前的编号。"
                 "field必须是引文所属的当前字段，不得引用用户要求、其他字段或修复前的旧稿来充当该字段原文。"
-                "时长引用数值；图片引用image_id或完整image对象；文字保留原文，不概括。"
+                "时长、图片和文字都用对应字段编号，不需复述数值、图片对象或长文本。"
                 "并给出code（missing_title/missing_summary/missing_shots/missing_action/"
                 "missing_camera/missing_transition/missing_duration/"
                 "duration_conflict/camera_conflict/transition_conflict/image_conflict/"
                 "requirement_conflict/continuity/other）与suggestion（一句可执行建议：改哪个字段、怎么改）。"
                 "存在真实冲突为error/needs_revision，艺术建议为warning，未发现问题为pass/findings=[]。"
+                "跨镜头衔接/物件一致性问题必须用related_fields列出需协同修改的其他当前字段编号，"
+                "不要只给一镜修改建议却要求另一镜保持矛盾内容；无关联字段时填空列表。"
+                "先检查全部镜头，再按shot_source_map的前后关系逐一检查边界，一次列全具体问题；"
+                "不能只检查第一处武器差异，等修复后才开始检查其余镜头的运镜或时长。"
+                "时长不足须说明完整动作节拍的时间需求，并提出一次可完成的总时长或精简方案，"
+                "不能仅以动作多就反复建议再加一秒。"
+                "code=duration_conflict且severity=error必须给timing_plan：按实际顺序引用本镜当前action和transition"
+                "中的具体原文及各节拍seconds，二者均须覆盖；同一动作不重复计时，并行动作按较长者"
+                "安排。运镜、环境和静态状态通常与动作同时发生，不应另作串行节拍。"
+                "error的总需求秒数必须确实超过当前duration_seconds；warning可不提供预算，"
+                "但它仍是必须处理的优化建议。其他问题timing_plan为空。"
+                "注意finding.evidence与timing_plan[].evidence是不同字段：只有finding.evidence留空；"
+                "每个timing_plan[].evidence必须从该镜头相应action或transition逐字摘录，不得留空、"
+                "概括或引用其他镜头。即使transition只是切镜，也引用它并给seconds=0，不可漏掉该阶段。"
                 "message只写一句简短问题，suggestion只写一句可执行修改，避免复述整段故事或长篇论证；"
-                "详细依据只放evidence，不要重复到message或suggestion。"
+                "finding.evidence保持空字符串，依据由系统提取；不要将依据长文重复到message或suggestion。"
                 "不重新生成、不自动修复、不输出私有推理。Schema："
-                + json.dumps(ComicStoryReviewOutput.model_json_schema(), ensure_ascii=False),
+                + json.dumps(schema, ensure_ascii=False),
             },
             {
                 "role": "user",
                 "content": json.dumps(
                     {
                         "draft": draft.model_dump(mode="json"),
-                        "images": sources,
-                        "image_sources": self._story_sources(source_contexts),
+                        "review_fields": fields,
+                        **self._story_context(draft, source_contexts, images=images),
                         "user_intent": user_intent.model_dump(mode="json") if user_intent else None,
                     },
-                    ensure_ascii=False,
+                    ensure_ascii=False, separators=(",", ":"),
                 ),
             },
         ]
@@ -964,35 +1387,42 @@ class ComicStoryService:
             if attempt:
                 inputs = [*messages, {"role": "user", "content": (
                     "上次公开审核结构或引文无效，只纠正一次。依据当前原稿重新返回完整公开审核JSON，"
-                    "不得重写故事或输出私有推理。保留下列已核验发现；其余引文只能来自所指当前字段。"
+                    "不得重写故事或输出私有推理。保留下列已核验发现；其余发现从当前review_fields"
+                    "选择evidence_id，finding.evidence留空；timing_plan[].evidence仍必须逐字引用"
+                    "本镜当前action/transition，覆盖required_phases，修正quote_mismatch_beats；"
+                    "有expected_field_reference时使用该字段编号。"
+                    "error预算总数须大于minimum_error_budget_exclusive，不能重复计算并行动作。"
                     + json.dumps({"issues": issues, "verified_findings": [
                         item.model_dump(mode="json") for item in verified.values()]},
                         ensure_ascii=False))}]
             # 仅成功返回后的契约错误可纠正；传输失败或结果未知直接退出，不重发模型请求。
             raw = model_call(inputs)
-            try:
-                output = _parse(raw, ComicStoryReviewOutput)
-            except ToolError:
-                issues = [{"reason": "invalid_public_structure",
-                           "message": "故事模型未返回有效的公开结构"}]
-            else:
+            output, structure_issues = self._review_response(raw)
+            if output is not None:
                 checked, issues = self._review_findings(draft, output)
+                issues = [*structure_issues, *issues]
                 for finding in checked:
                     key = (finding.shot_id, finding.field, finding.code,
                            finding.evidence, finding.severity)
                     verified.setdefault(key, finding)
                 if not issues and len(verified) <= 100:
                     output.findings = list(verified.values())
+                    self._audit_finding_quotes(draft, output, model_call, source_contexts)
                     if any(item.severity == "error" for item in output.findings):
                         output.status = "needs_revision"
                     elif output.findings:
                         output.status = "warning"
+                    else:
+                        output.status = "pass"
                     return output.model_dump(mode="json")
                 if not issues:
                     issues = [{"reason": "finding_capacity",
                                "message": "故事审核发现过多，请缩小校验范围"}]
+            else:
+                issues = structure_issues
             error = ToolError(issues[0]["message"], detail="module=comic.story.review "
-                              f"reason={issues[0]['reason']} attempt={attempt + 1}")
+                f"reason={issues[0]['reason']} attempt={attempt + 1} "
+                f"diagnostics={json.dumps(issues[0], ensure_ascii=False)}")
             public_error(error, component="comic.story.review_contract", stage="review",
                          run_id=current_run_id())
             if attempt:
@@ -1083,43 +1513,100 @@ class ComicStoryService:
         return merged
 
     def _vision_payload(self, images, payload):
-        content = [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]
-        for image in images:
+        content = [{"type": "text", "text": json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":"))}]
+        mapping = payload.get("shot_source_map", {})
+        sequence = list(mapping)
+        def shot_numbers(image):
+            return [index for index, shot_id in enumerate(sequence, 1)
+                    if _key(mapping[shot_id]["image"]) == _key(image)]
+        for image in sorted(images, key=lambda item: min(shot_numbers(item), default=101)):
             artifact = self.runtime.get_artifact(image["artifact_id"])
             data = validate_runtime_path(Path(artifact.location)).read_bytes()
             if hashlib.sha256(data).hexdigest() != image["sha256"]:
                 raise ToolError("图片内容在故事生成前发生变化")
             content.append({"type": "text",
-                            "text": f"图片来源 {image['image_id']} v{image['version']}"})
+                            "text": f"图片来源 {image['image_id']} v{image['version']}；"
+                                    f"对应镜头序号 {shot_numbers(image)}"})
             content.append({"type": "image_url", "image_url": {
                 "url": f"data:{image['mime_type']};base64,"
                 + base64.b64encode(data).decode("ascii")}})
         return content
 
     @staticmethod
-    def _repair_scope(draft, findings):
+    def _repair_scope(draft, findings, *, include_warnings=False):
         """以错误定位镜头；执行字段协同修正，真实交界冲突可联动下一镜。"""
         fields = {"action", "camera", "duration_seconds", "transition"}
         scope = {"shots": {}, "story": [], "create_shots": False}
         positions = {shot.shot_id: index for index, shot in enumerate(draft.shots)}
+        references = ComicStoryService._review_fields(draft)
         for item in findings:
-            if item.get("severity") != "error":
+            if item.get("severity") != "error" and not (
+                include_warnings and item.get("severity") == "warning"
+            ):
                 continue
             shot_id, field = item.get("shot_id"), item["field"]
             if shot_id in positions and field in fields:
                 scope["shots"][shot_id] = sorted(fields)
+                if field == "action" and item["code"] in {"continuity", "transition_conflict"}:
+                    preceding = positions[shot_id] - 1
+                    linked = {references[ref]["shot_id"] for ref in item.get("related_fields", [])
+                              if ref in references and references[ref]["shot_id"]}
+                    if preceding >= 0 and (not linked or draft.shots[preceding].shot_id in linked):
+                        scope["shots"][draft.shots[preceding].shot_id] = sorted(fields)
                 if field == "transition" and item["code"] in {"continuity", "transition_conflict"}:
                     following = positions[shot_id] + 1
                     if following < len(draft.shots):
                         scope["shots"][draft.shots[following].shot_id] = sorted(fields)
+                if field == "action" and item["code"] in {"image_conflict", "other"}:
+                    preceding = positions[shot_id] - 1
+                    if preceding >= 0:
+                        previous_id = draft.shots[preceding].shot_id
+                        linked_images = {references[ref]["shot_id"] for ref in
+                            item.get("related_fields", []) if ref in references
+                            and references[ref]["field"] == "image"}
+                        if previous_id in linked_images:
+                            authorized = set(scope["shots"].get(previous_id, []))
+                            scope["shots"][previous_id] = sorted(
+                                authorized | {"transition", "duration_seconds"})
             elif not shot_id and field in {"title", "summary"}:
                 scope["story"].append(field)
             elif not draft.shots and item["code"] == "missing_shots":
                 scope["create_shots"] = True
+            if item.get("code") in {
+                "continuity", "transition_conflict", "requirement_conflict", "image_conflict",
+                "other",
+            }:
+                for reference in item.get("related_fields", []):
+                    related = references.get(reference, {})
+                    if related.get("shot_id") in positions and related.get("field") in fields:
+                        scope["shots"][related["shot_id"]] = sorted(fields)
         return scope
 
+    def _minimum_durations(self, draft, findings):
+        """把当前稿已核验的完整节拍预算变成修稿下界，防止写稿模型再次缩短。"""
+        result = {}
+        for item in findings:
+            if item.get("code") != "duration_conflict" or not item.get("timing_plan"):
+                continue
+            try:
+                output = ComicStoryReviewOutput.model_validate({
+                    "status": "needs_revision", "findings": [item]})
+            except ValidationError:
+                continue
+            checked, issues = self._review_findings(draft, output)
+            if issues or not checked or not checked[0].shot_id:
+                continue
+            budget = round(sum(beat.seconds for beat in checked[0].timing_plan), 6)
+            # 超出单镜合法容量必须继续精简或重新安排，不能制造一个越界完成稿。
+            if 0 < budget <= 60:
+                shot_id = checked[0].shot_id
+                result[shot_id] = max(result.get(shot_id, 0), budget)
+        return result
+
     def _repair(self, draft, findings, images, source_contexts, vision_model_call, instruction,
-                *, user_intent=None):
+                *, user_intent=None, repair_strategy="targeted", repair_history=(),
+                include_warnings=False):
         """在出错镜头内协调制作字段，输出仍由独立审核决定是否可交付。"""
         if not findings:
             return None
@@ -1127,16 +1614,41 @@ class ComicStoryService:
             "instruction": instruction,
             "current_draft": draft.model_dump(mode="json"),
             "user_intent": user_intent.model_dump(mode="json") if user_intent else None,
-            "issues": findings,
-            "repair_scope": self._repair_scope(draft, findings),
-            "images": [{key: image[key] for key in ("image_id", "version", "filename")}
-                       for image in images],
-            "image_sources": self._story_sources(source_contexts),
+            # 字段指纹/关联已投影为 repair_scope 和边界，不在问题中再次展开。
+            "issues": [{key: value for key, value in item.items()
+                        if key not in {"evidence", "evidence_id", "related_fields"}}
+                       for item in findings],
+            "repair_scope": self._repair_scope(draft, findings, include_warnings=include_warnings),
+            "minimum_durations": self._minimum_durations(draft, findings),
+            "repair_strategy": repair_strategy,
+            # 当前问题含完整执行预算；历史只给位置/类别，旧预算与旧建议不再重复进入现稿请求。
+            "repair_history": [{"draft_sha256": value_hash(attempt.get("draft")),
+                "review": {"status": attempt.get("review", {}).get("status"), "findings": [
+                    {key: value for key, value in item.items()
+                     if key in {"shot_id", "field", "code", "severity"}}
+                    for item in attempt.get("review", {}).get("findings", [])]}}
+                for attempt in list(repair_history)[-3:]],
+            **self._story_context(draft, source_contexts, images=images),
         }
         messages = [
             {"role": "system", "content": "按 issues 及 repair_scope 修正 current_draft。"
              "错误镜头的动作、运镜、时长与转场应一起协调；不能只改一个字段而留下相互矛盾的运动。"
              "已有用户填写内容也应纠正错误的执行方式，但必须保留原本合法剧情和对白。"
+             "repair_history仅为已尝试的旧问题索引，不能当作current_draft事实；避免撤销有效修正。"
+             "AI整理须处理repair_scope授权内的错误和可执行优化建议，不能只回一份修改建议。"
+             "reconcile时先统筹所有出错镜头的起始状态、动作结束状态和下一镜起始状态再修正。"
+             "各图来源的起始人物、兵器、姿态必须保留；不同镜头的刀剑不同时，不能把一图的"
+             "兵器直接改成另一图的兵器，应在允许的动作或转场内交代收剑、换刀等实际变化。"
+             "所需动作须能在时长内完成，不能靠含糊措辞假装冲突已解决。"
+             "逐个核对修正镜头的前后边界，把取放位置、换持步骤写成实际动作；"
+             "不能仅写已换持或武器换为另一件而省略过程，也不能重复执行已握持物品的取出动作。"
+             "issues中的建议仍须服从固定来源与现稿事实，不可盲目照改；"
+             "先安排全部动作节拍再确定足够的时长，不要按每轮增加一秒试探审核。"
+             "issues的timing_plan是本轮审核对现稿动作和转场的逐段预算；"
+             "据此一次协调完整时长，若精简动作也必须保留合法剧情并重新核算，不机械累加秒数。"
+             "minimum_durations是现稿动作和转场未变时已核验的保守下界；"
+             "若改写动作或转场，须根据改稿重新安排完整节拍，不能机械沿用旧预算。"
+             "改稿仍须独立复核，不能把增加时长当作其他衔接和来源问题已经解决。"
              "只修改repair_scope授权的字段，保留其余文字、shot_id、镜头顺序与图片；不新增无关内容。"
              "仅create_shots=true时可从所给images补建完整镜头。"
              + STORY_SEMANTICS +
@@ -1144,24 +1656,28 @@ class ComicStoryService:
              + json.dumps(ComicStoryDraft.model_json_schema(), ensure_ascii=False)},
             {"role": "user", "content": self._vision_payload(images, payload)},
         ]
+        raw = vision_model_call(messages)
         try:
-            return _parse(vision_model_call(messages), ComicStoryDraft)
+            return _parse(raw, ComicStoryDraft)
         except ToolError as error:
             public_error(error, component="comic.story.repair", stage="repair",
                          run_id=current_run_id())
             return None
 
     def _repair_once(self, draft, findings, images, source_contexts, vision_model_call,
-                     instruction, allowed, *, user_intent=None):
+                     instruction, allowed, *, user_intent=None, repair_strategy="targeted",
+                     repair_history=(), include_warnings=False):
         """一次有界修复：修完仍缺字段或引用未选图片就退回原稿，不连环重试。"""
         repaired = self._repair(draft, findings, images, source_contexts,
-                                vision_model_call, instruction, user_intent=user_intent)
+                                vision_model_call, instruction, user_intent=user_intent,
+                                repair_strategy=repair_strategy, repair_history=repair_history,
+                                include_warnings=include_warnings)
         if repaired is None:
             return draft
         # 模型返回完整 JSON，只采纳授权范围，图片、镜头身份与顺序不接受模型改写。
         restricted = draft.model_copy(deep=True)
         repaired_shots = {shot.shot_id: shot for shot in repaired.shots}
-        scope = self._repair_scope(draft, findings)
+        scope = self._repair_scope(draft, findings, include_warnings=include_warnings)
         if scope["create_shots"]:
             restricted.shots = repaired.shots
         for field in scope["story"]:
@@ -1172,17 +1688,40 @@ class ComicStoryService:
             if original and replacement and _key(original.image) == _key(replacement.image):
                 for field in fields:
                     setattr(original, field, getattr(replacement, field))
+        minimum_durations = self._minimum_durations(draft, findings)
+        original_shots = {shot.shot_id: shot for shot in draft.shots}
+        for shot in restricted.shots:
+            minimum = minimum_durations.get(shot.shot_id)
+            original = original_shots.get(shot.shot_id)
+            if (minimum is not None and original and shot.action == original.action
+                    and shot.transition == original.transition
+                    and "duration_seconds" in scope["shots"].get(shot.shot_id, [])):
+                shot.duration_seconds = max(shot.duration_seconds or 0, minimum)
         repaired = restricted
         repaired.instruction = instruction
         if any(_key(shot.image) not in allowed for shot in repaired.shots):
-            return draft
-        if self._structural_findings(repaired):
             return draft
         return draft if repaired == draft else repaired
 
     def generate(self, request, *, vision_model_call, model_call, model, vision_model, run_id):
         if saved := self.media.request_result(request.anchor_project_id, "story.generate", request):
             return saved
+        continuation = None
+        skeleton = request.draft
+        history = []
+        if request.candidate_run_id:
+            original, continuation = self._load_candidate(request)
+            source_request = continuation["request"]
+            if (original.status.value != "waiting" or not continuation.get("review")
+                    or original.state.get("provider_submission_unknown")
+                    or source_request["expected_story_version"] != request.expected_story_version
+                    or source_request["instruction"] != request.instruction
+                    or {_key(ref) for ref in request.images}
+                    != {_key(ref) for ref in continuation["fixed_images"]}):
+                raise ToolError("候选与当前故事或整理要求不一致，请基于当前故事重新整理")
+            skeleton = (ComicStoryDraft.model_validate(source_request["draft"])
+                        if source_request.get("draft") else None)
+            history = original.state.get("story_attempts", [])[-STORY_REPAIR_LIMIT:]
         with self.projects._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             anchor, previous = self._prepare(connection, request)
@@ -1195,7 +1734,6 @@ class ComicStoryService:
             images = self._images(probe, anchor, request.conversation_id,
                                   previous=previous.get("fixed_images"), connection=connection)
         source_contexts = self._source_contexts(images)
-        skeleton = request.draft
         allowed = {_key(image) for image in images}
         if skeleton and any(_key(shot.image) not in allowed for shot in skeleton.shots):
             raise ToolError("已填写镜头的图片必须包含在本次整理范围内，请保留这些图片后再整理")
@@ -1218,9 +1756,24 @@ class ComicStoryService:
                 "vision_model": vision_model,
                 "created_at": utc_now().isoformat(),
             }
+            if continuation:
+                candidate["source_candidate_run_id"] = request.candidate_run_id
+                # 延续原始用户意图，不能把带错候选升格为用户要求。
+                candidate["request"] = {**candidate["request"],
+                                        "draft": continuation["request"].get("draft")}
             if output is not None:
                 candidate.update(review=output, review_model=model, review_contract=STORY_CONTRACT)
             self._candidate(run_id, candidate)
+
+        def record_attempt(draft, output):
+            run = self.runtime.get_run(run_id)
+            attempts = [*run.state.get("story_attempts", []), {
+                "draft": draft.model_dump(mode="json"), "review": output,
+                "review_contract": STORY_CONTRACT,
+            }]
+            self.runtime.update_run(run_id, status=run.status,
+                state={**run.state, "story_attempts": attempts[-(STORY_REPAIR_LIMIT + 1):]},
+                current_node=run.current_node, error=run.error)
 
         def review_candidate(draft, frozen, frozen_sources):
             try:
@@ -1235,9 +1788,7 @@ class ComicStoryService:
                 "instruction": request.instruction,
                 "current_draft": skeleton.model_dump(mode="json") if skeleton else None,
                 "user_intent": skeleton.model_dump(mode="json") if skeleton else None,
-                "images": [{key: image[key] for key in ("image_id", "version", "filename")}
-                           for image in images],
-                "image_sources": self._story_sources(source_contexts),
+                **self._story_context(skeleton, source_contexts, images=images),
             }
             messages = [
                 {
@@ -1249,6 +1800,8 @@ class ComicStoryService:
                     "可以单图成段或多图连续，每镜头只能引用输入的image_id及version，"
                     "镜数不超过100；已有镜头须沿用shot_id及对应图片，不得遗漏或重排。"
                     "不把不同人像强行当同一角色，不虚构可见图片身份；动作与运镜不能冲突。"
+                    "summary应概括全片的因果、发展与收尾；逐镜交代动作结束状态如何接入下一镜，"
+                    "主动协调节奏与时长，不把明显可改的执行问题留给用户当优化建议。"
                     "image_sources只约束对应图片，不将某张图的规则套在其他图；"
                     "scoped_replacement以有效新要求为准，不恢复旧目标，保留其他对象和未变属性。"
                     + STORY_SEMANTICS +
@@ -1256,46 +1809,66 @@ class ComicStoryService:
                     "instruction保持用户原文；shot_id独立且不重复，不输出私有推理。Schema："
                     + json.dumps(ComicStoryDraft.model_json_schema(), ensure_ascii=False),
                 },
-                {"role": "user", "content": self._vision_payload(images, payload)},
+                {"role": "user", "content": (
+                    self._vision_payload(images, payload) if not continuation else [])},
             ]
-            draft = self._merge_user_draft(
-                _parse(vision_model_call(messages), ComicStoryDraft), skeleton)
+            draft = (ComicStoryDraft.model_validate(continuation["draft"]) if continuation
+                     else self._merge_user_draft(
+                         _parse(vision_model_call(messages), ComicStoryDraft), skeleton))
             draft.instruction = request.instruction
             if any(_key(shot.image) not in allowed for shot in draft.shots):
                 raise ToolError("故事模型引用了未明确选中的图片版本")
             frozen, frozen_sources = frozen_for(draft)
+            if continuation and continuation["content_sha256"] != self._content_hash(
+                draft, frozen, frozen_sources,
+            ):
+                raise ToolError("候选图片或来源依据已变化，请基于当前故事重新整理")
             retain(draft, frozen, frozen_sources)
-            # 整理包含自动纠错；最多两次内容修正，每次结果仍须真实复核。
-            structural = self._structural_findings(draft)
-            repairs_left = 2 - bool(structural)
-            before_repair = draft
-            draft = self._repair_once(draft, structural, images,
-                                      source_contexts, vision_model_call,
-                                      request.instruction, allowed, user_intent=skeleton)
-            frozen, frozen_sources = frozen_for(draft)
-            structural = self._structural_findings(draft)
-            if draft is not before_repair:
-                retain(draft, frozen, frozen_sources)
-            output = (self._structural_review(structural) if structural
-                      else review_candidate(draft, frozen, frozen_sources))
-            retain(draft, frozen, frozen_sources, output)
-            for _ in range(repairs_left):
-                if structural or output["status"] != "needs_revision":
+            repairs_used, reconcile_next = 0, False
+            pending_review = (continuation["review"] if continuation
+                              and continuation.get("review_contract") == STORY_CONTRACT else None)
+            while True:
+                structural = self._structural_findings(draft)
+                # 同契约的原候选已有真实错误，先修再复核，不能重按按钮重抽一次通过。
+                output = (pending_review if pending_review is not None
+                          else self._structural_review(structural) if structural
+                          else review_candidate(draft, frozen, frozen_sources))
+                pending_review = None
+                record_attempt(draft, output)
+                retain(draft, frozen, frozen_sources, output)
+                history.append({"draft": draft.model_dump(mode="json"), "review": output,
+                                "review_contract": STORY_CONTRACT})
+                if output["status"] == "pass" and not output["findings"]:
                     break
-                fixed = self._repair_once(draft, output["findings"], images, source_contexts,
-                                          vision_model_call, request.instruction, allowed,
-                                          user_intent=skeleton)
+                while repairs_used < STORY_REPAIR_LIMIT:
+                    strategy = ("reconcile" if reconcile_next or repairs_used >= 2 else "targeted")
+                    repairs_used += 1
+                    fixed = self._repair_once(draft, output["findings"], images, source_contexts,
+                        vision_model_call, request.instruction, allowed, user_intent=skeleton,
+                        repair_strategy=strategy, repair_history=history[-3:],
+                        include_warnings=True)
+                    if any(item.get("review_contract") == STORY_CONTRACT
+                           and item["draft"] == fixed.model_dump(mode="json") for item in history):
+                        fixed = draft  # 已审核的旧稿不能靠重复抽取结论获得通过。
+                    if fixed is not draft:
+                        break
+                    # 无变化不重新抽审核结论；只允许换统筹策略再修一次。
+                    if strategy == "reconcile":
+                        break
+                    reconcile_next = True
+                else:
+                    break
                 if fixed is draft:
                     break
-                fixed_frozen, fixed_sources = frozen_for(fixed)
-                fixed_output = review_candidate(fixed, fixed_frozen, fixed_sources)
-                draft, frozen, frozen_sources = fixed, fixed_frozen, fixed_sources
-                output = fixed_output
-                retain(draft, frozen, frozen_sources, output)
-            if output["status"] == "needs_revision":
-                raise ToolError("初稿自动修复尚未完成，候选已保留，当前故事未被替换。请重新整理。",
-                                detail="module=comic.story reason=automatic_repair_incomplete "
-                                f"findings={len(output['findings'])}")
+                draft = fixed
+                frozen, frozen_sources = frozen_for(draft)
+            if output["status"] != "pass" or output["findings"]:
+                with self.projects._connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._prepare(connection, request)
+                    return self._finish(connection, request, "story.generate", run_id=run_id,
+                        generation_status="needs_revision", candidate_run_id=run_id,
+                        candidate_draft=draft.model_dump(mode="json"), candidate_review=output)
             self._complete(draft)
             with self.projects._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -1307,7 +1880,9 @@ class ComicStoryService:
                     connection, request, draft, frozen, "model_generated", run_id, frozen_sources
                 )
                 self._insert_review(connection, story, output, model=model, run_id=run_id)
-                return self._finish(connection, request, "story.generate", run_id=run_id)
+                return self._finish(connection, request, "story.generate", run_id=run_id,
+                                    generation_status="ready",
+                                    candidate_run_id=request.candidate_run_id)
 
         return self._execute(request, "story.generate", run_id, action)
 
@@ -1374,12 +1949,7 @@ class ComicStoryService:
             # 先看校验结论：有未通过的问题时说清"先校验"，比只说某个字段没填更有用。
             view = self.view(request.conversation_id, connection=connection)
             review = view["review"]
-            if (
-                not review
-                or not review.get("validation_requested")
-                or review["status"] == "needs_revision"
-                or any(item["severity"] == "error" for item in review["findings"])
-            ):
+            if not self._review_allows_confirmation(story, review):
                 raise ToolError("当前故事尚未通过校验，请先校验或修改后重新校验")
             self._complete(draft)
             self._images(
@@ -1449,7 +2019,7 @@ class ComicStoryService:
             )
             return self._finish(connection, request, "story.restore", run_id=run_id)
 
-    def adopt_candidate(self, request, *, run_id=None):
+    def _load_candidate(self, request):
         original = self.runtime.get_run(request.candidate_run_id)
         candidate = original.state.get("story_candidate")
         if (
@@ -1466,6 +2036,16 @@ class ComicStoryService:
             draft, candidate["fixed_images"], candidate["source_contexts"]
         ):
             raise ToolError("生成候选来源指纹不一致")
+        return original, candidate
+
+    def adopt_candidate(self, request, *, run_id=None):
+        original, candidate = self._load_candidate(request)
+        draft = ComicStoryDraft.model_validate(candidate["draft"])
+        review = candidate.get("review")
+        if (candidate.get("review_contract") != STORY_CONTRACT or not review
+                or review["status"] != "pass" or review["findings"]):
+            raise ToolError("候选尚未通过当前检查，请继续 AI 整理后再使用")
+        self._complete(draft)
         with self.projects._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             if saved := self.media.request_result(

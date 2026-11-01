@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { resolve, extname, sep } from 'node:path'
 import { createHash } from 'node:crypto'
-const root = resolve(fileURLToPath(new URL('../../src/kantoku/shells/web/', import.meta.url)))
+const root = resolve(process.env.KANTOKU_QA_WEB_ROOT ?? fileURLToPath(new URL('../../src/kantoku/shells/web/', import.meta.url)))
 const project = { project_id: 'qa-project', title: '树梢上的守望', current_version: 1, director_version: null }
 const brief = { version: 1, original_request: '一个少女站在树梢看村庄', hard_constraints: ['少女', '树梢', '村庄'], soft_preferences: ['安静'], creative_freedom: ['构图'] }
 const assets = [{ asset_id: 'qa-character', name: '少女', version: 1, pinned_version: 1, state: 'active', details: { kind: 'character', appearance: '东方少女，保持角色身份', clothing: '白色古装' }, fixed_constraints: ['保持角色身份'], reference_artifact_ids: [] }]
@@ -18,6 +18,7 @@ conversations[0].related_run_ids = ['qa-run-1']
 const port = Number(process.env.KANTOKU_QA_PORT ?? 8765)
 const assetMode = process.argv.includes('--assets')
 const clipboardMode = process.argv.includes('--clipboard')
+const qualityMode = process.argv.includes('--image-quality')
 const clipboardImage = clipboardMode ? await readFile(new URL('../../assets/reference/environments/fantasy-sky-city.png', import.meta.url)) : null
 const clipboardPrompt = { artifact_id: 'qa-prompt-transfer', project_id: 'qa-project', shot_id: 'qa-shot', storyboard_id: 'qa-board',
   version: 1, shot_version: 1, storyboard_version: 1, director_spec_version: 1, creative_brief_version: 1,
@@ -96,6 +97,22 @@ const wbInstruction = {
   },
   output: { positive_prompt: '补全招牌上的文字，保持原有透视与材质；清理左侧玻璃窗内的海报。', negative_prompt: '不要改变机械战马姿态，不要添加人物。', summary: '局部整理：招牌文字 + 左下橱窗' },
 }
+// Explicit offline fixture for evidence, range approval and regression presentation.
+const wbPlan = {
+  contract: 'unified-edit-plan-2', questions: [], handling: [],
+  items: [{ item_id: 'sign', requirement_ids: ['finding:sign'], target: '招牌', attribute: '文字完整性', desired_state: '补全文字', preserve: ['原有材质和透视'] }],
+  scope_proposals: [{ item_id: 'sign', target: '招牌', bounds: [.28, .06, .67, .30], reason: '完整文字延伸到定位框之外', within_scope_alternative: '原框内只能整理已可见笔画' }],
+}
+if (qualityMode) {
+  wbResult.instruction_artifact_id = wbInstruction.artifact_id
+  wbAnalysis.analysis_policy = 'evidence-review-2'
+  wbAnalysis.output.recommendation = 'retain'
+  wbAnalysis.output.summary = '离线界面样例：尚无充分依据判断修改一定更好，可保留原图。'
+  Object.assign(wbAnalysis.output.findings[0], { category: 'uncertain', target: '招牌', attribute: '文字完整性',
+    evidence: ['局部字形较小，无法确认缺笔'], goal: '确认后再补全文字', expected_benefit: '提高可读性',
+    preserve: ['原有透视与材质'], risk: '重画可能损害原有笔触', risk_level: 'medium' })
+  Object.assign(wbAnalysis.output.findings[1], { category: 'optional_improvement', risk_level: 'medium' })
+}
 let workbenchVersion = 0
 let wbDraftStored = null
 let wbEditCreated = false
@@ -148,13 +165,13 @@ createServer(async (request, response) => {
         });</script></html>`)
     }
     if (clipboardMode && path === '/api/artifacts/qa-reference-original/content') { response.writeHead(200, { 'Content-Type': 'image/png' }); return response.end(clipboardImage) }
-    if (clipboardMode && path === '/api/comic/works') return json(response, { works: [] })
-    if (clipboardMode && /^\/api\/comic\/conversations\/[^/]+\/works$/.test(path)) return json(response, { works: [{
+    if ((clipboardMode || qualityMode) && path === '/api/comic/works') return json(response, { works: [] })
+    if ((clipboardMode || qualityMode) && /^\/api\/comic\/conversations\/[^/]+\/works$/.test(path)) return json(response, { works: [{
       work_id: 'qa-project:brief:1', project_id: 'qa-project', brief_version: 1, title: brief.original_request,
       original_request: brief.original_request, current: true, director_run_id: 'qa-run-1', has_director: true, image_count: 1 }] })
     if (clipboardMode && path.endsWith('/prompt/versions')) return json(response, { versions: [clipboardPrompt] })
     if (clipboardMode && path === '/api/comic/projects/qa-project/prompts') return json(response, { prompts: [clipboardPrompt] })
-    let body = {}; if (request.method === 'POST') { let text = ''; for await (const chunk of request) text += chunk; body = JSON.parse(text || '{}') }
+    let body = {}; if (['POST', 'PUT'].includes(request.method)) { let text = ''; for await (const chunk of request) text += chunk; body = JSON.parse(text || '{}') }
     if (navigationMode && path === '/qa/work-return') return json(response, { creates: navigationCreates,
       works: navigationWorks.length, turns: navigationRequests.size, queries: navigationQueries,
       phases: [...navigationRequests.values()].map(item => item.phase) })
@@ -198,6 +215,16 @@ createServer(async (request, response) => {
         related_run_ids: runs.filter(run => run.state.conversation_id === work.conversation_id).map(run => run.id) })
       return json(response, work)
     }
+    if (path === '/api/comic/works') return json(response, { works: [] })
+    if (/^\/api\/comic\/conversations\/[^/]+\/works$/.test(path)) return json(response, { works: [] })
+    if (request.method === 'GET' && /^\/api\/comic\/conversations\/[^/]+\/story(?:\/.*)?$/.test(path)) {
+      if (path.endsWith('/images')) return json(response, { images: [], unavailable_images: [] })
+      if (path.endsWith('/versions')) return json(response, { versions: [] })
+      if (path.endsWith('/requests')) return json(response, { tasks: [] })
+      if (path.endsWith('/video')) return json(response, { story_id: null, story_version: 0, content_sha256: null, confirmed: false, ready: false, provider: '', model_label: '', unavailable_reason: '尚未确认故事', manifest: null, story_context: '', tasks: [] })
+      return json(response, { story: null, review: null, confirmation: null, export_text: '', project_version: null, manifest: null, missing_images: [], exports: [] })
+    }
+    if (path === '/api/auth/status') return json(response, { registered: true, authenticated: true })
     if (path === '/api/session') return json(response, { token: 'offline-qa-only' })
     if (path === '/api/runs') return json(response, { runs: [] })
     if (path === '/api/approvals') return json(response, { approvals: [] })
@@ -272,11 +299,20 @@ createServer(async (request, response) => {
       wbDraftStored = { version: (wbDraftStored?.version ?? 0) + 1, state: body }; return json(response, wbDraftStored)
     }
     if (/^\/api\/comic\/images\/[^/]+\/selection$/.test(path) && request.method === 'PUT') return json(response, { ok: true })
-    if (path === '/api/comic/projects/qa-project/image-comparisons') return json(response, { artifact_id: 'qa-compare', before: wbImage, after: wbResult, output: { summary: '离线比较：招牌文字已补全。', changes: [{ check_id: 'c1', status: 'satisfied', evidence: '招牌文字完整' }], preservation: [{ check_id: 'p1', status: 'satisfied', evidence: '机械战马姿态未变' }], limitations: ['离线替身，不证明真实视觉质量'] } })
+    if (path === '/api/comic/projects/qa-project/image-comparisons') return json(response, { artifact_id: 'qa-compare', before: wbImage, after: wbResult, output: { summary: '离线比较：招牌文字已补全。', changes: [{ check_id: 'c1', status: 'satisfied', evidence: '招牌文字完整' }], preservation: [{ check_id: 'p1', status: 'satisfied', evidence: '机械战马姿态未变' }], ...(qualityMode ? { new_problems: ['离线样例：新增重影'], recommendation: 'retain_before' } : {}), limitations: ['离线替身，不证明真实视觉质量'] } })
     if (path === '/api/comic/projects/qa-project/image-analyses') return request.method === 'POST' ? json(response, wbAnalysis) : json(response, { items: [wbAnalysis], next_cursor: null })
     if (path.startsWith('/api/comic/projects/qa-project/image-analyses/')) return json(response, wbAnalysis)
     if (path === '/api/comic/projects/qa-project/edit-instructions') {
-      if (request.method === 'POST') { wbEditCreated = true; return json(response, { ...wbInstruction, requires_confirmation: true }) }
+      if (request.method === 'POST') {
+        if (qualityMode && !body.plan_confirmation) return json(response, {
+          edit_status: 'needs_scope_confirmation', run_id: 'qa-scope-run', plan_fingerprint: 'offline-bound-fingerprint',
+          source_image: body.image, round_id: body.round_id, message: '离线范围确认样例，未调用真实模型。',
+          review_diagnostics: { stage: 'plan', issues: [] }, edit_plan: wbPlan,
+        })
+        wbEditCreated = true
+        return json(response, { ...wbInstruction, requires_confirmation: true,
+          ...(qualityMode ? { scope: { ...wbInstruction.scope, unified_plan: wbPlan } } : {}) })
+      }
       return json(response, { items: wbEditCreated ? [wbInstruction] : [], next_cursor: null })
     }
     if (path.endsWith('/confirm')) return json(response, { ok: true })

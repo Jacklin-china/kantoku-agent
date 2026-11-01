@@ -6,7 +6,10 @@ import errno
 import socket
 import ssl
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
+from threading import get_ident
 from time import monotonic, perf_counter, sleep
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -27,6 +30,35 @@ from openai.types.chat.completion_create_params import (
 
 from kantoku.config import ConfigError, LLMError, get_settings
 from kantoku.core.tracing import Trace, write_trace
+
+_scoped_clients: ContextVar[dict[tuple, OpenAI] | None] = ContextVar(
+    "llm_scoped_clients", default=None,
+)
+
+
+def _close_client(client: OpenAI) -> None:
+    try:
+        client.close()
+    except Exception as close_error:
+        # A cleanup failure must not turn a completed paid request into a retry.
+        logger.error("LLM 连接关闭失败：{}", type(close_error).__name__)
+
+
+@contextmanager
+def reuse_llm_connections() -> Iterator[None]:
+    """Reuse connections only within this synchronous operation; never reuse a result."""
+    if _scoped_clients.get() is not None:
+        yield
+        return
+    clients: dict[tuple, OpenAI] = {}
+    token = _scoped_clients.set(clients)
+    try:
+        yield
+    finally:
+        _scoped_clients.reset(token)
+        for client in clients.values():
+            _close_client(client)
+        clients.clear()
 
 
 def _build_client(*, base_url: str, api_key: str, timeout_s: float) -> OpenAI:
@@ -182,6 +214,14 @@ def _connection_reason(error: BaseException) -> tuple[str, str] | None:
                 return "network_unreachable", "无法到达模型服务，请检查网络或代理后重试"
             if codes & {errno.ECONNRESET, errno.ECONNABORTED, 10053, 10054}:
                 return "connection_interrupted", "模型服务连接中断，请检查网络或代理后重试"
+    timeout_hints = {"WriteTimeout": "上传请求内容超时，请检查网络或代理后重试",
+                     "ReadTimeout": "等待模型响应超时，请检查网络或代理后重试",
+                     "ConnectTimeout": "连接模型服务超时，请检查网络或代理后重试",
+                     "PoolTimeout": "等待可用模型连接超时，请稍后重试"}
+    for current in chain:
+        if (type(current).__module__.split(".")[0] in {"httpx", "httpx2", "httpcore", "httpcore2"}
+                and type(current).__name__ in timeout_hints):
+            return "timeout", timeout_hints[type(current).__name__]
     if any(isinstance(current, (APITimeoutError, TimeoutError)) for current in chain):
         return "timeout", "等待模型服务超时，请检查网络或代理后重试"
     if any(isinstance(current, (APIConnectionError, ConnectionError)) for current in chain):
@@ -190,6 +230,9 @@ def _connection_reason(error: BaseException) -> tuple[str, str] | None:
 
 
 def _failure_message(message: str, error: BaseException) -> str:
+    if isinstance(error, APIStatusError) and error.status_code == 402:
+        return (f"{message}：模型服务账户余额不足或计费不可用，"
+                "请充值或切换到有可用额度的模型服务后再试")
     reason = _connection_reason(error)
     return f"{message}：{reason[1]}" if reason is not None else message
 
@@ -318,10 +361,17 @@ def _call_provider(
     extra_body: Mapping[str, Any] | None,
     on_usage: Callable[[int, int, bool], None] | None = None,
 ) -> ChatCompletionMessage:
-    """创建一个供应商客户端，完成请求后释放连接资源。"""
+    """复用当前操作的连接；操作外仍在每次请求结束时关闭。"""
     client: OpenAI | None = None
+    clients = _scoped_clients.get()
+    key = (get_ident(), base_url, api_key, timeout_s)
+    scoped = clients is not None and (key in clients or len(clients) < 4)
     try:
-        client = _build_client(base_url=base_url, api_key=api_key, timeout_s=timeout_s)
+        client = clients.get(key) if scoped and clients is not None else None
+        if client is None:
+            client = _build_client(base_url=base_url, api_key=api_key, timeout_s=timeout_s)
+            if scoped and clients is not None:
+                clients[key] = client
         response = _request_with_retry(
             client,
             provider=provider,
@@ -339,13 +389,14 @@ def _call_provider(
         if on_usage is not None:
             on_usage(*_reported_usage(response))
         return response.choices[0].message
+    except BaseException:
+        if client is not None and scoped and clients is not None:
+            clients.pop(key, None)
+            _close_client(client)
+        raise
     finally:
-        if client is not None:
-            try:
-                client.close()
-            except Exception as close_error:
-                # 释放资源失败不能把成功结果变成失败，诱发重复付费请求。
-                logger.error("LLM 连接关闭失败：{}", type(close_error).__name__)
+        if client is not None and not scoped:
+            _close_client(client)
 
 
 def chat(
@@ -534,7 +585,8 @@ def vision_chat(
     selected_temperature = (
         temperature if temperature is not None else settings.llm.structured_temperature
     )
-    selected_timeout = timeout_s if timeout_s is not None else settings.llm.timeout_s
+    selected_timeout = timeout_s if timeout_s is not None else (
+        settings.llm.vision_timeout_s or settings.llm.timeout_s)
     try:
         return _call_provider(
             provider="视觉模型",

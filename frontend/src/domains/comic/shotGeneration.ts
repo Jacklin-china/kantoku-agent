@@ -27,6 +27,7 @@ export function externalShotPrompt(prompts: Record<string, unknown>[], shotVersi
 
 /** Clipboard/export is the saved complete Image Prompt, including negative constraints. */
 export function finalImagePrompt(prompt: Record<string, unknown>): string {
+  if (typeof prompt.execution_prompt === 'string' && prompt.execution_prompt.trim()) return prompt.execution_prompt
   if (typeof prompt.final_prompt === 'string' && prompt.final_prompt.trim()) return prompt.final_prompt
   const negative = String(prompt.negative_prompt ?? '').trim()
   return String(prompt.positive_prompt ?? '') + (negative ? `\n\nNegative Constraint / 禁止内容\n${negative}` : '')
@@ -34,6 +35,7 @@ export function finalImagePrompt(prompt: Record<string, unknown>): string {
 
 export interface PromptReference {
   artifact_id: string; filename: string; sha256: string; version: number
+  target?: string
 }
 
 /** Keep required attachments visible even if an older record has incomplete metadata. */
@@ -44,9 +46,20 @@ export function imagePromptReferences(prompt: Record<string, unknown>): PromptRe
     const image = item.image && typeof item.image === 'object' ? item.image as Record<string, unknown> : {}
     return { artifact_id: typeof item.artifact_id === 'string' ? item.artifact_id : '',
       filename: typeof item.filename === 'string' ? item.filename : '参考图片',
-      sha256: typeof item.sha256 === 'string' ? item.sha256 : '', version: Number(image.version ?? 1) }
+      sha256: typeof item.sha256 === 'string' ? item.sha256 : '', version: Number(image.version ?? 1),
+      ...(typeof item.target === 'string' ? { target: item.target } : {}) }
   }).filter((item, index, all) => all.findIndex(other => other.artifact_id === item.artifact_id
     && other.sha256 === item.sha256) === index)
+}
+
+export function visualContinuityMessages(prompt: Record<string, unknown>): string[] {
+  if (!Array.isArray(prompt.visual_continuity_findings)) return []
+  return prompt.visual_continuity_findings.flatMap(value => {
+    if (!value || typeof value !== 'object') return []
+    const item = value as Record<string, unknown>
+    if (typeof item.target !== 'string' || typeof item.observed !== 'string') return []
+    return [`${item.target}：${typeof item.expected === 'string' ? `原设定为“${item.expected}”，` : ''}参考画面中观察到“${item.observed}”。${typeof item.reason === 'string' ? item.reason : '该变化未获授权，继续保留原设定。'}`]
+  })
 }
 
 /** Read the exact saved bytes through the authenticated Artifact gateway, never a public URL. */

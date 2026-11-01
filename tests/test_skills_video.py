@@ -26,9 +26,6 @@ def test_skill_loader_discovers_file_skills() -> None:
     assert {
         "comic.archive_image",
         "comic.compose_prompt",
-        "commerce.calculate_pricing",
-        "commerce.localize_listing",
-        "commerce.product_image",
     } <= {item.id for item in metadata}
     assert all(item.handler_ref and not Path(item.handler_ref.split(":")[0]).is_absolute()
                for item in metadata)
@@ -48,26 +45,6 @@ def test_skill_manifest_validation(tmp_path: Path) -> None:
     )
     with pytest.raises(ToolError, match="manifest"):
         SkillLoader(tmp_path / "skills", project_root=tmp_path).discover()
-
-
-def test_commerce_skills_support_zh_and_ru_locale() -> None:
-    registry = SkillRegistry()
-    SkillLoader(ROOT / "skills", project_root=ROOT).load(registry)
-    listing = {"title": "便携阅读灯", "description": "柔和照明"}
-    zh = registry.execute(
-        "commerce.localize_listing", {"listing": listing, "locale": "zh-CN"}, {}
-    )
-    assert zh["localized_listing"] == listing
-
-    def translator(value: dict[str, object], locale: str) -> dict[str, object]:
-        return {**value, "title": "Портативная лампа", "translated_by": "llm-mock",
-                "locale": locale}
-
-    ru = registry.execute(
-        "commerce.localize_listing", {"listing": listing, "locale": "ru-RU"},
-        {"translator": translator},
-    )
-    assert ru["localized_listing"]["title"] == "Портативная лампа"
 
 
 def test_mock_video_full_path_is_budgeted_idempotent_and_explicit(

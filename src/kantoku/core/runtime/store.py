@@ -884,11 +884,13 @@ class RuntimeStore:
         limit: int = 100,
         *,
         domain: str | None = None,
+        exclude_domain: str | None = None,
         status: ExecutionStatus | None = None,
         interaction_mode: InteractionMode | None = None,
         conversation_id: str | None = None,
         project_id: str | None = None,
         project_ids: Iterable[str] | None = None,
+        workflow: str | None = None,
     ) -> list[RunRecord]:
         """按更新时间倒序列出 Run，可按领域、状态与关联作品过滤。
 
@@ -917,6 +919,12 @@ class RuntimeStore:
         if domain:
             clauses.append("domain=?")
             params.append(domain)
+        if exclude_domain:
+            clauses.append("domain!=?")
+            params.append(exclude_domain)
+        if workflow is not None:
+            clauses.append("workflow=?")
+            params.append(workflow)
         if status:
             clauses.append("status=?")
             params.append(status)
@@ -1162,6 +1170,7 @@ class RuntimeStore:
         *,
         type: ArtifactType | None = None,
         domain: str | None = None,
+        exclude_domain: str | None = None,
         conversation_id: str | None = None,
         lifecycle_state: ArtifactLifecycle | None = None,
         include_internal: bool = False,
@@ -1180,6 +1189,9 @@ class RuntimeStore:
         if domain:
             clauses.append("runs.domain=?")
             params.append(domain)
+        if exclude_domain:
+            clauses.append("(runs.domain IS NULL OR runs.domain!=?)")
+            params.append(exclude_domain)
         if conversation_id:
             clauses.append("artifacts.conversation_id=?")
             params.append(conversation_id)

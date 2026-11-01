@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import ctypes
+import hashlib
 import os
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
+from threading import RLock
 from typing import Any, Literal
 
 import yaml
@@ -19,6 +22,75 @@ ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH = ROOT / "config" / "settings.yaml"
 EXAMPLE_PATH = ROOT / "config" / "settings.example.yaml"
 ENV_PATH = ROOT / ".env"
+
+_observed_secrets: set[str] = set()
+_observed_secrets_lock = RLock()
+
+
+def remember_secret(value: str) -> None:
+    """Keep in-flight and previously rotated values redacted until process exit."""
+    if len(value) >= 8:
+        with _observed_secrets_lock:
+            _observed_secrets.add(value)
+
+
+def observed_secrets() -> set[str]:
+    with _observed_secrets_lock:
+        return set(_observed_secrets)
+
+
+class _Credential(ctypes.Structure):
+    _fields_ = [("Flags", ctypes.c_ulong), ("Type", ctypes.c_ulong),
+                ("TargetName", ctypes.c_wchar_p), ("Comment", ctypes.c_wchar_p),
+                ("LastWritten", ctypes.c_ulonglong), ("CredentialBlobSize", ctypes.c_ulong),
+                ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
+                ("Persist", ctypes.c_ulong), ("AttributeCount", ctypes.c_ulong),
+                ("Attributes", ctypes.c_void_p), ("TargetAlias", ctypes.c_wchar_p),
+                ("UserName", ctypes.c_wchar_p)]
+
+
+def _credential_target(name: str) -> str:
+    identity = hashlib.sha256(str(ROOT.resolve()).casefold().encode("utf-8")).hexdigest()
+    return f"Kantoku/{identity}/{name}"
+
+
+def _read_managed_key(name: str) -> str | None:
+    if os.name != "nt":
+        return None
+    api = ctypes.WinDLL("advapi32", use_last_error=True)
+    ptr = ctypes.POINTER(_Credential)()
+    read = api.CredReadW
+    read.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong,
+                     ctypes.POINTER(ctypes.POINTER(_Credential))]
+    read.restype = ctypes.c_int
+    if not read(_credential_target(name), 1, 0, ctypes.byref(ptr)):
+        if ctypes.get_last_error() == 1168:
+            return None
+        raise ConfigError("无法读取本机凭据")
+    try:
+        return ctypes.string_at(ptr.contents.CredentialBlob,
+                                ptr.contents.CredentialBlobSize).decode("utf-8")
+    except UnicodeDecodeError:
+        raise ConfigError("本机凭据格式不正确") from None
+    finally:
+        api.CredFree.argtypes = [ctypes.c_void_p]
+        api.CredFree(ptr)
+
+
+def save_managed_text_key(name: str, value: str) -> None:
+    if os.name != "nt":
+        raise ConfigError("当前系统不支持保存文字模型凭据")
+    remember_secret(value)
+    data = value.encode("utf-8")
+    blob = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+    credential = _Credential(Type=1, TargetName=_credential_target(name),
+                             CredentialBlobSize=len(data), CredentialBlob=blob, Persist=2)
+    api = ctypes.WinDLL("advapi32", use_last_error=True)
+    write = api.CredWriteW
+    write.argtypes = [ctypes.POINTER(_Credential), ctypes.c_ulong]
+    write.restype = ctypes.c_int
+    if not write(ctypes.byref(credential), 0):
+        raise ConfigError("无法保存本机凭据")
 
 
 class AppSettings(BaseModel):
@@ -49,6 +121,9 @@ class LlmSettings(BaseModel):
     vision_extra_body: dict[str, Any]
     vision_max_tokens: int = Field(gt=0, strict=True)
     vision_max_image_bytes: int = Field(gt=0, strict=True)
+    vision_timeout_s: float | None = Field(default=None, gt=0)
+    vision_input_max_side: int = Field(default=2048, ge=256, le=8192, strict=True)
+    vision_input_max_bytes: int = Field(default=1048576, ge=65536, le=10485760, strict=True)
 
     fallback_base_url: str
     fallback_model_chat: str
@@ -192,6 +267,23 @@ class VideoSettings(BaseModel):
     estimated_fen: int = Field(default=1, gt=0, strict=True)
     max_fen: int = Field(default=1, ge=0, strict=True)
     output_dir: Path = Path("artifacts/videos")
+    access_key_env: str = "VOLC_ACCESS_KEY"
+    secret_key_env: str = "VOLC_SECRET_KEY"
+    authentication: Literal["access_key", "api_key"] = "access_key"
+    api_key_env: str = "VOLC_VISUAL_API_KEY"
+    tos_bucket: str = ""
+    tos_region: str = "cn-beijing"
+    reference_urls: dict[str, str] = Field(default_factory=dict)
+    pricing_confirmed: bool = False
+
+    def access_key(self) -> str:
+        return _require_env(self.access_key_env)
+
+    def secret_key(self) -> str:
+        return _require_env(self.secret_key_env)
+
+    def api_key(self) -> str:
+        return _require_compact_credential(self.api_key_env, "API Key")
 
 
 class CommerceSettings(BaseModel):
@@ -232,6 +324,12 @@ def _require_env(name: str) -> str:
     """读取必需的环境变量；缺失时转换为项目配置异常。"""
     value = os.environ.get(name)
     if value is None:
+        # Only text-model credentials can be stored in the OS credential manager.
+        # Other providers retain their existing environment / .env semantics.
+        settings = get_settings()
+        if managed_text_key_allowed(settings, name):
+            value = _read_managed_key(name)
+    if value is None:
         try:
             value = dotenv_values(ENV_PATH, encoding="utf-8", interpolate=False).get(name)
         except (OSError, UnicodeError):
@@ -243,7 +341,16 @@ def _require_env(name: str) -> str:
                 f'请在项目根目录的 .env 里配置，或先执行：$env:{name}="你的密钥"（PowerShell）'
             ),
         )
+    remember_secret(value)
     return value
+
+
+def managed_text_key_allowed(settings: Settings, name: str) -> bool:
+    """Do not silently replace credentials used by paid asynchronous providers."""
+    return bool(name and name == settings.llm.api_key_env and name not in {
+        settings.image.api_key_env, settings.image.access_key_env, settings.image.secret_key_env,
+        settings.video.api_key_env, settings.video.access_key_env, settings.video.secret_key_env,
+    })
 
 
 def _require_compact_credential(name: str, label: str) -> str:

@@ -100,7 +100,11 @@ class FileCatalog:
         )
         return file_id
 
-    def register(self, path: Path, kind: str, owner: str, expires_in: float | None) -> str:
+    def register(self, path: Path, kind: str, owner: str, expires_in: float | None,
+                 *, connection=None) -> str:
+        if connection is None:
+            with self.connection() as opened:
+                return self.register(path, kind, owner, expires_in, connection=opened)
         if kind in EPHEMERAL:
             root = get_runtime_paths()
             allowed = {
@@ -119,12 +123,11 @@ class FileCatalog:
             expires_in = {"temp": 86400, "temp_directory": 86400,
                           "test_session": 86400, "log": 7 * 86400, "qa": 7 * 86400}.get(kind)
         expiry = time.time() + expires_in if expires_in is not None else None
-        with self.connection() as connection:
-            file_id = self._register(connection, path, kind, owner, expiry)
-            if kind == "cache" and path.is_file():
-                connection.execute("UPDATE runtime_files SET touched_at=? WHERE file_id=?",
-                                   (max(path.stat().st_mtime, path.stat().st_atime), file_id))
-            return file_id
+        file_id = self._register(connection, path, kind, owner, expiry)
+        if kind == "cache" and path.is_file():
+            connection.execute("UPDATE runtime_files SET touched_at=? WHERE file_id=?",
+                               (max(path.stat().st_mtime, path.stat().st_atime), file_id))
+        return file_id
 
     def remove_file(self, path: Path, kind: str, if_registered: bool = False,
                     *, connection=None) -> None:

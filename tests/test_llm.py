@@ -128,6 +128,82 @@ def test_chat_builds_client_and_returns_complete_message(
     client.close.assert_called_once_with()
 
 
+def test_operation_reuses_connections_without_reusing_model_results(monkeypatch):
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [_response("first"), _response("second")]
+    factory = MagicMock(return_value=client)
+    monkeypatch.setattr(llm_module, "OpenAI", factory)
+    messages = [{"role": "user", "content": "test"}]
+    with llm_module.reuse_llm_connections():
+        assert llm_module.chat(messages, single_attempt=True).content == "first"
+        with llm_module.reuse_llm_connections():
+            assert llm_module.chat(messages, single_attempt=True).content == "second"
+        client.close.assert_not_called()
+    assert factory.call_count == 1
+    assert client.chat.completions.create.call_count == 2
+    client.close.assert_called_once_with()
+
+
+def test_operation_discards_failed_connection_without_retrying(monkeypatch):
+    failed, healthy = MagicMock(), MagicMock()
+    failed.chat.completions.create.side_effect = APIConnectionError(request=MagicMock())
+    healthy.chat.completions.create.return_value = _response("recovered")
+    factory = MagicMock(side_effect=[failed, healthy])
+    monkeypatch.setattr(llm_module, "OpenAI", factory)
+    messages = [{"role": "user", "content": "test"}]
+    with llm_module.reuse_llm_connections():
+        with pytest.raises(LLMError):
+            llm_module.chat(messages, single_attempt=True)
+        assert failed.chat.completions.create.call_count == 1
+        failed.close.assert_called_once_with()
+        assert llm_module.chat(messages, single_attempt=True).content == "recovered"
+    healthy.close.assert_called_once_with()
+    assert factory.call_count == 2
+
+
+def test_operation_keeps_provider_connections_separate_and_closes_on_error(monkeypatch):
+    chat_client, vision_client = MagicMock(), MagicMock()
+    chat_client.chat.completions.create.return_value = _response("text")
+    vision_client.chat.completions.create.return_value = _response("image")
+    factory = MagicMock(side_effect=[chat_client, vision_client])
+    monkeypatch.setattr(llm_module, "OpenAI", factory)
+    messages = [{"role": "user", "content": "test"}]
+    with pytest.raises(RuntimeError, match="operation failed"), llm_module.reuse_llm_connections():
+        assert llm_module.chat(messages, single_attempt=True).content == "text"
+        assert llm_module.vision_chat(messages, single_attempt=True).content == "image"
+        raise RuntimeError("operation failed")
+    assert factory.call_count == 2
+    chat_client.close.assert_called_once_with()
+    vision_client.close.assert_called_once_with()
+
+
+def test_operation_reuse_with_sdk_transport_sends_each_request_and_closes(monkeypatch):
+    import httpx2
+    from openai import OpenAI
+
+    requests, clients = [], []
+    def handle(request):
+        requests.append(request)
+        return httpx2.Response(200, json={"id": "offline", "object": "chat.completion",
+            "created": 0, "model": "offline", "usage": {"prompt_tokens": 1,
+            "completion_tokens": 1, "total_tokens": 2}, "choices": [{"index": 0,
+            "finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}]})
+    def factory(**_kwargs):
+        client = OpenAI(base_url="https://offline.invalid/v1", api_key="offline-key",
+            max_retries=0, http_client=httpx2.Client(
+                transport=httpx2.MockTransport(handle), trust_env=False))
+        clients.append(client)
+        return client
+    monkeypatch.setattr(llm_module, "_build_client", factory)
+    with llm_module.reuse_llm_connections():
+        assert llm_module.chat([{"role": "user", "content": "first"}],
+                               single_attempt=True).content == "ok"
+        assert llm_module.chat([{"role": "user", "content": "second"}],
+                               single_attempt=True).content == "ok"
+        assert len(clients) == 1 and not clients[0].is_closed()
+    assert len(requests) == 2 and clients[0].is_closed()
+
+
 def test_single_attempt_never_retries_or_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     client = MagicMock()
     client.chat.completions.create.side_effect = APIConnectionError(request=MagicMock())
@@ -580,6 +656,60 @@ def test_authentication_failure_is_not_misclassified_from_an_earlier_network_con
     client.close.assert_called_once_with()
 
 
+@pytest.mark.parametrize("entrypoint", ["chat", "vision_chat", "stream_chat"])
+@pytest.mark.parametrize("status_code", [402, 400])
+def test_sdk_billing_failure_is_actionable_without_retry_or_fallback(
+    monkeypatch, llm_environment, entrypoint, status_code,
+):
+    import httpx2
+    from openai import OpenAI
+
+    from kantoku.config.observability import public_error
+
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        return httpx2.Response(status_code, json={"error": {
+            "code": "invalid_request_error",
+            "type": "insufficient_balance_error" if status_code == 402 else "invalid_request_error",
+            "message": "Insufficient Balance" if status_code == 402 else "PRIVATE-INVALID-REQUEST",
+        }})
+
+    client = OpenAI(base_url="https://offline.invalid/v1", api_key="offline-key", max_retries=0,
+        http_client=httpx2.Client(transport=httpx2.MockTransport(handle), trust_env=False))
+    factory = MagicMock(return_value=client)
+    monkeypatch.setattr(llm_module, "_build_client", factory)
+    sleep = MagicMock()
+    monkeypatch.setattr(llm_module, "sleep", sleep)
+
+    with pytest.raises(LLMError) as caught:
+        result = getattr(llm_module, entrypoint)(
+            [{"role": "user", "content": "PRIVATE-USER-PROMPT"}])
+        if entrypoint == "stream_chat":
+            list(result)
+
+    assert isinstance(caught.value.__cause__, APIStatusError)
+    assert caught.value.__cause__.status_code == status_code
+    failure = public_error(caught.value)
+    if status_code == 402:
+        assert "余额不足或计费不可用" in failure["safe_message"]
+        assert "充值或切换" in failure["safe_message"]
+        assert failure["error_kind"] == "needs_user_action"
+    else:
+        assert "余额不足" not in failure["safe_message"]
+        assert failure["error_kind"] == "fatal"
+    assert failure["http_status"] == str(status_code)
+    assert failure["provider_error_code"] == "invalid_request_error"
+    assert failure["retryable"] is False
+    assert "PRIVATE-" not in failure["safe_message"]
+    assert len(calls) == factory.call_count == 1
+    sleep.assert_not_called()
+    assert client.is_closed()
+    if entrypoint != "stream_chat":
+        assert llm_environment.call_args.args[0].ok is False
+
+
 def test_actual_sdk_transport_failure_keeps_socket_reason_and_closes_without_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -615,3 +745,45 @@ def test_actual_sdk_transport_failure_keeps_socket_reason_and_closes_without_net
     assert isinstance(caught.value.__cause__, APIConnectionError)
     assert caught.value.detail == "APIConnectionError(reason=local_address_conflict)"
     assert client.is_closed()
+
+
+def test_vision_timeout_override_does_not_change_chat_or_explicit_timeout(monkeypatch):
+    settings = _settings()
+    settings.llm.vision_timeout_s = 60
+    monkeypatch.setattr(llm_module, "get_settings", lambda: settings)
+    client = MagicMock()
+    client.chat.completions.create.return_value = _response()
+    factory = MagicMock(return_value=client)
+    monkeypatch.setattr(llm_module, "OpenAI", factory)
+    messages = [{"role": "user", "content": "测试"}]
+    llm_module.vision_chat(messages, single_attempt=True)
+    llm_module.vision_chat(messages, timeout_s=12, single_attempt=True)
+    llm_module.chat(messages, single_attempt=True)
+    assert [item.kwargs["timeout"] for item in factory.call_args_list] == [60, 12, .001]
+    assert all(item.kwargs["max_retries"] == 0 for item in factory.call_args_list)
+
+
+@pytest.mark.parametrize("exception_name,hint", [
+    ("WriteTimeout", "上传请求内容超时"), ("ReadTimeout", "等待模型响应超时"),
+    ("ConnectTimeout", "连接模型服务超时"),
+])
+def test_actual_vision_sdk_timeout_identifies_phase_without_resubmission(
+    monkeypatch, exception_name, hint,
+):
+    import httpx2
+    from openai import OpenAI
+
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        raise getattr(httpx2, exception_name)("PRIVATE-PROXY-DETAIL", request=request)
+
+    client = OpenAI(base_url="https://offline.invalid/v1", api_key="offline-key", max_retries=0,
+        http_client=httpx2.Client(transport=httpx2.MockTransport(handle), trust_env=False))
+    monkeypatch.setattr(llm_module, "_build_client", lambda **_kwargs: client)
+    with pytest.raises(LLMError, match=hint) as caught:
+        llm_module.vision_chat([{"role": "user", "content": "测试"}], single_attempt=True)
+    assert isinstance(caught.value.__cause__, APITimeoutError)
+    assert len(calls) == 1 and client.is_closed()
+    assert "PRIVATE-" not in str(caught.value)

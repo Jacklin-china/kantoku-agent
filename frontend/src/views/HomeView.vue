@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { History, MessageSquareText, Plus, Workflow } from 'lucide-vue-next'
+import { History, MessageSquareText, Workflow } from 'lucide-vue-next'
 import WorkspaceShell from '../components/workspace/WorkspaceShell.vue'
+import HistoryDrawer from '../components/layout/HistoryDrawer.vue'
 import { conversationTaskTitle } from '../components/chat/conversationPresentation'
 import ApprovalCard from '../components/approval/ApprovalCard.vue'
 import ChatMessageList from '../components/chat/ChatMessageList.vue'
@@ -15,7 +16,7 @@ import { navigate, route } from '../router'
 import { createConversation, decideApproval, decideMediaCost, deleteConversation, getApprovals, getArtifact, getArtifactContentUrl, getArtifacts, getConversation, getConversations, getEvents, getRun, getTaskImageUrl, renameConversation, setConversationFastDomain, streamConversationMessage, subscribeRunEvents, type RuntimeEvent } from '../services/core'
 import type { Conversation, ConversationMessage, CoreApproval, CoreArtifact, CoreRun, MediaJob } from '../types'
 
-const props = withDefaults(defineProps<{ runs?: CoreRun[]; approvals?: CoreApproval[]; busy?: boolean; domain?: string; embedded?: boolean; initialRunId?: string; studioFocus?: boolean }>(), { runs: () => [], approvals: () => [], busy: false, embedded: false, studioFocus: false })
+const props = withDefaults(defineProps<{ runs?: CoreRun[]; approvals?: CoreApproval[]; busy?: boolean; domain?: string; embedded?: boolean; initialRunId?: string; studioFocus?: boolean; historySignal?: number }>(), { runs: () => [], approvals: () => [], busy: false, embedded: false, studioFocus: false })
 const emit = defineEmits<{ refresh: []; runCreated: [run: CoreRun]; chatting: [active: boolean]; selectStage: [nodeId: string] }>()
 const conversations = ref<Conversation[]>([])
 const historyOpen = ref(false)
@@ -32,21 +33,15 @@ function toggleNavCollapsed(value: boolean): void {
   try { localStorage.setItem(navCollapsedKey, value ? '1' : '0') } catch { /* 忽略写入失败 */ }
 }
 const creatingConversation = ref(false)
-/* 首页形态：二级侧栏已整块移除（那里只有一个"对话"入口，等于一块空白竖条），
-   「最近对话」改为顶栏按钮 + 浮层。与 studioFocus 的历史聊天按钮（historyOpen）
-   是两套入口，各自独立，互不影响。 */
+/* 「最近对话 / 本次产物」是按需抽屉，不再常驻右栏。
+   常驻栏会永久吃掉 258–340px：1080 宽窗口下对话被挤成一条缝，而它多数时候是空的。
+   抽屉默认收起，对话独占整行；顶栏按钮带着条数，需要翻历史时再滑出。 */
 const recentOpen = ref(false)
-const recentHost = ref<HTMLElement | null>(null)
-function pickConversation(id: string): void {
-  recentOpen.value = false
-  void selectConversation(id)
-}
-function closeRecentOnOutside(event: MouseEvent): void {
-  if (!recentOpen.value) return
-  const target = event.target
-  if (target instanceof Node && recentHost.value?.contains(target)) return
-  recentOpen.value = false
-}
+/* 左栏「历史」也开这一格：内嵌在其他领域里时不开，避免和工作区自己的抽屉打架。 */
+watch(() => props.historySignal, (value, previous) => {
+  if (value && value !== previous && !props.domain) recentOpen.value = true
+})
+/* 「去别的世界」已并入左侧常驻导航，右栏不再重复三个入口。 */
 /* 第二层侧栏 = 当前领域的工作节点；文案来自 Domain Presenter，首页不显示。 */
 const navigation = computed(() => [
   { id: 'conversation', label: '对话', icon: MessageSquareText },
@@ -62,6 +57,8 @@ function domainLabel(domain: string): { name: string; label: string } {
 }
 const conversationId = ref('')
 const messages = ref<ConversationMessage[]>([])
+/* 会话内容是否还在读取：首屏闪一下空白引导就是它没被区分出来。 */
+const conversationLoading = ref(true)
 const mediaJobs = ref<MediaJob[]>([])
 const streaming = ref('')
 const sending = ref(false)
@@ -107,7 +104,7 @@ const pendingApproval = computed(() => [...props.approvals, ...localApprovals.va
 
 async function refreshConversations(): Promise<void> {
   const list = await getConversations(props.domain)
-  conversations.value = list.filter((item) => props.domain
+  conversations.value = list.filter((item) => item.domain !== 'commerce').filter((item) => props.domain
     ? item.execution_mode === 'professional' && item.domain === props.domain
     : item.execution_mode === 'fast')
 }
@@ -132,6 +129,9 @@ async function selectConversation(id: string): Promise<void> {
     localStorage.setItem('kantoku-home-active-conversation', id)
     navigate({ name: 'home', conversationId: id }, true)
   }
+  /* 清空到拉回之间会有一帧空列表，此时不能显示"从零开始"的引导，
+     否则用户会看到一块空白引导闪一下再被消息顶掉。 */
+  conversationLoading.value = true
   messages.value = []
   activeRun.value = null
   error.value = ''; errorMessageId.value = ''; activities.value = []; streaming.value = ''
@@ -154,11 +154,15 @@ async function selectConversation(id: string): Promise<void> {
   streamingByMessage.value = {}
   homeStops.clear(); runAnchors.clear(); inlineRuns.value = {}
   const detail = await getConversation(id)
-  if (!detail || currentSelection !== selectionVersion) return
+  if (!detail || currentSelection !== selectionVersion) {
+    if (currentSelection === selectionVersion) conversationLoading.value = false
+    return
+  }
   conversationId.value = id
   syncFastDomain(detail)
   domainHint.value = props.domain ?? fastDomain.value
   messages.value = detail.messages ?? []
+  conversationLoading.value = false
   restoreMediaJobs(detail.media_jobs ?? [])
   if (mediaJobs.value.some((job) => (job.status === 'pending' || job.status === 'generating') && job.approval_status !== 'pending')) {
     startMediaPolling(id)
@@ -680,12 +684,9 @@ async function decideMedia(requestId: string, decision: 'approve' | 'reject'): P
 
 function openRun(run: CoreRun): void { navigate({ name: 'workspace_run', domain: run.domain, runId: run.id }) }
 onMounted(() => {
-  // 点击浮层外部关闭；SSR/单测环境可能没有 document，这只是增强，缺了不影响功能。
-  try { document.addEventListener('click', closeRecentOnOutside) } catch { /* 忽略 */ }
   void initialize()
 })
 onBeforeUnmount(() => {
-  try { document.removeEventListener('click', closeRecentOnOutside) } catch { /* 忽略 */ }
   if (mediaPollTimer) clearInterval(mediaPollTimer)
   stopEvents?.()
   for (const stop of homeStops.values()) stop()
@@ -713,10 +714,148 @@ watch(
   () => [messages.value.length, activeRun.value?.id] as const,
   ([count, runId]) => emit('chatting', count > 0 && !runId),
 )
+
+/* ---------- 首页右栏：本次对话产物（真实 Artifact） ----------
+   只取当前对话的图片产物，最多 3 张缩略图；拿不到内容地址就不占位，
+   不生成占位图，也不回填假名称。 */
+interface ConversationThumb { id: string; url: string; label: string; version: number }
+const conversationThumbs = ref<ConversationThumb[]>([])
+const thumbsLoading = ref(false)
+let thumbsEpoch = 0
+
+async function loadConversationThumbs(): Promise<void> {
+  const owner = conversationId.value
+  const epoch = ++thumbsEpoch
+  if (!owner) { conversationThumbs.value = []; return }
+  thumbsLoading.value = true
+  try {
+    const all = await getArtifacts()
+    if (epoch !== thumbsEpoch) return
+    const mine = (all ?? [])
+      .filter((item) => item.conversation_id === owner && item.type === 'image')
+      .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+      .slice(0, 3)
+    const resolved = await Promise.all(mine.map(async (item) => {
+      const url = await getArtifactContentUrl(item.id).catch(() => null)
+      return url ? { id: item.id, url, label: `v${item.version} 图片`, version: item.version } : null
+    }))
+    if (epoch !== thumbsEpoch) return
+    conversationThumbs.value = resolved.filter((item): item is ConversationThumb => item !== null)
+  } catch {
+    if (epoch === thumbsEpoch) conversationThumbs.value = []
+  } finally {
+    if (epoch === thumbsEpoch) thumbsLoading.value = false
+  }
+}
+
+watch(conversationId, () => { void loadConversationThumbs() }, { immediate: true })
+
+/* 正在生成的媒体任务：只报后端给的状态，不推算百分比。 */
+const runningJobs = computed(() =>
+  mediaJobs.value.filter((job) => job.status === 'pending' || job.status === 'generating'),
+)
+
+/* 本轮费用：只用 run 上已有的 cost_fen，拿不到就显示"未产生"，不折算不确定的账。 */
+const runCostLabel = computed(() => {
+  const fen = activeRun.value?.cost_fen
+  if (typeof fen !== 'number' || fen <= 0) return '未产生'
+  return `¥${(fen / 100).toFixed(2)}`
+})
+
+const executionModeLabel = computed(() =>
+  conversations.value.find((item) => item.id === conversationId.value)?.execution_mode === 'professional' ? '专业' : '快捷',
+)
 </script>
 
 <template>
+  <!-- ============================================================
+       首页 · 对话即主界面（原型 .homeGrid）
+       左：标题 + 对话流 + 问号砖块输入区
+       右：常驻「最近对话 / 正在生成 / 本次对话产物 / 去别的世界 / 状态」
+       右栏的每一项都来自真实接口：会话列表、media_jobs、artifacts、run.cost_fen。
+       ============================================================ -->
+  <div v-if="!domain" class="home-page" :class="{ 'no-recent': !recentOpen }">
+    <div class="home-grid">
+      <div class="home-stream-col">
+        <div class="home-stream-hd">
+          <div>
+            <span class="home-kick">AUTONOMOUS CONVERSATION · 本机</span>
+            <h1>和 Kantoku 一起工作</h1>
+          </div>
+          <div class="home-tools">
+            <button class="home-tbtn is-lite" type="button" :disabled="creatingConversation" @click="newConversation">+ 新建对话</button>
+            <button class="home-tbtn home-tbtn--history" type="button" :aria-expanded="recentOpen" :aria-pressed="recentOpen" @click="recentOpen = !recentOpen"><History :size="13" /> 最近对话<b v-if="conversations.length">{{ conversations.length }}</b></button>
+          </div>
+        </div>
+
+        <div class="home-stream">
+          <ChatMessageList :messages="messages" :loading="conversationLoading" :media-jobs="mediaJobs" :streaming="streaming" :streaming-by-message="streamingByMessage" :run="activeRun" :activities="activities" :public-activities="publicActivities" :image-url="imageUrl" :inline-runs="inlineRuns" :pending-messages="pendingMessages" :activity-by-message="activityByMessage" :image-phases="imagePhases" :message-media="messageMedia" :message-media-errors="messageMediaErrors" :error-message-id="errorMessageId" home-mode :error="error" :approval-busy="deciding" @retry="lastContent && send(lastContent)" @open-run="openRun" @decide-inline="decideInline" @decide-media="decideMedia" />
+        </div>
+
+        <div class="home-composer">
+          <MessageComposer :key="conversationId" ref="composer" fast-domains :fast-domain="fastDomain" :fast-domain-busy="switchingFastDomain || !!dispatchingFastDomain[conversationId]" @select-fast-domain="selectFastDomain" @send="send" />
+          <p class="home-chint">
+            <span v-if="fastDomain === 'comic'">自动完成分析与生图，图片会保留在当前对话。</span>
+            <span v-else-if="fastDomain">快捷模式会自动处理；只有费用或必要审核才会请你决定。</span>
+            <span v-else>直接提问或描述创意，结果会保留在当前对话。</span>
+            <span class="sp" />
+            <span class="home-chint-key">ENTER 发送</span>
+          </p>
+        </div>
+      </div>
+
+      <HistoryDrawer :open="recentOpen" title="最近对话" subtitle="RECENT" :count="conversations.length" @close="recentOpen = false">
+        <div class="home-recent-list drawer-history">
+          <ConversationHistory list-only :conversations="conversations" :active-id="conversationId" :busy="creatingConversation" @select="selectConversation" @rename="renameChat" @remove="removeChat" />
+        </div>
+
+        <div v-if="runningJobs.length" class="home-block">
+          <div class="home-block-hd is-deep">
+            <span class="lbl">正在生成</span>
+            <span class="n">{{ runningJobs.length }}</span>
+          </div>
+          <div class="home-block-bd">
+            <div v-for="job in runningJobs" :key="job.generation_request_id" class="home-job">
+              <div class="home-job-top">
+                <strong>{{ job.media_type === 'video' ? '视频' : '图片' }}任务</strong>
+                <span class="home-tag is-warn">{{ job.status === 'pending' ? '等待排期' : '生成中' }}</span>
+              </div>
+              <div class="home-prog"><i /></div>
+              <small>
+                {{ job.status === 'pending' ? '排队中' : '进行中' }}
+                <template v-if="typeof job.estimate_fen === 'number'"> · 预估 ¥{{ (job.estimate_fen / 100).toFixed(2) }}</template>
+              </small>
+            </div>
+          </div>
+        </div>
+
+        <div class="home-block">
+          <div class="home-block-hd is-deep">
+            <span class="lbl">本次对话产物</span>
+            <span class="n">{{ conversationThumbs.length }} 件</span>
+          </div>
+          <div v-if="conversationThumbs.length" class="home-thumbs">
+            <figure v-for="thumb in conversationThumbs" :key="thumb.id">
+              <img :src="thumb.url" :alt="thumb.label" loading="lazy" />
+              <figcaption>{{ thumb.label }}</figcaption>
+            </figure>
+          </div>
+          <p v-else class="home-empty">{{ thumbsLoading ? '正在读取产物…' : '这次对话还没有图片产物。' }}</p>
+        </div>
+
+        <div class="home-recent-foot">
+          <div class="kv"><span>执行模式</span><b>{{ executionModeLabel }}</b></div>
+          <div class="kv"><span>本轮费用</span><b>{{ runCostLabel }}</b></div>
+        </div>
+      </HistoryDrawer>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       领域工作区形态：沿用 WorkspaceShell（二级导航 + 舞台 + 输入）
+       ============================================================ -->
   <WorkspaceShell
+    v-else
     class="home-workspace"
     :navigation="navigation"
     :active-page="activeWorkspacePage"
@@ -737,18 +876,6 @@ watch(
     <template #toolbar>
       <strong class="home-conversation-title">{{ conversationTitle }}</strong>
       <slot name="workspace-toolbar" />
-      <!-- 首页：二级侧栏已移除，新建对话与最近对话改由顶栏承载。 -->
-      <div v-if="!domain" ref="recentHost" class="home-toolbar-actions">
-        <button class="ui-button quiet sm" type="button" :disabled="creatingConversation" @click="newConversation"><Plus :size="15" />新建对话</button>
-        <div class="home-recent">
-          <button class="ui-button quiet sm" type="button" :aria-expanded="recentOpen" aria-label="最近对话" @click="recentOpen = !recentOpen"><History :size="15" />最近对话</button>
-          <Transition name="home-pop">
-            <div v-if="recentOpen" class="home-recent-pop" role="dialog" aria-label="最近对话列表">
-              <ConversationHistory list-only :conversations="conversations" :active-id="conversationId" :busy="creatingConversation" @select="pickConversation" @rename="renameChat" @remove="removeChat" />
-            </div>
-          </Transition>
-        </div>
-      </div>
     </template>
     <template #stage><slot name="workspace-stage" /></template>
     <template #recent><ConversationHistory list-only :conversations="conversations" :active-id="conversationId" :busy="creatingConversation" @select="selectConversation" @rename="renameChat" @remove="removeChat" /></template>
@@ -766,26 +893,565 @@ watch(
       <SystemStatusInline :label="sending || Object.keys(streamingByMessage).length ? 'Kantoku 正在回复' : '就绪'" :tone="sending || Object.keys(streamingByMessage).length ? 'active' : 'neutral'" />
     </header>
     <div v-if="domain === 'commerce'" class="commerce-mode"><span>商品数据</span><button type="button" :aria-pressed="dataMode === 'production'" @click="dataMode = 'production'">Production</button><button type="button" :aria-pressed="dataMode === 'demo'" @click="dataMode = 'demo'">DEMO · Mock Data</button><strong v-if="dataMode === 'demo'">模拟数据，不代表真实市场商品</strong></div>
-    <ChatMessageList :messages="messages" :media-jobs="mediaJobs" :streaming="streaming" :streaming-by-message="streamingByMessage" :run="activeRun" :activities="activities" :public-activities="publicActivities" :image-url="imageUrl" :inline-runs="inlineRuns" :pending-messages="pendingMessages" :activity-by-message="activityByMessage" :image-phases="imagePhases" :message-media="messageMedia" :message-media-errors="messageMediaErrors" :error-message-id="errorMessageId" :home-mode="!domain" :error="error" :empty-hint="domain ? presenterFor(domain).guideHint : undefined" :examples="domain ? presenterFor(domain).examples : undefined" :approval-busy="deciding" @retry="lastContent && send(lastContent)" @open-run="openRun" @decide-inline="decideInline" @decide-media="decideMedia" @example="(text) => composer?.fill(text)" />
+    <ChatMessageList :messages="messages" :loading="conversationLoading" :media-jobs="mediaJobs" :streaming="streaming" :streaming-by-message="streamingByMessage" :run="activeRun" :activities="activities" :public-activities="publicActivities" :image-url="imageUrl" :inline-runs="inlineRuns" :pending-messages="pendingMessages" :activity-by-message="activityByMessage" :image-phases="imagePhases" :message-media="messageMedia" :message-media-errors="messageMediaErrors" :error-message-id="errorMessageId" :home-mode="!domain" :error="error" :empty-hint="domain ? presenterFor(domain).guideHint : undefined" :examples="domain ? presenterFor(domain).examples : undefined" :approval-busy="deciding" @retry="lastContent && send(lastContent)" @open-run="openRun" @decide-inline="decideInline" @decide-media="decideMedia" @example="(text) => composer?.fill(text)" />
     <div v-if="domain && pendingApproval" class="home-approval"><ApprovalCard :approval="pendingApproval" :domain="activeRun?.domain ?? 'studio'" :busy="sending" :image-url="imageUrl" @decide="decide" /></div>
     </div>
   </WorkspaceShell>
 </template>
 
 <style scoped>
-.home-workspace .chat-home { height:100%; min-height:0; width:100%; }
-.home-conversation-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:600; }
-.home-composer-hint { margin:8px 0 0; color:var(--text-muted); font-size:11px; text-align:center; }
-/* 首页流式布局：对话区高度交给内容决定，滚动由 WorkspaceShell 的 .ws-shell-body.is-flow 承担。
-   这里必须用 :deep() —— .ws-shell-body 属于 WorkspaceShell，本组件的 scoped 属性不落在它身上；
-   同时该选择器要比上面那条 .home-workspace .chat-home 更具体，才能真正覆盖 height。 */
-.home-workspace :deep(.ws-shell-body.is-flow) .chat-home { height:auto; }
-.home-toolbar-actions { display:flex; align-items:center; gap:8px; margin-left:auto; }
-.home-recent { position:relative; }
-.home-recent-pop { position:absolute; z-index:30; top:calc(100% + 8px); right:0; display:flex; flex-direction:column; width:min(300px, 80vw); max-height:min(440px, 62vh); padding:12px 12px 4px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-panel); box-shadow:var(--shadow-pop); }
-.home-recent-pop :deep(.conversation-list) { min-height:0; max-height:340px; }
-/* 浮层进出：与全站一致的克制动效（位移 4px，无回弹）。 */
-.home-pop-enter-active, .home-pop-leave-active { transition:opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-out); }
-.home-pop-enter-from, .home-pop-leave-to { opacity:0; transform:translateY(-4px); }
-@media (prefers-reduced-motion:reduce) { .home-pop-enter-active, .home-pop-leave-active { transition:none; } }
+/* ==========================================================================
+   首页 · 原型 .homeGrid
+   天空由 App 外壳的 PixelSky 统一提供（fixed 层），所以本页保持透明，
+   不再自己画一遍渐变与草地——两套背景叠在一起会出现两道草地。
+   ========================================================================== */
+.home-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.home-grid {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  flex: 1;
+  /* 单列：历史/产物改走抽屉，主内容独占整行。 */
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* ---------- 左：标题 + 对话流 + 输入 ---------- */
+.home-stream-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px 22px 0;
+}
+
+.home-stream-hd {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 14px;
+  padding-bottom: 12px;
+}
+
+.home-kick {
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #0b2452;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .2em;
+  box-shadow: none;
+}
+
+.home-stream-hd h1 {
+  margin: 4px 0 0;
+  color: var(--paper);
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: -.005em;
+  -webkit-text-stroke: 3px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 4px 4px 0 var(--ink);
+}
+
+.home-tools { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.home-tbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px 5px;
+  border: 3px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: .14em;
+  white-space: nowrap;
+  box-shadow: 4px 4px 0 rgba(20, 20, 20, .35);
+  cursor: pointer;
+  transition: transform 100ms steps(2, end), box-shadow 100ms steps(2, end), background 100ms;
+}
+
+.home-tbtn:hover { background: var(--brick); }
+.home-tbtn:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 rgba(20, 20, 20, .5); }
+.home-tbtn.is-lite { background: var(--paper); color: var(--ink); }
+.home-tbtn.is-lite:hover { background: var(--gold-light); }
+.home-tbtn[aria-pressed='true'] { background: var(--gold); border-color: var(--ink); color: var(--ink); }
+.home-tbtn--history b { display: inline-grid; place-items: center; min-width: 16px; padding: 0 3px; background: var(--gold); color: var(--ink); font-size: 9px; line-height: 1.6; }
+.home-tbtn[aria-pressed='true'] b { background: var(--ink); color: var(--gold-light); }
+
+.home-stream {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 4px 6px 18px 2px;
+  overflow: hidden;
+}
+
+.home-stream :deep(.message-scroller) { flex:1; min-width:0; }
+
+.home-stream::-webkit-scrollbar { width: 9px; }
+.home-stream::-webkit-scrollbar-track { background: transparent; }
+.home-stream::-webkit-scrollbar-thumb { border: 3px solid var(--sky-2); background: var(--brick); }
+
+/* 右栏收起后主区变宽，输入区跟着拉成一条长条不好看：与消息列同宽居中。 */
+.home-composer { flex: 0 0 auto; width: 100%; max-width: 880px; margin: 0 auto; padding: 0 0 22px; }
+
+/* 提示语是说明，不是控件：只留字，不再画一个长得像按钮的框。 */
+.home-chint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  max-width: 760px;
+  margin: 10px 0 0;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: #0b1e45;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  box-shadow: none;
+  opacity: .78;
+}
+
+.home-chint .sp { flex: 1; }
+.home-chint-key { opacity: .65; }
+
+/* 输入区里的通用控件按原作改成砖块语言 */
+.home-composer :deep(.composer-field),
+.home-composer :deep(.composer-dock) { background: transparent; box-shadow: none; border: 0; padding: 0; }
+
+/* ---------- 右：历史与产物（已改为抽屉，样式见 mario.css 段 16） ---------- */
+.home-block-hd {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+}
+
+.home-block-hd.is-dark { background: var(--ink-2); color: var(--paper); }
+.home-block-hd.is-deep { background: var(--ink-3); color: var(--paper); }
+
+.home-block-hd .lbl {
+  color: var(--gold-light);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+}
+
+.home-block-hd .n {
+  margin-left: auto;
+  color: #8c8c8c;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .12em;
+}
+
+.home-recent-list.drawer-history { flex: 1; min-height: 0; padding: 0; overflow: hidden; }
+
+.home-block { flex: 0 0 auto; border-top: 4px solid var(--ink); }
+.home-block-bd { display: grid; gap: 7px; padding: 8px 10px 10px; }
+
+.home-job { display: grid; gap: 5px; }
+.home-job-top { display: flex; align-items: center; gap: 6px; }
+.home-job-top strong { font-size: 10.5px; font-weight: 700; }
+
+.home-job small {
+  color: #7a7263;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: .05em;
+}
+
+.home-tag {
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 2px solid var(--ink);
+  background: var(--paper-2);
+  color: #5f5747;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: .1em;
+  white-space: nowrap;
+}
+
+.home-tag.is-warn { background: #ffe7a8; color: #7a5200; }
+
+/* 进度条：后端只给状态、不给百分比，所以画的是"进行中"的走动条纹，不写数字 */
+.home-prog {
+  height: 13px;
+  border: 3px solid var(--ink);
+  background: var(--paper-2);
+  overflow: hidden;
+}
+
+.home-prog i {
+  display: block;
+  width: 60%;
+  height: 100%;
+  background: repeating-linear-gradient(90deg, var(--grass) 0 7px, var(--grass-dark) 7px 9px);
+  animation: home-prog-move 1.4s steps(8, end) infinite;
+}
+
+@keyframes home-prog-move {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(180%); }
+}
+
+@media (prefers-reduced-motion: reduce) { .home-prog i { animation: none; width: 100%; } }
+
+.home-thumbs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  padding: 8px 10px 10px;
+}
+
+.home-thumbs figure { position: relative; margin: 0; overflow: hidden; border: 3px solid var(--ink); background: var(--canvas-inset); }
+
+.home-thumbs img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.home-thumbs figcaption {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  padding: 1px 3px;
+  background: var(--ink);
+  color: var(--gold-light);
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  letter-spacing: .06em;
+}
+
+.home-empty {
+  margin: 0;
+  padding: 10px 12px 12px;
+  color: #7a7263;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .06em;
+  line-height: 1.7;
+}
+
+.home-quick {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  padding: 8px 10px 10px;
+}
+
+.home-quick button {
+  padding: 5px 2px;
+  border: 3px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: .06em;
+  box-shadow: 3px 3px 0 rgba(20, 20, 20, .4);
+  cursor: pointer;
+}
+
+.home-quick button:hover { background: var(--gold-light); }
+.home-quick button:active { transform: translate(2px, 2px); box-shadow: 0 0 0 rgba(0, 0, 0, 0); }
+
+.home-recent-foot {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 12px;
+  border-top: 3px solid var(--paper-3);
+}
+
+.home-recent-foot .kv {
+  display: flex;
+  justify-content: space-between;
+  color: #6b6355;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+}
+
+.home-recent-foot .kv b { color: var(--ink); font-weight: 700; }
+
+.home-recent-foot .note {
+  margin: 0;
+  color: #7a7263;
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+/* ---------- 领域工作区形态（沿用 WorkspaceShell） ---------- */
+.home-workspace .chat-home { height: 100%; min-height: 0; width: 100%; }
+.home-conversation-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.home-composer-hint { margin: 8px 0 0; color: var(--text-muted); font-size: 11px; text-align: center; }
+/* 对话区高度交给内容决定，滚动由 WorkspaceShell 的 .ws-shell-body.is-flow 承担。
+   必须用 :deep() —— .ws-shell-body 属于 WorkspaceShell，本组件的 scoped 属性不落在它身上。 */
+.home-workspace :deep(.ws-shell-body.is-flow) .chat-home { height: auto; }
+
+/* ---------- 流内消息：原型 .turn / .face / .bub ---------- */
+.home-stream :deep(.message-list) {
+  max-width: none;
+  min-height: 100%;
+  margin: 0;
+  padding: 4px 2px 8px;
+  gap: 14px;
+  justify-content: flex-start;
+}
+
+/* 空状态：原型里这是一条"KANTOKU · 就绪"的开场气泡，不是一个居中的灰字 */
+.home-stream :deep(.chat-empty-brand) {
+  justify-content: flex-start;
+  gap: 10px;
+  margin: 0;
+}
+
+/* 名字做成小铭牌：四个时段（清晨/白天/傍晚/夜晚）都有足够对比度，
+   不依赖 --sky-text 随天色翻转。 */
+.home-stream :deep(.chat-empty-brand span) {
+  padding: 2px 7px 1px;
+  border: 3px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .22em;
+  box-shadow: 3px 3px 0 rgba(20, 20, 20, .4);
+}
+
+.home-stream :deep(.chat-empty-brand .kantoku-mark) {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+  border: 3px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 3px 3px 0 rgba(20, 20, 20, .35);
+}
+
+.home-stream :deep(.chat-empty-brand + .list-empty-hint) {
+  max-width: 560px;
+  margin: 0;
+  padding: 11px 13px 12px;
+  border: 4px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 6px 6px 0 var(--ink);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.72;
+  text-align: left;
+}
+
+.home-stream :deep(.chat-empty-brand + .list-empty-hint + .list-examples) { margin: 0; justify-content: flex-start; }
+
+.home-stream :deep(.chat-row.assistant) {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  max-width: min(80%, 760px);
+}
+
+.home-stream :deep(.assistant-mark) {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  box-shadow: 3px 3px 0 rgba(20, 20, 20, .35);
+}
+
+.home-stream :deep(.assistant-copy) {
+  min-width: 0;
+  padding: 11px 13px 12px;
+  border: 4px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 6px 6px 0 var(--ink);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.72;
+}
+
+.home-stream :deep(.chat-row.user) { align-items: flex-start; gap: 11px; }
+
+.home-stream :deep(.user-bubble) {
+  max-width: min(76%, 620px);
+  padding: 11px 13px 12px;
+  border: 4px solid var(--ink);
+  border-radius: 0;
+  background: var(--gold-light);
+  box-shadow: 6px 6px 0 var(--ink);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.72;
+}
+
+/* 「你」的方块头像：原型 .turn.me .face（砖红底 + 纸色字） */
+.home-stream :deep(.chat-row.user)::after {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--ink);
+  background: var(--brick);
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  box-shadow: 3px 3px 0 rgba(20, 20, 20, .35);
+  content: '你';
+}
+
+.home-stream :deep(.chat-cost-card),
+.home-stream :deep(.chat-image-generation) {
+  border: 4px solid var(--ink);
+  border-radius: 0;
+  background: #fff6de;
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+/* ---------- 输入区：纸卡 + 金砖发送键 ---------- */
+.home-composer :deep(.message-composer) {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  max-width: 920px;
+  margin-left: 56px;
+  padding: 10px 12px;
+  border: 4px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+
+.home-composer :deep(.message-composer textarea) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.7;
+  resize: none;
+}
+
+.home-composer :deep(.message-composer:focus-within) { outline: 3px solid var(--gold); outline-offset: 3px; }
+.home-composer :deep(.message-composer textarea::placeholder) { color: #8e8e8e; font-weight: 500; }
+
+.home-composer :deep(.message-composer footer) { align-items: center; gap: 8px; }
+.home-composer :deep(.message-composer footer > span) {
+  color: #8a8272;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: .1em;
+}
+
+.home-composer :deep(.composer-tool) {
+  width: 28px;
+  height: 28px;
+  border: 3px solid transparent;
+  border-radius: 0;
+  color: var(--text-muted);
+}
+
+.home-composer :deep(.composer-tool:hover:not(:disabled)) { border-color: var(--ink); background: var(--paper-2); color: var(--ink); }
+
+/* 问号砖块仍是实际发送按钮，但回到输入卡内部：不再浮到卡外抢第二个视觉重心。 */
+#app .home-composer :deep(.composer-send) {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  top: auto;
+  left: auto;
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--ink);
+  border-radius: 0;
+  background: var(--gold);
+  color: var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  transition: transform 90ms steps(2, end), box-shadow 90ms steps(2, end), background 120ms steps(2, end);
+}
+#app .home-composer :deep(.composer-send svg) { display: none; }
+#app .home-composer :deep(.composer-send)::after {
+  content: '?';
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 900;
+}
+#app .home-composer :deep(.composer-send:focus-visible) { outline: 3px solid var(--sky-1); outline-offset: 3px; }
+
+.home-composer :deep(.composer-send:hover:not(:disabled)) { background: var(--gold-light); }
+.home-composer :deep(.composer-send:active:not(:disabled)) { transform: translate(4px, 4px); box-shadow: 1px 1px 0 var(--ink); }
+
+.home-composer :deep(.composer-send:disabled) {
+  border-color: var(--border-soft);
+  background: var(--paper-2);
+  color: var(--text-muted);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.home-composer :deep(.composer-domain-chip) {
+  border: 3px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-2);
+  box-shadow: 3px 3px 0 rgba(20, 20, 20, .35);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.home-composer :deep(.composer-domain-menu) {
+  border: 4px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: 6px 6px 0 rgba(20, 20, 20, .45);
+}
+
+@media (max-width: 1280px) {
+}
+
+@media (max-width: 1040px) {
+}
+
+@media (max-width: 700px) {
+  .home-stream-col { padding: 14px 14px 0; }
+  .home-stream-hd { align-items: flex-start; flex-wrap: wrap; }
+  .home-stream-hd h1 { font-size: 25px; }
+  .home-tools { margin-left: 0; }
+  .home-stream :deep(.chat-row.assistant) { max-width: 100%; }
+  .home-composer :deep(.message-composer textarea) { min-height:64px; }
+}
 </style>

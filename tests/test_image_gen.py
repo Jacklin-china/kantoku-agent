@@ -80,6 +80,18 @@ def test_fake_generation_runs_reserve_submit_query_and_settle(tmp_path: Path) ->
     assert provider.submit_count == 1
 
 
+def test_fixed_input_identity_is_part_of_the_original_submission_fingerprint(tmp_path):
+    provider = LocalFakeImageProvider(tmp_path / "images", model_id="configured-model",
+                                      actual_fen=30)
+    values = {"project": "project", "episode": "episode", "client_request_id": "fixed-input",
+              "provider": provider, "est_fen": 30}
+    first = gen_image("same execution", 1, **values, input_identity="a" * 64)
+    assert gen_image("same execution", 1, **values, input_identity="a" * 64) == first
+    with pytest.raises(BudgetError):
+        gen_image("same execution", 1, **values, input_identity="b" * 64)
+    assert provider.submit_count == 1
+
+
 def test_unknown_submission_logs_full_cause_and_persists_error_id_without_resubmission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:

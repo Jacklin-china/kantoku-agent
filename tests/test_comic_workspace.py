@@ -17,6 +17,51 @@ def work(app, title="A work"):
     return app.comic_workspace.create({"request_id": uuid4().hex, "title": title})
 
 
+@pytest.mark.parametrize("correction_failure", [False, True])
+def test_workspace_task_status_correction_keeps_sources_and_never_falls_back_on_failure(
+    story_app, monkeypatch, correction_failure,
+):
+    from time import monotonic
+
+    from kantoku.core.conversations import MessageRole, MessageType
+    from kantoku.shells import web_studio
+
+    app, parent, calls = story_app, work(story_app), []
+    text = "保留此前对象的设定，只调整位置"
+    row = app.runtime_store.add_conversation_message(parent["conversation_id"],
+        role=MessageRole.USER, type=MessageType.TEXT, content=text)
+    source = {"kind": "message", "id": row.id}
+
+    def model(messages):
+        calls.append(messages)
+        if '"TaskStatusCorrections"' in messages[0]["content"]:
+            if correction_failure:
+                raise TimeoutError("offline status correction failure")
+            return json.dumps({"corrections": [{"task_index": 0, "status": "active"}]})
+        return json.dumps({"action": "create", "relation": "continue", "goal": text,
+            "current_task_id": "original", "sources": [source],
+            "tasks": [{"task_id": "original", "goal": text, "status": "invalid"}]})
+
+    monkeypatch.setattr(app, "_conversation_context_model", model)
+    token = web_studio._comic_generation_deadline.set(monotonic() + 90)
+    try:
+        def prepare():
+            return app._prepare_conversation_context(parent["conversation_id"], text,
+                through_message_id=row.id, workspace_work_id=parent["work_id"])
+        if correction_failure:
+            with pytest.raises(TimeoutError):
+                prepare()
+        else:
+            result = prepare()
+            assert result.understanding.relation == "continue"
+            assert result.understanding.sources[0].id == row.id
+            assert result.understanding.tasks[0].status == "active"
+            assert result.degraded == ["task_status_corrected"]
+    finally:
+        web_studio._comic_generation_deadline.reset(token)
+    assert len(calls) == 2
+
+
 def test_screenshot_followups_correct_fact_origin_and_keep_selected_pose(story_app, monkeypatch):
     from test_comic_director_quality import SKILLS, _responses
 
@@ -229,6 +274,9 @@ def test_adopted_image_survives_long_dialogue_and_only_explicit_leaf_changes(
         if "constraints" in body and "sections" in body:
             return json.dumps({"complete": True, "scope_valid": True, "findings": []})
         assert "required_constraints" in body
+        # Automatic Shot events are compiler inputs, not a server-side replacement of
+        # the returned action. The offline compiler must actually express that event.
+        output["shot_context"]["action"] = body["current_shot"]["action"]
         return json.dumps(output, ensure_ascii=False)
 
     monkeypatch.setattr(app, "_comic_constraint_model", model)
@@ -298,9 +346,12 @@ def test_adopted_image_survives_long_dialogue_and_only_explicit_leaf_changes(
     expected["character_context"]["clothing"] = "白色雨衣"
     assert actual == expected
     assert changed["reference_attachments"][0]["artifact_id"] == image["artifact_id"]
-    assert image["sha256"] in changed["final_prompt"]
-    assert "只把外套换成白色雨衣" in changed["final_prompt"]
-    assert "没有附上这张参考图" in changed["final_prompt"]
+    assert image["sha256"] not in changed["final_prompt"]
+    assert image["sha256"] == changed["reference_attachments"][0]["sha256"]
+    assert "白色雨衣" in changed["final_prompt"]
+    assert any(item["quote"] == "只把外套换成白色雨衣" for item in changed[
+        "context_sources"]["image_references"]["continuity"]["changes"])
+    assert "没有附上这张参考图" not in changed["final_prompt"]
     # Simulate reopening the backend service; all anchors are persisted source references.
     app.comic_workspace = ComicWorkspaceService(
         app.comic_media, app.comic_assets, app.comic_prompts)
@@ -391,6 +442,192 @@ def test_adopted_image_survives_long_dialogue_and_only_explicit_leaf_changes(
     assert "continuity" not in reset["context_sources"].get("image_references", {})
     assert app.comic_prompts.get(original["shot_id"]).artifact_id == original["artifact_id"]
     assert app.comic_projects.get_director(third["task_id"]).reference_context["continuity"]
+
+
+@pytest.mark.parametrize("inherited_fields,focus", [
+    (["color"], "event"), ([], "event"), (["color"], "subject"),
+], ids=["whole-bible", "partial-lock", "static-focus"])
+def test_semantic_image_bibles_survive_constraint_fallback_and_new_shot_events(
+    story_app, monkeypatch, inherited_fields, focus,
+):
+    """Exercise the boundary between saved Bible semantics and legacy constraint fallback."""
+    import base64
+    import copy
+
+    from test_comic_director_quality import _responses
+    from test_comic_prompt_production import _sections
+    from test_comic_stories import _png
+
+    from kantoku.domains.comic.models import ComicPromptContexts
+    from kantoku.domains.comic.prompts import SEMANTIC_BIBLE_CONTRACT
+    from kantoku.domains.comic.workspace import ComicWorkspaceService
+    from kantoku.shells import web_studio
+
+    app, parent = story_app, work(story_app)
+    pose = "端坐小船持竿垂钓"
+    photographic_style = "远景弱化细节的水墨晕染质感"
+    state = {"text": "戴斗笠的侠客坐在湖中小船上垂钓", "source": None, "fallback": False}
+    calls, compile_inputs = [], []
+
+    def normalize(*_args, **_kwargs):
+        calls.append("normalize")
+        if state["fallback"]:
+            raise TimeoutError("Offline constraint normalization unavailable")
+        return [], {}
+
+    def understand(_messages):
+        calls.append("understand")
+        source = {key: value for key, value in (state["source"] or {}).items()
+                  if key != "project_id"}
+        return json.dumps({"action": "create", "relation": "continue" if state["source"] else "new",
+            "goal": state["text"], "sources": [source] if source else []})
+
+    def stage(skill, _inputs, context):
+        calls.append(skill)
+        result = _responses()[skill]
+        if skill == "comic.creative_understanding":
+            result["creative_decision"].update(intent_summary=state["text"],
+                narrative_context=state["text"],
+                hard_constraints=context["context"]["creative_brief"]["hard_constraints"])
+        if skill == "comic.visual_direction":
+            result["director_plan"].update(character_presence="戴斗笠的侠客",
+                character_pose=pose, character_expression="神情平静",
+                visual_focus=state["text"] if focus == "event" else "湖中小船上的侠客",
+                subject_environment_relation="树林环抱湖泊与一只小船",
+                style_boundary="中国水墨武侠风格")
+        return result
+
+    def model(messages):
+        body = json.loads(messages[1]["content"])
+        if body.get("stage") == "confirmed_image_continuity":
+            calls.append("continuity")
+            chosen = next(key for key, value in body["candidates"].items()
+                          if value["source_task_id"] == state["source"]["project_id"])
+            return json.dumps({"candidate_id": chosen, "changes": [
+                {"field": "shot_context." + leaf, "quote": body["current_request"]}
+                for leaf in ("action", "composition", "camera")]})
+        if "constraints" in body and "sections" in body:
+            calls.append("review")
+            return json.dumps({"complete": True, "scope_valid": True, "findings": []})
+        assert "required_constraints" in body
+        calls.append("compile")
+        compile_inputs.append(copy.deepcopy(body))
+        output = _sections()
+        output["character_context"].update(identity="戴斗笠的侠客", appearance="黑色短发",
+            clothing="灰色长袍", fixed_features="竹编斗笠")
+        output["world_context"].update(location="湖泊", environment="树林与一只小船")
+        output["style_context"].update(art_style="中国水墨武侠风格",
+            photographic_style="柔和水墨质感" if state["fallback"] else photographic_style)
+        output["shot_context"].update(action=state["text"], pose=pose,
+            composition="箭矢在画面左侧三分之一" if state["fallback"] else "侠客在画面左侧三分之一")
+        return json.dumps(output, ensure_ascii=False)
+
+    monkeypatch.setattr(web_studio, "normalize_constraints", normalize)
+    monkeypatch.setattr(app, "_conversation_context_model", understand)
+    monkeypatch.setattr(app.comic_director, "stage_executor", stage)
+    monkeypatch.setattr(app, "_comic_director_model", lambda _: json.dumps({
+        "public_summary": "Offline director review", "confidence": .9,
+        "findings": [], "suggested_patches": []}))
+    monkeypatch.setattr(app, "_comic_constraint_model", model)
+    monkeypatch.setattr(app, "_comic_storyboard_model", model)
+
+    def send():
+        request = {"request_id": uuid4().hex,
+            "expected_project_version": app.comic_workspace.get(parent["work_id"])["version"],
+            "conversation_id": parent["conversation_id"], "creation_mode": "professional",
+            "independent_plan": True, "task": state["text"]}
+        result = app.comic_work_turn(parent["work_id"], request)
+        before_replay = len(calls)
+        assert app.comic_work_turn(parent["work_id"], request)["run_id"] == result["run_id"]
+        assert len(calls) == before_replay
+        pid = result["task_id"]
+        spec = app.comic_projects.get_director(pid)
+        assert spec.director_plan.character_pose == pose
+        app.confirm_comic_director(pid, {"expected_project_version": app.comic_projects.get(
+            pid).project.current_version, "version": spec.version})
+        board = app.create_comic_storyboard(pid, {
+            "expected_project_version": app.comic_projects.get(pid).project.current_version,
+            "generate": True, "task": state["text"]})
+        shot = board["shots"][0]
+        prompt = app.compile_comic_prompt(shot["shot_id"], {
+            "expected_project_version": app.comic_projects.get(pid).project.current_version,
+            "expected_shot_version": shot["version"], "image_mode": "external",
+            "conversation_id": parent["conversation_id"], "complete_prompt": True})
+        state["source"] = {"kind": "run", "id": result["run_id"], "version": spec.version,
+                           "fields": inherited_fields, "project_id": pid}
+        return result, shot, prompt
+
+    first, _source_shot, original = send()
+    assert original["context_sources"]["bible_contract"] == SEMANTIC_BIBLE_CONTRACT
+    assert photographic_style in original["style_context"]
+    imported = app.import_comic_external_image(original["shot_id"], {
+        "expected_project_version": app.comic_projects.get(
+            first["task_id"]).project.current_version,
+        "expected_shot_version": original["shot_version"],
+        "expected_prompt_version": original["version"],
+        "conversation_id": parent["conversation_id"],
+        "filename": "semantic-reference.png", "data_url": "data:image/png;base64,"
+        + base64.b64encode(_png()).decode()})
+    image = app.comic_media.get(imported["artifact_id"]).model_dump(mode="json")
+    _select(app, parent["conversation_id"], image)
+    state.update(fallback=True, text="几支箭高速射向侠客的特写，呈现突然和强烈的速度感")
+    second, shot, prompt = send()
+    brief = app.comic_projects.get(second["task_id"]).creative_brief
+    assert brief.constraint_contract_version is None
+    assert brief.hard_constraints == [state["text"]]
+    assert brief.constraint_evidence["fallback"] == "verbatim_user_sources"
+    parsed = ComicPromptContexts.from_sections({key: prompt[key]
+        for key in ComicPromptContexts.model_fields}, semantic_scope=True)
+    assert parsed.style_context.photographic_style == photographic_style
+    assert parsed.shot_context.action == shot["action"] == state["text"]
+    assert pose in parsed.shot_context.pose
+    assert prompt["reference_attachments"][0]["sha256"] == image["sha256"]
+    assert compile_inputs[-1]["reused_bibles"]["style_context"] == original["style_context"]
+    assert compile_inputs[-1]["required_constraints"] == brief.hard_constraints
+    assert calls.count("compile") == 2
+    assert len(app.comic_prompts.versions(shot["shot_id"])) == 1
+
+    def edit(positive, *, sources=None):
+        return app.edit_comic_prompt(shot["shot_id"], {
+            "expected_project_version": app.comic_projects.get(
+                second["task_id"]).project.current_version,
+            "expected_version": app.comic_prompts.get(shot["shot_id"]).version,
+            "draft": {"director_summary": prompt["director_summary"], "positive_prompt": positive,
+                "negative_prompt": prompt["negative_prompt"], "context_sources": sources or {}}})
+
+    for altered, forged in [
+        (prompt["positive_prompt"].replace(photographic_style, "近景强化细节的全新水墨质感"), None),
+        (prompt["positive_prompt"].replace(photographic_style, "前景虚化的新摄影设定"),
+         {"bible_contract": SEMANTIC_BIBLE_CONTRACT,
+          "retained_fields": {"style_context.photographic_style": {
+              "source_artifact_id": "artifact-not-a-verified-source", "sha256": "0" * 64}}}),
+        (prompt["positive_prompt"].replace("身份：戴斗笠的侠客", "身份：" + "侠" * 301), None),
+        (prompt["positive_prompt"].replace(state["text"], "箭矢飞行"), None),
+    ]:
+        before = app.comic_projects.get(second["task_id"]).project.current_version
+        with pytest.raises(ToolError):
+            edit(altered, sources=forged)
+        assert app.comic_projects.get(second["task_id"]).project.current_version == before
+        assert app.comic_prompts.get(shot["shot_id"]).artifact_id == prompt["artifact_id"]
+
+    edited = edit(prompt["positive_prompt"].replace("左侧三分之一", "右侧三分之一"))
+    assert photographic_style in edited["style_context"] and edited["version"] == 2
+    restored = app.restore_comic_prompt(shot["shot_id"], {
+        "expected_project_version": app.comic_projects.get(
+            second["task_id"]).project.current_version,
+        "expected_version": edited["version"], "version": 1})
+    assert restored["version"] == 3 and restored["source"] == "restored"
+    assert restored["positive_prompt"] == prompt["positive_prompt"]
+    app.comic_workspace = ComicWorkspaceService(
+        app.comic_media, app.comic_assets, app.comic_prompts)
+    state["text"] = "箭矢掠过水面的特写，侠客仍然保持原来垂钓的姿势"
+    _third, new_shot, continued = send()
+    assert new_shot["action"] == state["text"]
+    assert photographic_style in continued["style_context"]
+    assert continued["reference_attachments"][0]["artifact_id"] == image["artifact_id"]
+    assert state["text"] in continued["shot_context"]
+    assert app.comic_prompts.get(original["shot_id"]).artifact_id == original["artifact_id"]
+    assert calls.count("compile") == 3
 
 
 @pytest.mark.parametrize("failure", ["quote", "field", "unknown", "ambiguous", "transport"])
@@ -536,6 +773,135 @@ def test_image_continuity_correction_is_bounded_and_cannot_rewrite_verified_deci
     assert "offline-private" not in str(getattr(caught.value, "detail", ""))
     assert len(app.comic_workspace.get(parent["work_id"])["tasks"]) == 1
     assert app.comic_media.get(image["image_id"]).sha256 == image["sha256"]
+
+
+@pytest.mark.parametrize("outcome", ["select", "switch", "question", "independent", "stale"])
+def test_many_adopted_images_select_source_before_loading_full_permissions(story_app, outcome):
+    from kantoku.core.conversation_context import TurnUnderstanding, token_size
+    from kantoku.core.runtime.models import utc_now
+
+    app, parent, images, calls = story_app, work(story_app), [], []
+    for index in range(8):
+        owner = task(app, parent, f"独立画面 {index}，沿用各自的人物和环境")
+        image = _upload(app, owner["task_id"], owner["conversation_id"])
+        _select(app, owner["conversation_id"], image)
+        images.append(image)
+    chosen = images[1]  # Earlier source, not the newest adopted image.
+    request = "沿用独立画面 1，只抬起左手"
+    if outcome == "independent":
+        request += "；重新开始完全独立的画面"
+
+    def resolve(messages):
+        assert token_size(messages) <= 5000
+        body = json.loads(messages[1]["content"])
+        calls.append(body)
+        key = next(key for key, item in body["candidates"].items()
+                   if item["image"]["artifact_id"] == chosen["artifact_id"])
+        if body["stage"] == "confirmed_image_source":
+            assert len(body["candidates"]) == 8
+            assert all(item["source_request"] for item in body["candidates"].values())
+            if outcome == "question":
+                return json.dumps({"candidate_id": key, "question": "要沿用哪个独立画面？"})
+            if outcome == "independent":
+                return json.dumps({"new_context_quote": "重新开始完全独立的画面"})
+            if outcome == "stale":
+                _select(app, chosen["conversation_id"], chosen, expected=1)
+            return json.dumps({"candidate_id": key})
+        assert body["stage"] == "confirmed_image_continuity"
+        assert len(body["candidates"]) == 1
+        assert body["candidates"][key]["image"]["sha256"] == chosen["sha256"]
+        if outcome == "switch":
+            return json.dumps({"new_context_quote": request})
+        return json.dumps({"candidate_id": key, "changes": [
+            {"field": "shot_context.pose", "quote": "只抬起左手"}]})
+
+    def execute():
+        return app.comic_workspace.image_continuity(parent["work_id"], request,
+            TurnUnderstanding(action="create", relation="continue", goal=request),
+            model_call=resolve, cutoff=utc_now(), budget=5000)
+
+    if outcome in {"switch", "question", "stale"}:
+        with pytest.raises(ToolError, match={"switch": "改写", "question": "哪个",
+                                            "stale": "版本已变化"}[outcome]):
+            execute()
+        assert len(calls) == (1 if outcome == "question" else 2)
+        return
+    result = execute()
+    if outcome == "independent":
+        assert result == {"new_context": True} and len(calls) == 1
+        return
+    assert [body["stage"] for body in calls] == [
+        "confirmed_image_source", "confirmed_image_continuity"]
+    assert result["image"] == app.comic_media.get(chosen["image_id"]).model_dump(mode="json")
+    assert result["changes"] == [{"field": "shot_context.pose", "quote": "只抬起左手"}]
+    assert len(app.comic_workspace.get(parent["work_id"])["tasks"]) == 8
+
+
+@pytest.mark.parametrize("response", [
+    "chosen", "ambiguous", "independent", "invalid", "unknown", "changes", "quote", "transport",
+    "over_capacity",
+])
+def test_continuity_source_catalog_preserves_branch_evidence_without_granting_permissions(response):
+    from copy import deepcopy
+
+    from kantoku.core.conversation_context import token_size
+    from kantoku.domains.comic.workspace import ComicWorkspaceService
+
+    image = {"image_id": "image-shared", "version": 2, "artifact_id": "artifact-shared",
+             "sha256": "unchanged", "filename": "shared.png"}
+    candidates = {key: {"candidate_id": key, "image": image, "source_request": text,
+        "source_director_version": index + 1, "prompt_source": {"version": index + 1},
+        "prompt_sections": {"character_context": {"clothing": text}},
+        "pending_changes": [{"field": "character_context.clothing", "quote": text}],
+        "visual_state": {"contract": "visual-elements-2", "elements": [
+            {"element_id": "clothing", "value": "棕衣", "entity_id": "person"}]}}
+        for index, (key, text) in enumerate((("original", "红色衣服"), ("successor", "蓝色衣服")))}
+    request = "沿用红色衣服的方案，只抬起左手；或重新独立设计"
+    payload = {"current_request": request, "resolution": {"action": "create",
+        "relation": "continue", "goal": request, "sources": [
+            {"kind": "run", "id": "original-run", "version": 1}],
+        "tasks": [{"goal": "无关历史" * 1000}]}, "candidates": candidates}
+    before, calls = deepcopy(payload), []
+
+    def model(messages):
+        calls.append(messages)
+        assert token_size(messages) <= 18000
+        body = json.loads(messages[1]["content"])
+        assert "tasks" not in body["resolution"]
+        assert body["resolution"]["sources"] == payload["resolution"]["sources"]
+        assert len(body["candidates"]) == 2
+        for key in candidates:
+            for name in ("source_request", "prompt_sections", "pending_changes", "visual_state"):
+                assert body["candidates"][key][name] == candidates[key][name]
+        if response == "transport":
+            raise TimeoutError("offline result unknown")
+        return {"chosen": '{"candidate_id":"original"}',
+            "ambiguous": '{"question":"要红衣还是蓝衣的方案？"}',
+            "independent": json.dumps({"new_context_quote": "重新独立设计"}),
+            "invalid": "offline-private-output: invalid JSON",
+            "unknown": '{"candidate_id":"artifact-shared"}',
+            "changes": '{"candidate_id":"original","changes":[]}',
+            "quote": '{"new_context_quote":"没有这条原话"}'}[response]
+
+    def execute():
+        return ComicWorkspaceService._continuity_source("offline-work", payload,
+            model_call=model, budget=1 if response == "over_capacity" else 18000)
+
+    if response in {"chosen", "ambiguous", "independent"}:
+        result = execute()
+        assert result.changes == [] and result.visual_changes is None
+        assert result.candidate_id == ("original" if response == "chosen" else None)
+        if response == "ambiguous":
+            assert result.question == "要红衣还是蓝衣的方案？"
+        if response == "independent":
+            assert result.new_context_quote == "重新独立设计"
+    else:
+        with pytest.raises((ToolError, TimeoutError)) as caught:
+            execute()
+        assert "offline-private" not in str(caught.value)
+        assert "offline-private" not in str(getattr(caught.value, "detail", ""))
+    assert payload == before
+    assert len(calls) == (0 if response == "over_capacity" else 1)
 
 
 def test_image_continuity_correction_rechecks_capacity_before_resubmitting(story_app, monkeypatch):
@@ -914,6 +1280,7 @@ def test_three_creative_turns_keep_independent_directors_and_first_complete_prom
 
     from test_comic_director_quality import _responses
 
+    from kantoku.domains.comic.models import ShotPromptContext
     from kantoku.shells import web_studio
 
     app, parent = story_app, work(story_app)
@@ -1010,6 +1377,11 @@ def test_three_creative_turns_keep_independent_directors_and_first_complete_prom
             else:
                 path = "sections." + sections_by_scope[item["scope"]]
                 evidence = body["evidence_fields"][path]
+                if item["requirement"] == "人物位于画面右侧":
+                    # Copying a location instruction into action is not evidence that the
+                    # actual composition follows it; inspect the delivered field itself.
+                    evidence = ShotPromptContext.from_text(body["sections"]["shot_context"],
+                        semantic_scope=True).composition
                 tokens = next(tokens for quote, _scope, tokens in clauses[current]
                               if quote == item["requirement"])
                 covered = all(token in evidence for token in tokens)
@@ -1093,11 +1465,28 @@ def test_three_creative_turns_keep_independent_directors_and_first_complete_prom
             assert calls["review"][current] in {attempted, attempted + 1}
             if current == 1 and failure in {"persistent", "unresolvable"}:
                 assert calls["review"][current] == attempted + 1
-            # 只有“正文已承载全部要求”时才允许以 advisory 交付，绝不伪造通过。
-            expected_delivery = ("advisory" if current == 1 and failure == "unresolvable"
-                                 else "verified")
+            # 未确认项必须保留真实诊断；广 scope 补齐不能证明相互矛盾的构图已被纠正。
+            expected_delivery = ("advisory" if current == 1 and failure in {
+                "persistent", "unresolvable"} else "verified")
             assert (prompt["context_sources"]["constraint_review"]["delivery"]
                     == expected_delivery)
+            if current == 1:
+                composition = ShotPromptContext.from_text(prompt["shot_context"],
+                    semantic_scope=True).composition
+                if failure == "persistent":
+                    assert composition == "人物位于画面左侧"
+                    missing = next(item.constraint_id for item in brief.semantic_constraints
+                                   if item.requirement == "人物位于画面右侧")
+                    audit = prompt["context_sources"]["constraint_review"]
+                    assert missing in audit["unresolved"]
+                    assert any(item["constraint_id"] == missing and item["status"] == "missing"
+                               for item in audit["review"]["findings"])
+                    assert any(item.node_id == "constraints.prompt"
+                        and item.metadata.get("shot_id") == shot["shot_id"]
+                        and item.metadata.get("audit", {}).get("stage") == "requirement_projection"
+                        for item in app.runtime_store.list_artifacts(include_internal=True))
+                else:
+                    assert composition == "人物位于画面右侧"
             assert calls["normalize"][current] == 1
             if saved:
                 for field in ("character_context", "world_context", "style_context"):

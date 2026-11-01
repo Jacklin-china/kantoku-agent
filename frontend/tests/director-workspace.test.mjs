@@ -10,7 +10,7 @@ import { renderToString } from '@vue/server-renderer'
 const source = readFileSync(new URL('../src/domains/comic/directorPresentation.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
 const presentationUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`
-const { discardDirectorNodeDraft, directorConversationSummary, directorConversationExecutions, selectDirectorExecution, directorPageFields, directorPageFieldLabel, fastDirectorNodeLabels, directorDraftFields, editableDirectorDraft, canConfirmDirector, canDispatchDirectorInput, chronologicalDirectorExecutions, directorIsStale, directorSummary, stageDraftKey, publicDirectorSections, workspaceProjectTitle } = await import(presentationUrl)
+const { discardDirectorNodeDraft, directorConversationSummary, directorConversationExecutions, directorProductionSteps, selectDirectorExecution, directorPageFields, directorPageFieldLabel, fastDirectorNodeLabels, directorDraftFields, editableDirectorDraft, canConfirmDirector, canDispatchDirectorInput, chronologicalDirectorExecutions, directorIsStale, directorSummary, stageDraftKey, publicDirectorSections, workspaceProjectTitle } = await import(presentationUrl)
 const { conversationWorkspaceRun } = await import(presentationUrl)
 const spec = {
   schema_version: 2, spec_id: 'director', version: 2, creative_brief_version: 3,
@@ -186,7 +186,7 @@ test('an internally incomplete candidate never marks the plan step saved or done
   const body = view.slice(view.indexOf('const productionSteps = computed'), view.indexOf('const activeRun = computed'))
   const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   for (const version of [undefined, 1]) {
-    const state = { computed, spec: ref({ version, generation_incomplete: true }), workExecutions: ref([]),
+    const state = { computed, directorProductionSteps, spec: ref({ version, generation_incomplete: true }), workExecutions: ref([]),
       projectPrompts: ref([]), imageWorkbenchState: ref(null), project: ref(null), activeConversationId: ref('chat'),
       shots: ref([]), selectedShot: ref(''), externalPromptForShot: () => null,
       uploadedPrompts: ref([]), activeTask: ref(null), activeNavigation: ref('story'),
@@ -198,6 +198,23 @@ test('an internally incomplete candidate never marks the plan step saved or done
     assert.equal(steps.value[0].hint, '方案已保存')
     assert.equal(steps.value[0].status, 'done')
   }
+})
+
+test('production steps show only established results and keep the active step current', () => {
+  const state = { planIncomplete: false, hasPlan: true, hasPrompt: true, hasImage: true,
+    hasSelected: false, hasStory: true, storyConfirmed: false, hasStoryExport: false,
+    activeNavigation: 'images' }
+  const steps = directorProductionSteps(state)
+  assert.deepEqual(steps.map(step => [step.id, step.status]), [
+    ['plan', 'done'], ['prompt', 'done'], ['images', 'current'],
+    ['story', 'todo'], ['export', 'todo'], ['video', 'todo'],
+  ])
+  assert.equal(steps[2].hint, '查看图片并持续修改')
+  const adopted = directorProductionSteps({ ...state, hasSelected: true, storyConfirmed: true,
+    hasStoryExport: true, activeNavigation: 'plan' })
+  assert.equal(adopted[2].status, 'done')
+  assert.equal(adopted[4].status, 'done')
+  assert.equal(adopted[5].status, 'todo')
 })
 
 test('Fast photography hides technical fields, while Professional preserves the same data', () => {
@@ -693,7 +710,7 @@ test('Director navigation can reopen saved plan after a followup fails without h
   const env = { spec: ref(null), busy: ref(false), hasRunning: ref(false),
     executions: ref(executions), workExecutions: ref(executions), project: ref({ project: { director_version: 2 } }),
     selectedRun: ref('failed-followup'), section: ref('conversation'), selectedStage: ref('director_assemble'),
-    chatExpanded: ref(true), inspectorOpen: ref(false) }
+    chatExpanded: ref(true), nodeCollapsed: ref(false), inspectorOpen: ref(false) }
   const open = new Function('env', `const {${Object.keys(env).join(',')}}=env;
     const toInternalSection = id => id === 'plan' ? 'director' : id;
     ${js}; return openSection`)(env)
@@ -712,6 +729,13 @@ test('Director navigation can reopen saved plan after a followup fails without h
   env.selectedRun.value = 'running-followup'
   open('plan')
   assert.equal(env.selectedRun.value, 'running-followup')
+  // 已在画面方案页时再次点同一入口：整页保持展开，不会留下空白工作区。
+  env.busy.value = false
+  env.nodeCollapsed.value = true
+  open('plan')
+  assert.equal(env.nodeCollapsed.value, false)
+  assert.equal(env.chatExpanded.value, false)
+  assert.equal(env.section.value, 'director')
 })
 test('Fast keeps only creative and director summary; v2 optional fields and narrative context are public', () => {
   const current = { ...spec, creative_decision: { narrative_context: '远古异兽观察文明' },
@@ -824,7 +848,7 @@ test('professional confirmation enables a persistent transition to storyboard, n
   const ref = value => ({ value })
   const state = { confirmed: ref(false), productionEligible: ref(true), busy: ref(false), hasRunning: ref(false),
     error: ref(''), project: ref({ project: { project_id: 'project', current_version: 2 }, creative_brief: { original_request: '少女竹林' } }),
-    spec: ref({ version: 1 }), boards: ref([]), selectedBoard: ref(''), selectedShot: ref('') }
+    spec: ref({ version: 1 }), boards: ref([]), shots: ref([]), selectedBoard: ref(''), selectedShot: ref('') }
   const actions = []
   const enter = new Function('state', 'actions', `const {${Object.keys(state).join(',')}}=state;
     const conversationEpoch=1,workSelectionEpoch=0; function openSection(value){actions.push(value)};
@@ -848,7 +872,7 @@ test('external workspace preserves manual director consent regardless of directo
   assert.doesNotMatch(view, /manualDirectorApproval.value = false|v-model="manualDirectorApproval"/)
   assert.match(view, /导演方案需人工确认 · 外部图片/)
   assert.doesNotMatch(view, /处理制作审批|name: 'tasks'/)
-  assert.match(view, /quickDirectorMessage\(item.content\)/)
+  assert.match(source, /quickDirectorMessage\(item.content\)/)
 })
 
 
@@ -876,41 +900,35 @@ test('regenerate is explicit new generation; unknown recovery only resumes the s
 
 test('persisted user messages retain both derived replies, ordered after each input', async () => {
   const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
-  const { mergeChatTurnsByTime } = await import(presentationUrl)
-  const start = view.indexOf('const chatTurns = computed')
-  const body = view.slice(start, view.indexOf('async function loadConversations', start))
-  const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
+  const { buildDirectorChatTurns } = await import(presentationUrl)
   const environment = {
-    computed: fn => fn(), mergeChatTurnsByTime, quickDirectorMessage: text => text,
     conversationMessages: { value: [1, 2].map(i => ({ id: `user${i}`, run_id: `run${i}`, role: 'user', content: `question${i}`, created_at: `2026-10-07T10:0${i}:00.900Z` })) },
     runs: { value: Object.fromEntries([1, 2].map(i => [`run${i}`, { started_at: `2026-10-07T10:0${i}:00.100Z`, state: {} }])) },
     transcript: { value: [1, 2].map(i => ({ execution: { run_id: `run${i}`, status: 'completed' }, text: `question${i}`, answer: `answer${i}` })) },
     pendingText: { value: '' }, pendingRequestId: { value: '' }, previousRunIds: { value: ['run1', 'run2'] },
   }
-  const turns = new Function('env', `const {${Object.keys(environment).join(',')}}=env; ${code}; return chatTurns`)(environment)
+  const readTurns = () => buildDirectorChatTurns(environment.conversationMessages.value, environment.runs.value,
+    environment.transcript.value, environment.pendingText.value, environment.pendingRequestId.value, environment.previousRunIds.value)
+  const turns = readTurns()
   assert.deepEqual(turns.map(turn => turn.content), ['question1', 'answer1', 'question2', 'answer2'])
   assert.deepEqual(turns.filter(turn => turn.role === 'assistant').map(turn => turn.runId), ['run1', 'run2'])
   assert.match(view, /@click="openDraft\(turn.runId\)"/)
   environment.pendingText.value = 'question1'
-  const repeated = new Function('env', `const {${Object.keys(environment).join(',')}}=env; ${code}; return chatTurns`)(environment)
+  const repeated = readTurns()
   assert.equal(repeated.at(-1).id, 'pending-user')
 })
 
 test('thinking, message persistence and Run binding show one bubble for each request', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
-  const { mergeChatTurnsByTime } = await import(presentationUrl)
-  const start = view.indexOf('const chatTurns = computed')
-  const code = ts.transpileModule(view.slice(start, view.indexOf('async function loadConversations', start)),
-    { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
+  const { buildDirectorChatTurns } = await import(presentationUrl)
   const environment = {
-    computed: fn => fn(), mergeChatTurnsByTime, quickDirectorMessage: text => text,
     conversationMessages: ref([{ id: 'old-failure', role: 'user', content: '相同创意',
       run_id: null, event_id: 'director-request:old', created_at: '2026-10-12T01:00:00Z' }]),
     runs: ref({}), transcript: ref([]), pendingText: ref('相同创意'),
     pendingRequestId: ref('new-request'), previousRunIds: ref([]),
   }
-  const readTurns = new Function('env', `const {${Object.keys(environment).join(',')}}=env; ${code}; return chatTurns`)
-  const users = () => readTurns(environment).filter(turn => turn.role === 'user')
+  const readTurns = () => buildDirectorChatTurns(environment.conversationMessages.value, environment.runs.value,
+    environment.transcript.value, environment.pendingText.value, environment.pendingRequestId.value, environment.previousRunIds.value)
+  const users = () => readTurns().filter(turn => turn.role === 'user')
   assert.deepEqual(users().map(turn => turn.id), ['old-failure', 'pending-user'])
   environment.conversationMessages.value.push({ id: 'new-user', role: 'user', content: '相同创意',
     run_id: null, event_id: 'director-request:new-request', created_at: '2026-10-12T02:00:00Z' })
@@ -920,17 +938,17 @@ test('thinking, message persistence and Run binding show one bubble for each req
   environment.transcript.value = [{ execution: { run_id: 'new', status: 'running' },
     text: '相同创意', label: '正在思考' }]
   assert.deepEqual(users().map(turn => turn.id), ['old-failure', 'new-user'])
-  assert.equal(readTurns(environment).filter(turn => turn.role === 'assistant').length, 1)
+  assert.equal(readTurns().filter(turn => turn.role === 'assistant').length, 1)
   environment.conversationMessages.value[1].run_id = 'new'
   environment.pendingText.value = ''
   environment.transcript.value[0] = { execution: { run_id: 'new', status: 'completed' },
     text: '相同创意', answer: '导演草稿已保存' }
   assert.deepEqual(users().map(turn => turn.id), ['old-failure', 'new-user'])
-  assert.equal(readTurns(environment).at(-1).content, '导演草稿已保存')
+  assert.equal(readTurns().at(-1).content, '导演草稿已保存')
   environment.runs.value.new.state.generation_incomplete = true
   environment.conversationMessages.value.push({ id: 'old-answer', role: 'assistant', type: 'plan',
     content: '当前画面方案已保存，可以继续讨论或修改。', run_id: 'new', created_at: '2026-10-12T02:00:02Z' })
-  assert.match(readTurns(environment).at(-1).content, /系统内部检查尚未完成/)
+  assert.match(readTurns().at(-1).content, /系统内部检查尚未完成/)
   assert.equal(environment.conversationMessages.value.at(-1).content, '当前画面方案已保存，可以继续讨论或修改。')
 })
 
@@ -1379,6 +1397,62 @@ function refreshWorkspaceState() {
     getComicConversationWorks() { throw new Error('modern work must not request legacy work projections') } }
 }
 
+test('first storyboard creation keeps its committed revision when an older refresh finishes before Prompt compilation', async () => {
+  const state = refreshWorkspaceState(), metadata = deferredWorkspace(), calls = []
+  const original = { project: { project_id: 'project', current_version: 2 }, creative_brief: { original_request: '独立画面' } }
+  const board = { storyboard_id: 'board', director_spec_version: 1, project_version: 3 }
+  const shot = { shot_id: 'shot', storyboard_id: 'board', version: 1 }
+  let created = false
+  Object.assign(state, {
+    project: ref(original), confirmed: ref(true), productionEligible: ref(true), manualDirectorApproval: ref(true),
+    busy: ref(false), hasRunning: ref(false), error: ref(''), spec: ref({ version: 1 }),
+    boards: ref([]), shots: ref([]), selectedBoard: ref(''), selectedShot: ref(''),
+    compiling: ref(false), preparingShot: ref(''), shotErrors: ref({}), shotPrompts: ref({}), promptPreview: ref(null),
+    failureText: String, openSection() {}, async loadPrompts() {},
+    getComicProject: async () => structuredClone(original), getComicAssets: () => metadata.promise,
+    async loadPage() { if (created) { state.boards.value = [board]; state.shots.value = [shot] } },
+    async createComicStoryboard(_id, version) { calls.push(['board', version]); created = true; return { storyboard: board, shots: [shot] } },
+    async compileComicPrompt(_id, version) { calls.push(['prompt', version]); if (version !== 3) throw new Error('作品版本已变化'); return { artifact_id: 'saved-prompt' } },
+  })
+  const refresh = workspaceFunction('refresh', '\nasync function execute(', state, 'let refreshing=null')
+  state.refresh = refresh
+  const older = refresh(); await flushWorkspace()
+  const enter = workspaceFunction('enterStoryboard', '\nasync function restore(', state)
+  const entering = enter(); await flushWorkspace()
+  await enter() // A second click while the first is waiting cannot create another board.
+  metadata.resolve([]); await Promise.all([older, entering])
+  assert.equal(state.project.value.project.current_version, 3)
+  await workspaceFunction('compilePrompt', '\nasync function viewImagePrompt(', state)()
+  assert.deepEqual(calls, [['board', 2], ['prompt', 3]])
+  assert.equal(state.shotPrompts.value.shot[0].artifact_id, 'saved-prompt')
+  assert.equal(state.shotErrors.value.shot, '')
+  await enter()
+  assert.equal(calls.filter(item => item[0] === 'board').length, 1)
+})
+
+test('a storyboard result arriving after a work switch cannot change the new work or unlock its controls', async () => {
+  const result = deferredWorkspace(), calls = []
+  const state = { epoch: 1, workEpoch: 1, confirmed: ref(true), productionEligible: ref(true), busy: ref(false), hasRunning: ref(false),
+    error: ref(''), project: ref({ project: { project_id: 'old', current_version: 2 }, creative_brief: { original_request: '原画面' } }),
+    spec: ref({ version: 1 }), boards: ref([]), shots: ref([]), selectedBoard: ref(''), selectedShot: ref(''),
+    openSection() {}, async loadPage() {}, failureText: String,
+    createComicStoryboard() { calls.push('create'); return result.promise },
+    async refresh() { assert.fail('late result cannot refresh another work') } }
+  const pending = workspaceFunction('enterStoryboard', '\nasync function restore(', state)()
+  await flushWorkspace()
+  state.workEpoch++
+  state.project.value = { project: { project_id: 'new', current_version: 8 } }
+  state.selectedBoard.value = 'new-board'; state.selectedShot.value = 'new-shot'
+  result.resolve({ storyboard: { storyboard_id: 'old-board', project_version: 3 }, shots: [{ shot_id: 'old-shot' }] })
+  await pending
+  assert.deepEqual(calls, ['create'])
+  assert.equal(state.project.value.project.project_id, 'new')
+  assert.equal(state.project.value.project.current_version, 8)
+  assert.equal(state.selectedBoard.value, 'new-board')
+  assert.equal(state.selectedShot.value, 'new-shot')
+  assert.equal(state.busy.value, true)
+})
+
 test('refresh starts messages before slow metadata and reuses initial context and completed Run details', async () => {
   const state = refreshWorkspaceState(), metadata = deferredWorkspace()
   const counts = { messages: 0, projects: 0, works: 0, runs: [] }
@@ -1573,7 +1647,10 @@ function appCoreHarness(initialRoute) {
   const intervals = new Map(), requests = [], stops = []
   let mounted, unmounted, timerId = 0, disposed = 0
   const currentRoute = ref(initialRoute)
-  const environment = { ref, computed, route: currentRoute, Boxes: {}, Settings: {},
+  const environment = { ref, computed, defineAsyncComponent: () => ({}), route: currentRoute, Boxes: {}, Settings: {},
+    /* HUD 的天空时段是纯展示副作用（只写 <html data-tod> 与 60s 校准），
+       这里不需要它参与 Core 轮询语义，因此桩掉，避免影响 intervals 计数。 */
+    startTimeOfDay() {}, stopTimeOfDay() {},
     watch(...args) { const stop = watch(...args); stops.push(stop); return stop },
     onMounted(callback) { mounted = callback }, onBeforeUnmount(callback) { unmounted = callback },
     window: { matchMedia() { return { matches: false } }, addEventListener() {}, removeEventListener() {},

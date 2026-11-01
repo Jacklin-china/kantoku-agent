@@ -34,7 +34,7 @@ function money(fen: number): string {
 }
 
 function submit(action: 'approve' | 'reject' | 'revise'): void {
-  if (resolved.value || submitting.value) return
+  if (props.domain === 'commerce' || resolved.value || submitting.value) return
   if (action === 'approve' && kind.value === 'director_review' && props.approval.request.ready === false) return
   submitting.value = action
   const response: Record<string, unknown> = {}
@@ -62,7 +62,7 @@ watch(() => props.busy, (value) => { if (!value) submitting.value = null })
 
     <div v-if="kind === 'candidate_approval' && candidates.length" class="approval-options" role="radiogroup" aria-label="候选商品">
       <label v-for="item in candidates" :key="item.id" :class="{ picked: selected === item.id }">
-        <input v-model="selected" type="radio" name="candidate" :value="item.id" :disabled="resolved" />
+        <input v-model="selected" type="radio" name="candidate" :value="item.id" :disabled="resolved || domain === 'commerce'" />
         <span><b>{{ item.title }}</b><small>{{ money(item.cost_fen) }} · {{ item.skus.length }} SKU · {{ item.source }}</small></span>
       </label>
     </div>
@@ -106,13 +106,16 @@ watch(() => props.busy, (value) => { if (!value) submitting.value = null })
       </dl>
     </div>
 
-    <label v-if="!resolved" class="revise-field">
+    <label v-if="!resolved && domain !== 'commerce'" class="revise-field">
       <span>希望修改什么？（可选，用于「要求修改」）</span>
       <input v-model="reviseNote" class="ui-input" type="text" :placeholder="kind === 'director_review' ? '例如：保持人物不变，让背景更简洁' : '例如：优先选择采购成本低于 ¥15 的商品'" />
     </label>
 
     <footer>
-      <template v-if="resolved">
+      <template v-if="domain === 'commerce' && !resolved">
+        <span>电商功能已停用。</span>
+      </template>
+      <template v-else-if="resolved">
         <span class="decision-chip">已处理 · {{ decisionLabel[approval.decision] ?? approval.decision }}</span>
       </template>
       <template v-else>

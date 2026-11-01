@@ -109,6 +109,122 @@ def managed(tmp_path, monkeypatch):
     return manager, catalog
 
 
+def test_slow_cache_inventory_does_not_block_maintenance_start(managed, monkeypatch):
+    from threading import Event, Thread
+
+    manager, _catalog = managed
+    entered, release, returned = Event(), Event(), Event()
+    inventory = manager.iter_files
+    running = []
+
+    def slow_inventory(self, directory):
+        if directory == self.cache:
+            entered.set()
+            assert release.wait(5)
+        yield from inventory(directory)
+
+    monkeypatch.setattr(RuntimeManager, "iter_files", slow_inventory)
+    def start():
+        running.append(manager.start_maintenance())
+        returned.set()
+
+    caller = Thread(target=start)
+    caller.start()
+    try:
+        assert entered.wait(3)
+        assert returned.wait(.5), "Cache inventory must not delay opening the application"
+    finally:
+        release.set()
+        caller.join(5)
+        for maintenance in running:
+            maintenance.close()
+    assert not caller.is_alive()
+    assert not running[0].thread.is_alive()
+
+
+def test_cache_inventory_batches_writes_and_preserves_unmanaged_old_files(managed, monkeypatch):
+    from contextlib import contextmanager
+
+    from kantoku.config.runtime_paths import RuntimeMaintenance
+
+    manager, catalog = managed
+    directory = manager.ensure_directory(manager.cache / "uv")
+    legacy = directory / "legacy.cache"
+    legacy.write_bytes(b"unmanaged old cache")
+    old_time = catalog.initialized_at() - 60
+    os.utime(legacy, (old_time, old_time))
+    files = [directory / f"item-{index}.cache" for index in range(90)]
+    for path in files:
+        path.write_bytes(b"offline cache")
+    calls = []
+    original_connection = catalog.connection
+
+    @contextmanager
+    def counted_connection():
+        calls.append(True)
+        with original_connection() as opened:
+            yield opened
+
+    monkeypatch.setattr(catalog, "connection", counted_connection)
+    RuntimeMaintenance(manager).tick()
+    assert len(calls) < len(files) // 4
+    with catalog.connection() as connection:
+        rows = connection.execute("SELECT path FROM runtime_files WHERE type='cache' "
+                                  "AND status='active'").fetchall()
+    assert {Path(row[0]) for row in rows} == set(files)
+    assert legacy.read_bytes() == b"unmanaged old cache"
+
+
+def test_shared_file_registration_rolls_back_the_batch_on_lifecycle_conflict(managed):
+    manager, catalog = managed
+    directory = manager.ensure_directory(manager.cache / "uv")
+    first, busy = directory / "first.cache", directory / "busy.cache"
+    first.write_bytes(b"new cache")
+    busy.write_bytes(b"busy cache")
+    file_id = manager.register(busy, file_type="cache", owner="uv")
+    with catalog.connection() as connection:
+        connection.execute("UPDATE runtime_files SET status='deleting' WHERE file_id=?",
+                           (file_id,))
+    with pytest.raises(RuntimeError, match="正在清理"), catalog.connection() as connection:
+        manager.register(first, file_type="cache", owner="uv", connection=connection)
+        manager.register(busy, file_type="cache", owner="uv", connection=connection)
+    with catalog.connection() as connection:
+        assert connection.execute("SELECT 1 FROM runtime_files WHERE path=?",
+                                  (str(first),)).fetchone() is None
+        assert connection.execute("SELECT status FROM runtime_files WHERE file_id=?",
+                                  (file_id,)).fetchone()[0] == "deleting"
+    assert first.read_bytes() == b"new cache" and busy.read_bytes() == b"busy cache"
+
+
+def test_background_maintenance_error_is_reported_and_thread_can_close(managed, monkeypatch):
+    from threading import Event
+
+    from kantoku.config.runtime_paths import RuntimeMaintenance
+
+    manager, catalog = managed
+    reported, errors = Event(), []
+    original_tick = RuntimeMaintenance.tick
+
+    def failed_tick(self, *, scan_caches=True):
+        if scan_caches:
+            raise OSError("offline cache inventory failure")
+        return original_tick(self, scan_caches=False)
+
+    def report(error):
+        errors.append(error)
+        reported.set()
+
+    monkeypatch.setattr(RuntimeMaintenance, "tick", failed_tick)
+    monkeypatch.setattr(catalog, "report_error", report)
+    maintenance = manager.start_maintenance()
+    try:
+        assert reported.wait(3)
+    finally:
+        maintenance.close()
+    assert len(errors) == 1 and isinstance(errors[0], OSError)
+    assert not maintenance.thread.is_alive()
+
+
 def test_temp_is_rejected_including_database_sidecars(tmp_path, monkeypatch):
     monkeypatch.setenv("TEMP", str(tmp_path / "windows-temp"))
     for path in (tmp_path / "windows-temp" / "app.db",

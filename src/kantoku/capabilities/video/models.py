@@ -19,13 +19,16 @@ class VideoGenerationRequest(BaseModel):
     project: str
     shot_no: int = Field(gt=0)
     config: dict[str, Any] = Field(default_factory=dict)
+    conversation_id: str | None = None
+    source_images: list[dict[str, str]] = Field(default_factory=list, max_length=8)
+    input_sha256: str | None = None
 
 
 class VideoGenerationResult(BaseModel):
     """Provider 结果；Mock 永远显式标记。"""
 
     model_config = ConfigDict(extra="forbid")
-    status: Literal["succeeded", "failed", "unknown", "rejected", "blocked"]
+    status: Literal["succeeded", "failed", "unknown", "rejected", "blocked", "pending"]
     location: str | None = None
     provider_job_id: str | None = None
     actual_fen: int | None = Field(default=None, ge=0)

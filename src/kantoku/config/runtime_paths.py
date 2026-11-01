@@ -137,8 +137,11 @@ class RuntimeManager:
         return directory
 
     def register(self, path: Path, *, file_type: str, owner: str = "runtime",
-                 expires_in: float | None = None) -> str:
-        return self.catalog.register(validate_runtime_path(path), file_type, owner, expires_in)
+                 expires_in: float | None = None, connection=None) -> str:
+        path = validate_runtime_path(path)
+        if connection is None:
+            return self.catalog.register(path, file_type, owner, expires_in)
+        return self.catalog.register(path, file_type, owner, expires_in, connection=connection)
 
     def remove_file(self, path: Path, *, file_type: str, if_registered: bool = False,
                     connection=None) -> None:
@@ -507,35 +510,64 @@ class RuntimeMaintenance:
         self.manager = manager
         self.stopped = threading.Event()
         self.thread = threading.Thread(target=self._run, name="runtime-storage", daemon=True)
-        boundary = manager.catalog.initialized_at()
-        self.legacy = {path for path in manager.iter_files(manager.cache)
-                       if path.stat().st_mtime < boundary}
+        self.legacy: set[Path] = set()
+        self._legacy_initialized = False
 
-    def tick(self) -> None:
+    def tick(self, *, scan_caches: bool = True) -> None:
         # Reuse the existing maintenance loop for killed test processes, too.
         get_test_runtime_paths().sweep_abandoned_test_sessions()
-        for name in ("ruff", "vite", "python", "pytest", "uv", "npm"):
-            for path in self.manager.iter_files(self.manager.cache / name):
-                if path.is_file() and not path.is_symlink() and path.resolve() not in self.legacy:
-                    self.manager.register(path, file_type="cache", owner=name)
+        if scan_caches:
+            if not self._legacy_initialized:
+                boundary = self.manager.catalog.initialized_at()
+                legacy = set()
+                for path in self.manager.iter_files(self.manager.cache):
+                    if self.stopped.is_set():
+                        return
+                    if path.stat().st_mtime < boundary:
+                        legacy.add(path)
+                self.legacy = legacy
+                self._legacy_initialized = True
+            batch = []
+            for name in ("ruff", "vite", "python", "pytest", "uv", "npm"):
+                for path in self.manager.iter_files(self.manager.cache / name):
+                    if self.stopped.is_set():
+                        return
+                    if (path.is_file() and not path.is_symlink()
+                            and path.resolve() not in self.legacy):
+                        batch.append((path, name))
+                        if len(batch) >= 64:
+                            self._register_cache_batch(batch)
+                            batch.clear()
+            if batch:
+                self._register_cache_batch(batch)
         self.manager.catalog.register_databases()
         self.manager.cleanup()
 
+    def _register_cache_batch(self, batch: list[tuple[Path, str]]) -> None:
+        # Bound the write transaction; keep the catalog's lifecycle/lease checks.
+        with self.manager.catalog.connection() as connection:
+            for path, owner in batch:
+                self.manager.register(path, file_type="cache", owner=owner,
+                                      connection=connection)
+
     def _run(self) -> None:
-        while not self.stopped.wait(60):
+        while not self.stopped.is_set():
             try:
                 self.tick()
             except Exception as error:
                 # The injected catalog reports through existing structured errors.
                 self.manager.catalog.report_error(error)
+            if self.stopped.wait(60):
+                break
 
     def start(self) -> None:
         self.manager.claim_staging()
-        self.tick()
         self.thread.start()
 
     def close(self) -> None:
         self.stopped.set()
         if self.thread.ident is not None:
             self.thread.join()
-        self.tick()
+        # Synchronous writers already register their outputs. Clean registered
+        # files on exit without repeating a whole external cache inventory.
+        self.tick(scan_caches=False)

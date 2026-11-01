@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import {
   Frame,
-  History,
   House,
   Images,
   Search,
   Settings,
-  Sparkles,
-  TableProperties,
 } from 'lucide-vue-next'
 import { computed, nextTick, ref, watch, type FunctionalComponent } from 'vue'
 
@@ -22,11 +19,8 @@ interface Command { label: string; hint: string; path: string; icon: FunctionalC
 const commands: Command[] = [
   { label: '打开首页', hint: '首页', path: '/', icon: House },
   { label: '打开工作台', hint: '漫剧制作', path: '/workspace/comic', icon: Frame },
-  { label: '查看任务与运行', hint: '运行', path: '/runs', icon: TableProperties },
   { label: '浏览资产', hint: '资产', path: '/assets', icon: Images },
-  { label: '查看历史记录', hint: '历史', path: '/history', icon: History },
-  { label: '查看技能', hint: '技能', path: '/skills', icon: Sparkles },
-  { label: '模型与供应商', hint: '设置', path: '/settings', icon: Settings },
+  { label: '打开设置', hint: '设置', path: '/settings', icon: Settings },
 ]
 const filtered = computed(() => commands.filter((command) => `${command.label} ${command.hint}`.toLowerCase().includes(query.value.toLowerCase())))
 watch(() => props.open, (open) => { if (open) { query.value = ''; activeIndex.value = 0; void nextTick(() => input.value?.focus()) } })

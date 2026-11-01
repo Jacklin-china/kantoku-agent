@@ -20,6 +20,7 @@ def main() -> int:
     serve_parser = commands.add_parser("serve", help="启动 API、SSE 与生产工作台")
     serve_parser.add_argument("--port", type=int, default=8000)
     serve_parser.add_argument("--no-browser", action="store_true")
+    serve_parser.add_argument("--legacy-http", action="store_true", help="使用旧 HTTP 服务回退")
     doctor_parser = commands.add_parser("doctor", help="检查本机配置与供应商就绪状态")
     doctor_parser.add_argument("--live", action="store_true")
     logs_parser = commands.add_parser("logs", help="仅管理开发应用日志，不触及审计与业务数据")
@@ -50,6 +51,7 @@ def main() -> int:
         return serve(
             port=getattr(args, "port", 8000),
             open_browser=not getattr(args, "no_browser", False),
+            legacy_http=getattr(args, "legacy_http", False),
         )
     finally:
         try:

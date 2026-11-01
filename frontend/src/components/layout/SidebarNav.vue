@@ -1,21 +1,26 @@
 <script setup lang="ts">
+/**
+ * 左侧导航轨 · 对应原型 `.rail`
+ *
+ * 结构：图标在上、标签在下的 58×54 方块（选中为金砖 + 4px 实心投影），
+ * 底部是 58×30 的等宽小字按钮与 Core 连接块。
+ * 与原型一致：品牌放在 HUD，不在侧栏重复一遍。
+ */
 import {
-  Boxes,
   ChevronsLeft,
   ChevronsRight,
   Frame,
   History,
   House,
   Images,
+  LogOut,
   Settings,
-  TableProperties,
+  UserRound,
 } from 'lucide-vue-next'
 import { type FunctionalComponent } from 'vue'
 
-import KantokuMark from '../brand/KantokuMark.vue'
-
-defineProps<{ routeName: string; activeDomainId: string; taskCount: number; collapsed: boolean; rail?: boolean }>()
-const emit = defineEmits<{ navigate: [path: string]; toggle: [] }>()
+defineProps<{ routeName: string; activeDomainId: string; taskCount: number; collapsed: boolean; hasAccount?: boolean; online: boolean }>()
+const emit = defineEmits<{ navigate: [path: string]; toggle: []; logout: []; history: [] }>()
 
 /* 「工作区」就是漫剧制作（design-spec §1 收敛后唯一创作的领域）。
    此前它依赖一个通用「与 Kantoku 协作」工作区，并另设「创作域」分组重复指向同一个漫剧入口；
@@ -23,16 +28,48 @@ const emit = defineEmits<{ navigate: [path: string]; toggle: [] }>()
 const navItems: { name: string; label: string; path: string; icon: FunctionalComponent; match: string[] }[] = [
   { name: 'home', label: '首页', path: '/', icon: House, match: ['home'] },
   { name: 'workspace', label: '工作区', path: '/workspace/comic', icon: Frame, match: ['workspace', 'workspace_run'] },
-  { name: 'tasks', label: '任务中心', path: '/tasks', icon: TableProperties, match: ['tasks', 'task_run', 'task_batch'] },
   { name: 'assets', label: '资产', path: '/assets', icon: Images, match: ['assets'] },
-  { name: 'history', label: '历史记录', path: '/tasks/history', icon: History, match: [] },
 ]
 </script>
 
 <template>
-  <aside class="app-sidebar" :class="{ collapsed, 'global-icon-rail': rail }" aria-label="全局导航">
-    <div class="sidebar-brand-row"><button class="product-brand" title="Kantoku" @click="emit('navigate', '/')"><KantokuMark /><span class="brand-copy"><strong>Kantoku</strong><small>PRODUCTION WORKSPACE</small></span></button><button class="sidebar-toggle" :title="collapsed ? '展开侧栏' : '折叠侧栏'" @click="emit('toggle')"><ChevronsLeft v-if="!collapsed" :size="13" /><ChevronsRight v-else :size="13" /></button></div>
-    <nav class="nav-group" aria-label="产品导航"><span class="nav-label">创作</span><button v-for="item in navItems" :key="item.name" :class="{ active: item.match.includes(routeName) }" :title="item.label" @click="emit('navigate', item.path)"><i><component :is="item.icon" :size="18" :stroke-width="1.7" /></i><span>{{ item.label }}</span><em v-if="item.name === 'runs' && taskCount">{{ taskCount }}</em></button></nav>
-    <div class="sidebar-bottom"><button title="模型与供应商" @click="emit('navigate', '/settings')"><i><Boxes :size="18" :stroke-width="1.7" /></i><span>模型与供应商</span></button><button title="设置" @click="emit('navigate', '/settings')"><i><Settings :size="18" :stroke-width="1.7" /></i><span>设置</span></button><div class="core-health" title="Kantoku Core · 本机已连接"><span></span><div><b>Kantoku Core</b><small>本机 · 已连接</small></div></div></div>
+  <aside class="app-sidebar px-rail" :class="{ collapsed }" aria-label="全局导航">
+    <nav class="px-rail__nav" aria-label="产品导航">
+      <button
+        v-for="item in navItems"
+        :key="item.name"
+        type="button"
+        class="px-rail__nav-item"
+        :class="{ active: item.match.includes(routeName) }"
+        :title="item.label"
+        :aria-current="item.match.includes(routeName) ? 'page' : undefined"
+        @click="emit('navigate', item.path)"
+      >
+        <i><component :is="item.icon" :size="17" :stroke-width="2.2" /></i>
+        <span>{{ item.label }}</span>
+        <em v-if="item.name === 'runs' && taskCount">{{ taskCount }}</em>
+      </button>
+
+      <!-- 「历史」不是一条路由，而是一个动作：打开作品与历史对话抽屉。
+           它必须常驻在左栏——此前只藏在工作区顶栏一个素色小按钮里，
+           用户根本找不到回上一个作品的入口。 -->
+      <button type="button" class="px-rail__nav-item" title="作品与历史对话" @click="emit('history')">
+        <i><History :size="17" :stroke-width="2.2" /></i>
+        <span>历史</span>
+      </button>
+    </nav>
+
+    <span class="px-rail__gap" />
+
+    <button v-if="hasAccount" type="button" class="px-rail__mini" title="个人中心" @click="emit('navigate', '/account')">个人中心</button>
+    <button type="button" class="px-rail__mini" title="设置" @click="emit('navigate', '/settings')">设置</button>
+    <button v-if="hasAccount" type="button" class="px-rail__mini" title="退出登录" @click="emit('logout')">退出登录</button>
+
+    <div class="px-rail__health" :title="online ? 'Kantoku Core · 本机已连接' : 'Kantoku Core · 连接中断'"><i :class="{ 'is-down': !online }" />Core<br />{{ online ? '已连接' : '连接中断' }}</div>
+
+    <button type="button" class="px-rail__toggle" :title="collapsed ? '展开侧栏' : '折叠侧栏'" :aria-expanded="!collapsed" @click="emit('toggle')">
+      <ChevronsRight v-if="collapsed" :size="14" />
+      <ChevronsLeft v-else :size="14" />
+    </button>
   </aside>
 </template>

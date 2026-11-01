@@ -50,7 +50,7 @@ onBeforeUnmount(clear)
   </section>
 </template>
 <style scoped>
-.legacy-import { margin:12px 0; color:var(--text-secondary); font-size:var(--font-meta); }.legacy-preview { display:grid; gap:12px; padding:16px; border:1px solid var(--border-muted); }.legacy-preview section { padding:12px 0; border-bottom:1px solid var(--border-muted); }.legacy-preview input:not([type=checkbox]) { margin-left:12px; padding:8px; font:inherit; }.legacy-images { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }.legacy-images img { width:120px; height:90px; object-fit:contain; }
+.legacy-import { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:12px 20px 0; padding:10px 14px; border:2px solid var(--ink); background:var(--paper-2); color:var(--text-primary); font-size:var(--font-meta); }.legacy-import > p { margin:0; }.legacy-preview { display:grid; gap:12px; padding:16px; border:3px solid var(--ink); }.legacy-preview section { padding:12px 0; border-bottom:1px solid var(--border-muted); }.legacy-preview input:not([type=checkbox]) { margin-left:12px; padding:8px; font:inherit; }.legacy-images { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }.legacy-images img { width:120px; height:90px; object-fit:contain; }
 .legacy-overlay { position:fixed; inset:0; z-index:100; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.35); }
 .legacy-preview { width:min(800px,100%); max-height:calc(100dvh - 48px); overflow:auto; box-sizing:border-box; color:var(--text-primary); background:var(--surface); border-radius:var(--radius-panel); box-shadow:var(--shadow-card); overflow-wrap:anywhere; }
 .legacy-preview header { display:flex; justify-content:space-between; align-items:center; gap:12px; }

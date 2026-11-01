@@ -71,6 +71,8 @@ def classify_error(error: Exception) -> ErrorKind:
     if isinstance(error, ConfigError):
         return ErrorKind.BLOCKED
     if isinstance(error, APIStatusError):
+        if error.status_code == 402:
+            return ErrorKind.NEEDS_USER_ACTION
         if error.status_code in {401, 403}:
             return ErrorKind.BLOCKED
         if error.status_code == 404:

@@ -36,6 +36,8 @@ const props = defineProps<{
   mediaJobs?: MediaJob[]
   inlineRuns?: Record<string, InlineRunState>
   error: string; emptyHint?: string; examples?: string[]
+  /* 会话内容还在路上时不要渲染空态：否则会先闪一下"从零开始"的引导块再被消息顶掉。 */
+  loading?: boolean
 }>()
 defineEmits<{
   retry: []; openRun: [run: CoreRun]; example: [text: string]
@@ -126,23 +128,38 @@ function imageRequestId(message: ConversationMessage): string | null {
     ? message.event_id.slice('generation-prompt:'.length) : null
 }
 
+const messagesByEvent = computed(() => {
+  const byEvent = new Map<string, ConversationMessage>()
+  for (const item of props.messages) if (item.event_id && !byEvent.has(item.event_id)) byEvent.set(item.event_id, item)
+  return byEvent
+})
+const mediaJobsByRequest = computed(() => {
+  const all = new Map<string, MediaJob>(), awaiting = new Map<string, MediaJob>()
+  for (const job of props.mediaJobs ?? []) {
+    if (!all.has(job.generation_request_id)) all.set(job.generation_request_id, job)
+    if (job.approval_status === 'pending' && !awaiting.has(job.generation_request_id)) awaiting.set(job.generation_request_id, job)
+  }
+  return { all, awaiting }
+})
+const runsWithImages = computed(() => new Set(Object.values(props.inlineRuns ?? {})
+  .filter(item => !!item.imageUrl).map(item => item.run.id)))
+
 function imageResult(requestId: string): ConversationMessage | undefined {
-  return props.messages.find((item) => item.event_id === `generation-artifact:${requestId}`)
+  return messagesByEvent.value.get(`generation-artifact:${requestId}`)
 }
 
 function mediaJobForUser(message: ConversationMessage): MediaJob | undefined {
   const requestId = message.event_id?.startsWith('generation-user:')
     ? message.event_id.slice('generation-user:'.length) : null
-  return requestId ? props.mediaJobs?.find((job) => job.generation_request_id === requestId) : undefined
+  return requestId ? mediaJobsByRequest.value.all.get(requestId) : undefined
 }
 
 function awaitingCost(requestId: string): MediaJob | undefined {
-  return props.mediaJobs?.find((job) =>
-    job.generation_request_id === requestId && job.approval_status === 'pending')
+  return mediaJobsByRequest.value.awaiting.get(requestId)
 }
 
 function hasImagePrompt(requestId: string): boolean {
-  return props.messages.some((item) => item.event_id === `generation-prompt:${requestId}`)
+  return messagesByEvent.value.has(`generation-prompt:${requestId}`)
 }
 
 function hasFailureMessage(requestId: string): boolean {
@@ -152,8 +169,7 @@ function hasFailureMessage(requestId: string): boolean {
 
 function isHomeImageArtifact(message: ConversationMessage): boolean {
   return (message.event_id?.startsWith('generation-artifact:') ?? false) ||
-    (!!message.event_id?.startsWith('quick-image:') && Object.values(props.inlineRuns ?? {})
-      .some(item => item.run.id === message.run_id && !!item.imageUrl))
+    (!!message.event_id?.startsWith('quick-image:') && runsWithImages.value.has(message.run_id ?? ''))
 }
 
 function imagePlaceholderRatio(requestId: string): string {
@@ -330,7 +346,7 @@ function activityText(event: RuntimeEvent): string {
 <template>
   <div ref="scroller" class="message-scroller" :class="{ 'home-message-scroller': homeMode }" @scroll="check">
     <div class="message-list">
-      <template v-if="!messages.length && !streaming && !activities?.length && !run && !error">
+      <template v-if="!loading && !messages.length && !streaming && !activities?.length && !run && !error">
         <div v-if="homeMode" class="chat-empty-brand"><KantokuMark /><span>Kantoku</span></div>
         <p class="list-empty-hint">{{ emptyHint ?? '从一个问题开始，也可以直接描述你要制作的内容。' }}</p>
         <div v-if="examples?.length" class="list-examples">
@@ -352,7 +368,7 @@ function activityText(event: RuntimeEvent): string {
           </template>
           <p v-else-if="mediaJobForUser(message)!.status === 'failed' && !hasFailureMessage(mediaJobForUser(message)!.generation_request_id)" class="chat-inline-error" role="alert">{{ mediaJobForUser(message)!.error_message }}</p>
         </div>
-        <AssistantMessageBlock v-else-if="message.role === 'assistant' && !(homeMode && (isHomeImageArtifact(message) || message.event_id?.startsWith('quick-director:')))" :content="message.content" :show-mark="!homeMode" />
+        <AssistantMessageBlock v-else-if="message.role === 'assistant' && !(homeMode && (isHomeImageArtifact(message) || message.event_id?.startsWith('quick-director:')))" :content="message.content" />
         <div v-if="homeMode && imageRequestId(message)" class="chat-image-generation" aria-live="polite">
           <div v-if="awaitingCost(imageRequestId(message)!)" class="chat-cost-card">
             <strong>本次生图需要确认费用</strong>
@@ -370,7 +386,7 @@ function activityText(event: RuntimeEvent): string {
             </div>
             <ImageGenerationPlaceholder :ratio="imagePlaceholderRatio(imageRequestId(message)!)" />
           </template>
-          <p v-else-if="imagePhases?.[imageRequestId(message)!]?.status === 'failed' && !hasFailureMessage(imageRequestId(message)!)" class="chat-inline-error" role="alert">{{ mediaJobs?.find((job) => job.generation_request_id === imageRequestId(message))?.error_message ?? '图片生成未完成，请查看错误记录。' }}</p>
+          <p v-else-if="imagePhases?.[imageRequestId(message)!]?.status === 'failed' && !hasFailureMessage(imageRequestId(message)!)" class="chat-inline-error" role="alert">{{ mediaJobsByRequest.all.get(imageRequestId(message)!)?.error_message ?? '图片生成未完成，请查看错误记录。' }}</p>
         </div>
         <p v-if="homeMode && activityByMessage?.[message.id]" class="chat-inline-status chat-direct-status">{{ activityByMessage[message.id] }}</p>
         <div v-if="homeMode && publicActivities?.[message.id]?.length" class="chat-public-activity" aria-label="公开执行摘要" aria-live="polite">
@@ -389,7 +405,7 @@ function activityText(event: RuntimeEvent): string {
           <video :src="messageMedia[message.id].url" controls preload="metadata" />
           <figcaption>生成的视频</figcaption>
         </figure>
-        <AssistantStreamingBlock v-if="homeMode && streamingByMessage?.[message.id]" :content="streamingByMessage[message.id]" :show-mark="false" />
+        <AssistantStreamingBlock v-if="homeMode && streamingByMessage?.[message.id]" :content="streamingByMessage[message.id]" />
         <p v-if="homeMode && errorMessageId === message.id && error" class="chat-inline-error" role="alert">{{ error }}</p>
         <section v-if="homeMode && inlineRuns?.[message.id]" class="chat-inline-activity" aria-live="polite">
           <div v-if="!isComicFastImage(inlineRuns[message.id].run)" class="chat-public-activity chat-run-feed">

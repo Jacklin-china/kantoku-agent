@@ -224,6 +224,61 @@ def test_explicit_historical_v1_camera_reference_does_not_invent_other_parameter
     assert retained == {"cinematography.camera_language": _draft().camera_language}
 
 
+@pytest.mark.parametrize("fields", [
+    ["style_context", "director_plan.style_boundary"],
+    ["camera_style", "cinematography.camera_language"],
+    ["color", "cinematography.color_relationship"],
+    ["lighting", "cinematography.lighting"],
+])
+def test_single_source_may_name_a_group_and_its_own_leaf(app, monkeypatch, fields):
+    """同一来源同时列出一级设定与其叶子字段时，是同源重复声明，不是“多来源”冲突。"""
+    project, first, _ = _generate(app, monkeypatch,
+        brief_text="给我生成一个jojo风格的牛爷爷",
+        director_fields={"character_presence": "牛爷爷", "style_boundary": "jojo风格"})
+    cid = app.runtime_store.get_run(first["run_id"]).state["conversation_id"]
+    spec = first["director_spec"]
+    source = {"id": first["run_id"], "kind": "run", "version": spec["version"],
+              "fields": fields}
+
+    def stage(skill, _inputs, context):
+        parts = _responses()[skill]
+        if skill == SKILLS[0]:
+            parts["creative_decision"]["intent_summary"] = context["context"]["current_task"]
+        if skill == SKILLS[1]:
+            parts["director_plan"].update(character_presence="欧美少女",
+                                          style_boundary="明亮写实人像")
+        if skill == SKILLS[2]:
+            parts["cinematography"].update(camera_language="航拍环绕", lighting="冷白光",
+                                           color_relationship="高饱和暖色")
+        return parts
+
+    def resolve(messages):
+        payload = json.loads(messages[1]["content"])
+        read = payload["recalled"].get(source["id"], {})
+        return json.dumps({"action": "create", "relation": "continue", "goal": "沿用所选设定",
+            "reads": [{"kind": "run", "id": source["id"]}]} if not read or read.get("read_required")
+            else {"action": "create", "relation": "continue", "goal": "沿用所选设定",
+                  "sources": [source]})
+
+    monkeypatch.setattr(app.comic_director, "stage_executor", stage)
+    monkeypatch.setattr(app, "_conversation_context_model", resolve)
+    monkeypatch.setattr(app, "_comic_director_model", lambda _: json.dumps({
+        "public_summary": "离线契约审核", "confidence": .9,
+        "findings": [], "suggested_patches": []}))
+    result = app.create_comic_director(project, {
+        "expected_project_version": app.comic_projects.get(project).project.current_version,
+        "creation_mode": "professional", "conversation_id": cid,
+        "independent_plan": True, "task": "沿用所选设定，其余重新设计"})
+    retained = app.runtime_store.get_run(result["run_id"]).state["creative_context"][
+        "retained_director_fields"]
+    assert retained, "所选设定必须进入继承字段"
+    for path, value in retained.items():  # 同源重复声明只保留来源值，不覆盖成模型新值。
+        group, leaf = path.split(".", 1)
+        assert value == spec[group][leaf]
+    assert result["director_spec"]["director_plan"]["character_presence"] == "欧美少女"
+    assert "director_plan.character_presence" not in retained
+
+
 def test_semantic_resource_selection_reads_description_and_excludes_unselected_style(
     app, monkeypatch,
 ):

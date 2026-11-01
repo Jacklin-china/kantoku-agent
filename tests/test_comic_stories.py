@@ -16,7 +16,7 @@ from zipfile import ZipFile
 import pytest
 from pydantic import ValidationError
 
-from kantoku.config import ToolError, get_settings
+from kantoku.config import LLMError, ToolError, get_settings
 from kantoku.config.runtime_paths import atomic_write_bytes
 from kantoku.core import llm
 from kantoku.core.runtime.models import ArtifactLifecycle
@@ -56,7 +56,21 @@ def story_app(monkeypatch, tmp_path):
         monkeypatch.setattr(module, "chat", _forbidden)
         monkeypatch.setattr(module, "vision_chat", _forbidden)
     application = web_studio.StudioApplication()
-    monkeypatch.setattr(application, "_comic_image_vision_model", _forbidden)
+    def continuity_only(messages):
+        content = messages[1]["content"]
+        if not isinstance(content, list):
+            return _forbidden()
+        context = json.loads(content[0]["text"])
+        if context.get("stage") != "visual_continuity":
+            return _forbidden()
+        # Existing routing tests claim no pixel observations. Dedicated continuity
+        # tests inject visible evidence and verify its exact bytes and preservation.
+        return json.dumps({"elements": [{"element_id": item["element_id"],
+            "target": item["target"], "field": item["field"], "observation": "",
+            "visibility": "uncertain"} for item in context["established_elements"]],
+            "limitations": ["Offline routing substitute; no pixel facts asserted."]})
+
+    monkeypatch.setattr(application, "_comic_image_vision_model", continuity_only)
     monkeypatch.setattr(application, "_comic_constraint_model", _forbidden)
     try:
         yield application
@@ -118,6 +132,12 @@ def _draft(*images, title="Offline bridge sequence"):
                  "action": f"A small visible movement in shot {index}.",
                  "camera": "Camera remains still.", "duration_seconds": 4.0,
                  "transition": "Cut."} for index, image in enumerate(images, 1)]}
+
+
+def _timing_plan(shot):
+    """Explicit offline reviewer estimate; covers both existing execution fields."""
+    return [{"field": "action", "evidence": shot["action"][:1000], "seconds": 5.0},
+            {"field": "transition", "evidence": shot["transition"][:1000], "seconds": 1.0}]
 
 
 def _save(app, pid, cid, draft, key="save"):
@@ -887,8 +907,12 @@ def test_ai_draft_passes_validation_until_the_user_edits_it(story_app, monkeypat
     generated = app.comic_story_operation(cid, "generate", {
         **_request(app, pid, cid, "gen"), "images": [_ref(image)], "instruction": "one shot"})
     assert generated["review"]["validation_requested"] is False
-    with pytest.raises(ToolError, match="尚未通过校验"):
-        app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "before-check"))
+    assert generated["can_confirm"] is True
+    direct = app.comic_story_operation(cid, "confirm", {
+        **_request(app, pid, cid, "before-check")})
+    assert direct["confirmation"]["confirmed"]
+    exported = app.comic_story_operation(cid, "exports", _request(app, pid, cid, "direct-export"))
+    assert exported["exports"][0]["story_version"] == generated["story"]["version"]
     checked = app.comic_story_operation(cid, "review", _request(app, pid, cid, "check"))
     assert checked["review"]["status"] == "pass"
     assert checked["review"]["validation_requested"] is True
@@ -898,14 +922,1678 @@ def test_ai_draft_passes_validation_until_the_user_edits_it(story_app, monkeypat
     edited = _draft(image, title="改过的标题")
     _save(app, pid, cid, edited, "edit-after-draft")
     assert app.get_comic_story(cid)["review"] is None
+    assert app.get_comic_story(cid)["can_confirm"] is False
+    with pytest.raises(ToolError, match="尚未通过校验"):
+        app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "edited-unchecked"))
     again = app.comic_story_operation(cid, "review", _request(app, pid, cid, "recheck"))
     assert again["review"]["status"] == "pass"
     assert len(review_calls) == 2
 
-    confirmed = app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "confirmed"))
+    confirmed = app.comic_story_operation(cid, "confirm", {
+        **_request(app, pid, cid, "confirmed")})
     assert confirmed["confirmation"]["confirmed"]
     exported = app.comic_story_operation(cid, "exports", _request(app, pid, cid, "exported"))
     assert exported["exports"][0]["story_version"] == again["story"]["version"]
+
+
+def test_ai_organizing_fixes_advice_and_saves_only_after_a_clean_independent_review(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    original = _draft(image)
+    _save(app, pid, cid, original)
+    before = app.get_comic_story(cid)["story"]
+    fixed = copy.deepcopy(original)
+    fixed["shots"][0].update(camera="Start wide, then move toward the subject.",
+                             duration_seconds=8.0, transition="Finish the gesture before cutting.")
+    inputs, checks = [], []
+
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        inputs.append(payload)
+        assert app.get_comic_story(cid)["story"] == before
+        return json.dumps(original if len(inputs) == 1 else fixed)
+
+    def review(messages):
+        current = json.loads(messages[1]["content"])["draft"]
+        checks.append(current)
+        return json.dumps({"status": "pass", "findings": []} if current["shots"] == fixed["shots"]
+            else {"status": "warning", "findings": [{"severity": "warning",
+                "shot_id": "story-shot-1", "field": "camera", "code": "camera_conflict",
+                "evidence": original["shots"][0]["camera"], "message": "The opening needs room.",
+                "suggestion": "Use a wide opening, extend the duration and finish the gesture."}]})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "polish-advice"), "images": [_ref(image)],
+        "instruction": original["instruction"], "draft": original})
+    assert len(inputs) == len(checks) == 2
+    assert result["generation_status"] == "ready" and result["can_confirm"]
+    assert result["story"]["shots"] == fixed["shots"]
+    assert not result["review"]["findings"] and result["story"]["version"] == before["version"] + 1
+    monkeypatch.setattr(app, "_comic_constraint_model", _forbidden)
+    repeated = app.comic_story_operation(cid, "review", _request(app, pid, cid, "check-polished"))
+    assert repeated["review_reused"] and not repeated["review"]["findings"]
+
+
+def test_unresolved_advice_is_not_published_as_a_finished_ai_story(story_app, monkeypatch):
+    app = story_app
+    pid, cid, image = _setup(app)
+    original = _draft(image)
+    _save(app, pid, cid, original)
+    before = app.get_comic_story(cid)["story"]
+    monkeypatch.setattr(app, "_comic_image_vision_model", lambda _: json.dumps(original))
+    monkeypatch.setattr(app, "_comic_constraint_model", lambda _: json.dumps({
+        "status": "warning", "findings": [{"severity": "warning", "shot_id": "story-shot-1",
+            "field": "camera", "code": "camera_conflict",
+            "evidence": original["shots"][0]["camera"],
+            "message": "Framing still needs coordination.", "suggestion": "Coordinate framing."}]}))
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "unresolved-advice"), "images": [_ref(image)],
+        "instruction": original["instruction"], "draft": original})
+    assert result["generation_status"] == "needs_revision"
+    assert result["candidate_review"]["findings"][0]["severity"] == "warning"
+    assert app.get_comic_story(cid)["story"] == before
+    with pytest.raises(ToolError, match="候选.*未通过"):
+        app.comic_story_operation(cid, "adopt-candidate", {
+            **_request(app, pid, cid, "reject-advisory-candidate"),
+            "candidate_run_id": result["candidate_run_id"]})
+
+
+def test_repair_context_keeps_required_facts_without_repeating_three_complete_old_drafts(
+    story_app, monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    app = story_app
+    _, _, image = _setup(app)
+    draft = ComicStoryDraft.model_validate(_draft(*[image] * 6))
+    for shot in draft.shots:
+        shot.action = "人物完成当前动作并保持道具位置。" * 18
+    fact = "起始画面的身份、衣服与道具必须保留。" * 120
+    sources = [{"image": _ref(image), "constraints": [{"effective_requirement": fact}]}]
+    findings = [{"severity": "error", "shot_id": shot.shot_id, "field": "action",
+        "code": "continuity", "evidence": shot.action,
+        "message": "需衔接下一镜。", "suggestion": "明确交接后的结束姿态。"}
+        for shot in draft.shots]
+    history = [{"draft": draft.model_dump(mode="json"),
+                "review": {"status": "needs_revision", "findings": findings}} for _ in range(3)]
+    calls = []
+
+    def provider(messages, **kwargs):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        calls.append(payload)
+        assert payload["current_draft"] == draft.model_dump(mode="json")
+        assert payload["user_intent"] == draft.model_dump(mode="json")
+        assert fact in json.dumps(payload, ensure_ascii=False)
+        return SimpleNamespace(content=draft.model_dump_json())
+
+    monkeypatch.setattr(web_studio, "vision_chat", provider)
+    result = app.comic_stories._repair(draft, findings, [image], sources,
+        web_studio.StudioApplication._comic_image_vision_model, draft.instruction,
+        user_intent=draft, repair_history=history)
+    assert result == draft and len(calls) == 1
+    assert len(calls[0]["repair_history"]) == 3
+    assert all("draft" not in entry for entry in calls[0]["repair_history"])
+    assert ComicStoryService._repair_scope(draft, findings)["shots"]
+
+
+def test_six_image_repairs_with_timing_history_fit_the_real_visual_request_boundary(
+    story_app, monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    app = story_app
+    pid, cid, first = _setup(app)
+    images = [first, *[_upload(app, pid, cid, content=_png(index + 1)) for index in range(5)]]
+    draft = ComicStoryDraft.model_validate(_draft(*images))
+    for shot in draft.shots:
+        shot.action = "人物完成当前动作并保持身份、衣服和道具位置。" * 12
+        shot.transition = "收好灯笼并从腰间取出指南针，再进入下一起始画面。" * 3
+    fields = list(ComicStoryService._review_fields(draft))
+    sources = [{"image": _ref(image), "constraints": [{
+        "effective_requirement": f"镜头{index}起始画面的身份、衣服、环境与道具必须保持。" * 12}]}
+        for index, image in enumerate(images)]
+    findings = [{"severity": "error", "shot_id": shot.shot_id, "field": "duration_seconds",
+        "code": "duration_conflict", "evidence": str(shot.duration_seconds),
+        "evidence_id": fields[index], "related_fields": fields[:20],
+        "message": "当前动作和交接需完整时间。", "suggestion": "一次安排动作和交接的时长。",
+        "timing_plan": [{"field": "action", "evidence": shot.action[:150], "seconds": 6.0},
+                        {"field": "transition", "evidence": shot.transition, "seconds": 3.0}]}
+        for index, shot in enumerate(draft.shots)]
+    history = [{"draft": draft.model_dump(mode="json"),
+                "review": {"status": "needs_revision", "findings": findings}} for _ in range(3)]
+    calls = []
+    def provider(messages, **kwargs):
+        calls.append(messages)
+        payload = json.loads(messages[1]["content"][0]["text"])
+        assert payload["current_draft"] == payload["user_intent"] == draft.model_dump(mode="json")
+        assert all("related_fields" not in finding and "evidence_id" not in finding
+                   for finding in payload["issues"])
+        assert all("timing_plan" not in finding for attempt in payload["repair_history"]
+                   for finding in attempt["review"]["findings"])
+        assert [finding["timing_plan"] for finding in payload["issues"]] == [
+            finding["timing_plan"] for finding in findings]
+        assert sum(part["type"] == "image_url" for part in messages[1]["content"]) == 6
+        for source in sources:
+            assert source["constraints"][0]["effective_requirement"] in json.dumps(
+                payload, ensure_ascii=False)
+        return SimpleNamespace(content=draft.model_dump_json())
+
+    monkeypatch.setattr(web_studio, "vision_chat", provider)
+    result = app.comic_stories._repair(draft, findings, images, sources,
+        web_studio.StudioApplication._comic_image_vision_model, draft.instruction,
+        user_intent=draft, repair_history=history, include_warnings=True)
+    assert result == draft and len(calls) == 1
+
+
+def test_organize_corrects_review_format_then_repairs_and_manual_validation_has_no_old_issues(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, first = _setup(app)
+    second = _upload(app, pid, cid, content=_png(27))
+    _select(app, cid, second)
+    draft = _draft(first, second)
+    draft["shots"][0].update(action="Close and put the lantern on the belt.",
+                             transition="Take out and open the compass before cutting.")
+    original = _save(app, pid, cid, draft)["story"]
+    fixed = copy.deepcopy(draft)
+    fixed["shots"][0]["duration_seconds"] = 8.0
+    visions, reviews = [], []
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        visions.append(payload)
+        if len(visions) == 1:
+            return json.dumps(draft)
+        assert app.get_comic_story(cid)["story"] == original
+        assert payload["issues"][0]["timing_plan"] == _timing_plan(draft["shots"][0])
+        return json.dumps(fixed)
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        reviews.append(messages)
+        if payload["draft"]["shots"] == fixed["shots"]:
+            return json.dumps({"status": "pass", "findings": []})
+        finding = {"severity": "error", "shot_id": "story-shot-1", "field": "duration_seconds",
+            "code": "duration_conflict", "evidence": "4.0", "timing_plan": _timing_plan(
+                draft["shots"][0]), "message": "Allow six seconds for the complete handoff.",
+            "suggestion": "Extend the first shot to cover the movements before the cut."}
+        if len(reviews) == 1:
+            finding["timing_plan"][0]["seconds"] = "5 seconds"
+        else:
+            assert len(messages) == 3 and "schema_errors" in messages[-1]["content"]
+        return json.dumps({"status": "needs_revision", "findings": [finding]})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    request = {**_request(app, pid, cid, "format-then-repair"), "draft": draft,
+               "instruction": draft["instruction"], "images": [_ref(first), _ref(second)]}
+    result = app.comic_story_operation(cid, "generate", request)
+    assert len(visions) == 2 and len(reviews) == 3
+    assert result["generation_status"] == "ready" and result["can_confirm"]
+    assert result["story"]["shots"] == fixed["shots"]
+    assert result["story"]["version"] == original["version"] + 1
+    monkeypatch.setattr(app, "_comic_constraint_model", _forbidden)
+    monkeypatch.setattr(app, "_comic_image_vision_model", _forbidden)
+    checked = app.comic_story_operation(
+        cid, "review", _request(app, pid, cid, "validate-organized"))
+    assert checked["review_reused"] and checked["review"]["findings"] == []
+    app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "confirm-organized"))
+    assert app.comic_story_operation(cid, "generate", request) == result
+
+
+def test_live_acceptance_replays_the_original_story_sources_and_checks_again(
+    story_app, monkeypatch, tmp_path,
+):
+    from runpy import run_path
+    from types import SimpleNamespace
+
+    from kantoku.config.runtime_paths import atomic_write_text
+
+    app = story_app
+    _, _, image = _setup(app)
+    draft = _draft(image)
+    source = {"image": _ref(image), "user_requirements": ["Keep the silver lighthouse badge."]}
+    snapshot = tmp_path / "source-story.json"
+    atomic_write_text(snapshot, json.dumps({"draft": draft, "source_contexts": [source],
+        "source_run_id": "offline-source-run", "images": [{"image": _ref(image),
+            "sha256": image["sha256"]}]}))
+    visions, reviews = [], []
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        visions.append(payload)
+        assert payload["image_sources"][0]["user_requirements"] == source["user_requirements"]
+        current = payload["current_draft"]
+        assert current["title"] == draft["title"]
+        assert current["shots"][0]["image"] != _ref(image)
+        current["shots"][0]["duration_seconds"] = 8.0
+        return json.dumps(current)
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        reviews.append(payload)
+        assert payload["draft"]["shots"][0]["duration_seconds"] == 8.0
+        assert payload["image_sources"][0]["user_requirements"] == source["user_requirements"]
+        return json.dumps({"status": "pass", "findings": []})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    verify = run_path(str(Path(__file__).parents[1] / "scripts/verify_director_pipeline.py"))[
+        "verify_story_export"]
+    report = {"cases": []}
+    verify(app, report, SimpleNamespace(story_snapshot=snapshot,
+        image=Path(app.runtime_store.get_artifact(image["artifact_id"]).location),
+        additional_image=[], task=None))
+    assert len(visions) == 1 and len(reviews) == 2
+    assert report["cases"][0]["passed"] is True
+    assert report["cases"][0]["manual_review"]["findings"] == []
+    assert report["cases"][0]["fresh_review"]["findings"] == []
+
+
+def test_export_is_one_portable_video_prompt_with_timeline_and_cross_shot_handoff(story_app):
+    app = story_app
+    pid, cid, image = _setup(app)
+    draft = _draft(image, image)
+    draft["shots"][0].update(action="人物抬手接住灯笼。", camera="固定机位。",
+                             duration_seconds=3.0, transition="手握灯笼转向街口，接下一镜。")
+    draft["shots"][1].update(action="保持同一只手提灯，走向街口。", camera="顺行方向跟拍。",
+                             duration_seconds=4.0, transition="背影远去后自然淡出。")
+    view = _save(app, pid, cid, draft)
+    text = view["export_text"]
+    assert "完整视频生成提示词" in text and "一条完整" in text
+    assert "7 秒" in text and "0–3 秒" in text and "3–7 秒" in text
+    assert "跨镜连续性" in text
+    for shot in draft["shots"]:
+        assert shot["action"] in text and shot["transition"] in text
+    assert text.count(view["manifest"]["shots"][0]["filename"]) >= 2
+
+
+def test_manual_review_resolves_current_field_reference_without_copying_long_quotes(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    draft = _draft(image)
+    draft["shots"][0]["action"] = "先保持起始姿态，再追踪来箭并起身。" * 70
+    saved = _save(app, pid, cid, draft)
+    assert saved["can_confirm"] is False
+    calls = []
+
+    def review_model(messages):
+        payload = json.loads(messages[1]["content"])
+        calls.append(payload)
+        evidence_id, coordinate = next((key, value) for key, value in
+            payload["review_fields"].items() if value["field"] == "action")
+        return json.dumps({"status": "needs_revision", "findings": [{
+            **coordinate, "evidence_id": evidence_id, "severity": "error",
+            "code": "duration_conflict", "message": "动作无法在当前时长内完成。",
+            "timing_plan": _timing_plan(payload["draft"]["shots"][0]),
+            "suggestion": "延长时长或简化动作。"}]})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", review_model)
+    checked = app.comic_story_operation(cid, "review", _request(app, pid, cid, "direct-manual"))
+    assert len(calls) == 1
+    assert checked["story"] == saved["story"]
+    finding = checked["review"]["findings"][0]
+    assert finding["shot_id"] == draft["shots"][0]["shot_id"]
+    assert finding["evidence"] == draft["shots"][0]["action"]
+    assert finding["suggestion"] == "延长时长或简化动作。"
+    assert checked["can_confirm"] is False
+
+
+@pytest.mark.parametrize("invalid", ["unknown", "wrong_field", "stale", "invented_quote",
+                                     "unknown_related"])
+def test_review_field_reference_cannot_bypass_identity_or_current_content(
+    story_app, monkeypatch, invalid,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    _save(app, pid, cid, _draft(image))
+    calls = []
+
+    def review_model(messages):
+        payload = json.loads(messages[1]["content"])
+        calls.append(payload)
+        evidence_id, coordinate = next((key, value) for key, value in
+            payload["review_fields"].items() if value["field"] == "camera")
+        finding = {**coordinate, "evidence_id": evidence_id, "severity": "error",
+                   "message": "Public test conflict.", "suggestion": "Adjust this field."}
+        if invalid == "unknown":
+            finding["evidence_id"] = "not-in-current-draft"
+        elif invalid == "wrong_field":
+            finding["field"] = "action"
+        elif invalid == "stale":
+            finding["evidence_id"] = evidence_id.rsplit(":", 1)[0] + ":old-content-hash"
+        elif invalid == "unknown_related":
+            finding["related_fields"] = ["outside-current-draft"]
+        else:
+            finding["evidence"] = "Invented words never present in the camera field."
+        return json.dumps({"status": "needs_revision", "findings": [finding]})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", review_model)
+    with pytest.raises(ToolError):
+        app.comic_story_operation(cid, "review", _request(app, pid, cid, invalid))
+    assert len(calls) == 2
+    assert app.get_comic_story(cid)["review"] is None
+    assert app.get_comic_story(cid)["can_confirm"] is False
+
+
+def test_ai_multishot_field_references_follow_repaired_content_then_confirm_without_review(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    skeleton = _draft(image)
+    skeleton["shots"] = [{**skeleton["shots"][0], "shot_id": f"stable-{index}",
+        "action": f"镜头{index}保持起始姿态，追踪来箭，再缓慢起身。" * 20}
+        for index in range(5)]
+    fixed = copy.deepcopy(skeleton)
+    fixed["shots"][3].update(action="先追踪来箭，再起身闪避。", duration_seconds=8.0)
+    vision_calls, review_calls, reference = [], [], []
+
+    def vision(messages):
+        vision_calls.append(messages)
+        return json.dumps(skeleton if len(vision_calls) == 1 else fixed)
+
+    def review_model(messages):
+        payload = json.loads(messages[1]["content"])
+        review_calls.append(payload)
+        current_id, coordinate = next((key, value) for key, value in
+            payload["review_fields"].items() if value == {"shot_id": "stable-3", "field": "action"})
+        if len(review_calls) == 1:
+            reference.append(current_id)
+        elif len(review_calls) == 3:
+            assert reference[0] != current_id
+            assert "review_fields" in messages[-1]["content"]
+            return json.dumps({"status": "pass", "findings": []})
+        return json.dumps({"status": "needs_revision", "findings": [{
+            **coordinate, "evidence_id": reference[0], "severity": "error",
+            "code": "duration_conflict", "message": "动作与时长不匹配。",
+            "timing_plan": _timing_plan(payload["draft"]["shots"][3]),
+            "suggestion": "协调动作顺序并延长时长。"}]})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review_model)
+    request = {**_request(app, pid, cid, "multishot-reference"), "draft": skeleton,
+               "images": [_ref(image)], "instruction": skeleton["instruction"]}
+    result = app.comic_story_operation(cid, "generate", request)
+    assert result["can_confirm"] and result["review"]["status"] == "pass"
+    assert result["review"]["validation_requested"] is False
+    assert result["story"]["shots"] == fixed["shots"]
+    assert app.comic_story_operation(cid, "generate", request) == result
+    app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "direct-confirm"))
+    exported = app.comic_story_operation(cid, "exports", _request(app, pid, cid, "direct-zip"))
+    assert exported["exports"] and len(vision_calls) == 2 and len(review_calls) == 3
+
+
+def test_cross_shot_error_repairs_all_verified_related_shots_without_changing_other_shots(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    skeleton = _draft(image, image, image)
+    fixed = copy.deepcopy(skeleton)
+    fixed["shots"][0]["transition"] = "Put down the lantern before picking up the beacon."
+    fixed["shots"][1]["action"] = "Raise the beacon taken at the previous boundary."
+    fixed["shots"][2]["action"] = "UNRELATED_CHANGE_MUST_NOT_BE_APPLIED"
+    calls = []
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        calls.append(payload)
+        if len(calls) == 2:
+            assert payload["draft"]["shots"][0]["transition"] == fixed["shots"][0]["transition"]
+            assert payload["draft"]["shots"][1]["action"] == fixed["shots"][1]["action"]
+            assert payload["draft"]["shots"][2] == skeleton["shots"][2]
+            return json.dumps({"status": "pass", "findings": []})
+        fields = payload["review_fields"]
+        primary = next(key for key, value in fields.items()
+                       if value == {"shot_id": "story-shot-1", "field": "transition"})
+        related = next(key for key, value in fields.items()
+                       if value == {"shot_id": "story-shot-2", "field": "action"})
+        return json.dumps({"status": "needs_revision", "findings": [{
+            "severity": "error", "field": "transition", "evidence_id": primary,
+            "related_fields": [related], "code": "requirement_conflict",
+            "message": "A prop changes across this boundary without a handoff.",
+            "suggestion": "Coordinate the handoff and the next shot's opening action."}]})
+
+    visions = iter([skeleton, fixed])
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    monkeypatch.setattr(app, "_comic_image_vision_model", lambda _: json.dumps(next(visions)))
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "related-shots"), "images": [_ref(image)],
+        "draft": skeleton, "instruction": "Keep the story coherent."})
+    assert result["can_confirm"] and len(calls) == 2
+
+
+def test_partial_structural_repairs_use_the_existing_two_attempts_and_preserve_progress(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    original = _draft(image)
+    first = copy.deepcopy(original)
+    first["shots"][0].update(action="", camera="")
+    second = copy.deepcopy(first)
+    second["shots"][0]["action"] = original["shots"][0]["action"]
+    visions = iter([first, second, original])
+    monkeypatch.setattr(app, "_comic_image_vision_model", lambda _: json.dumps(next(visions)))
+    monkeypatch.setattr(app, "_comic_constraint_model",
+                        lambda _: json.dumps({"status": "pass", "findings": []}))
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "partial-structure"), "images": [_ref(image)],
+        "draft": first, "instruction": "Fill both execution fields."})
+    assert result["story"]["shots"] == original["shots"]
+    assert result["can_confirm"]
+    assert len(app.runtime_store.get_run(result["run_id"]).state["story_attempts"]) == 3
+
+
+def test_story_sources_are_bound_to_each_shots_actual_image_not_input_order():
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    images = [{"image_id": "first", "version": 1}, {"image_id": "second", "version": 2}]
+    draft = ComicStoryDraft.model_validate({"shots": [
+        {"shot_id": "second-shot", "image": images[1]},
+        {"shot_id": "first-shot", "image": images[0]},
+        {"shot_id": "repeat-shot", "image": images[1]},
+    ]})
+    sources = [{"image": images[0]}, {"image": images[1]}]
+    result = ComicStoryService._shot_source_map(draft, sources)
+    assert result["first-shot"]["image_source_index"] == 0
+    assert result["second-shot"]["image_source_index"] == 1
+    assert result["repeat-shot"]["image_source_index"] == 1
+    fields = ComicStoryService._review_fields(draft)
+    related = next(key for key, value in fields.items() if value == {
+        "shot_id": "second-shot", "field": "action"})
+    scope = ComicStoryService._repair_scope(draft, [{"severity": "warning",
+        "shot_id": "first-shot", "field": "action", "code": "requirement_conflict",
+        "related_fields": [related]}])
+    assert scope["shots"] == {}  # 艺术建议不能授权跨镜头重写。
+    scope = ComicStoryService._repair_scope(draft, [{"severity": "error",
+        "shot_id": "first-shot", "field": "action", "code": "image_conflict",
+        "related_fields": [related]}])
+    assert set(scope["shots"]) == {"first-shot", "second-shot"}
+
+
+@pytest.mark.parametrize("stale", [True, False])
+@pytest.mark.parametrize("severity", ["error", "warning"])
+def test_review_only_discards_a_stale_quoted_claim_with_verified_current_counterevidence(
+    story_app, monkeypatch, stale, severity,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    draft = _draft(image)
+    draft["shots"][0]["camera"] = "向右移动后停住。" if stale else "向左移动后停住。"
+    _save(app, pid, cid, draft)
+    calls = []
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        calls.append(payload)
+        if payload.get("stage") == "story_finding_audit":
+            field_id = next(key for key, value in payload["review_fields"].items()
+                            if value == {"shot_id": "story-shot-1", "field": "camera"})
+            return json.dumps({"checks": [{"finding": 1, "verdict": "stale_current_quote",
+                "field_id": field_id, "claimed_quote": "向左", "reason": "该引用与现稿不一致。",
+                "current_quote": draft["shots"][0]["camera"]}]})
+        return json.dumps({"status": "needs_revision", "findings": [{
+            "severity": severity, "shot_id": "story-shot-1", "field": "camera",
+            "code": "camera_conflict", "message": "当前运镜写“向左”，与要求不一致。",
+            "evidence": draft["shots"][0]["camera"], "suggestion": "改正运动方向。"}]})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    checked = app.comic_story_operation(cid, "review", _request(app, pid, cid, "quoted-claim"))
+    expected = "needs_revision" if severity == "error" else "warning"
+    assert checked["review"]["status"] == ("pass" if stale else expected)
+    assert len(calls) == (2 if stale else 1)
+
+
+@pytest.mark.parametrize("invalid", ["missing_check", "wrong_field", "false_counterquote"])
+def test_invalid_audit_cannot_clear_a_real_finding(invalid):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"title": "Current story", "shots": [{
+        "shot_id": "one", "image": {"image_id": "image", "version": 1},
+        "camera": "Move right."}]})
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision", "findings": [{
+        "severity": "error", "shot_id": "one", "field": "camera",
+        "message": 'Current camera says "Move left".', "evidence": "Move right."}]})
+    fields = service._review_fields(draft)
+    camera = next(key for key, value in fields.items() if value["field"] == "camera")
+    title = next(key for key, value in fields.items() if value["field"] == "title")
+    check = {"finding": 1, "verdict": "stale_current_quote", "claimed_quote": "Move left",
+             "field_id": title if invalid == "wrong_field" else camera,
+             "current_quote": "Invented" if invalid == "false_counterquote" else "Move right.",
+             "reason": "Must be verified against the same current field."}
+    service._audit_finding_quotes(draft, output,
+        lambda _: json.dumps({"checks": [] if invalid == "missing_check" else [check]}), [])
+    assert output.status == "needs_revision" and len(output.findings) == 1
+
+
+@pytest.mark.parametrize("bad_check", ["missing", "duplicate", "bad_quote"])
+def test_one_bad_countercheck_keeps_its_issue_without_discarding_other_valid_checks(bad_check):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"title": "New title", "summary": "New summary"})
+    findings = [{"severity": "error", "field": field, "evidence": value,
+                 "message": f'Current {field} says "Old {field}".'}
+                for field, value in (("title", draft.title), ("summary", draft.summary))]
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision",
+                                                   "findings": findings})
+    fields = service._review_fields(draft)
+    def audit(messages):
+        payload = json.loads(messages[1]["content"])
+        assert set(payload["audit_requirements"]) == {"1", "2"}
+        checks = [{"finding": index, "verdict": "stale_current_quote",
+                   "field_id": next(ref for ref, coordinate in fields.items()
+                                    if coordinate["field"] == field),
+                   "claimed_quote": f"Old {field}", "current_quote": value,
+                   "reason": "Only this obsolete quoted value supported this finding."}
+                  for index, (field, value) in enumerate(
+                      (("title", draft.title), ("summary", draft.summary)), 1)]
+        if bad_check == "missing":
+            checks.pop()
+        elif bad_check == "duplicate":
+            checks.append(copy.deepcopy(checks[1]))
+        else:
+            checks[1]["current_quote"] = "Invented current text"
+        return json.dumps({"checks": checks})
+
+    service._audit_finding_quotes(draft, output, audit, [])
+    assert [finding.field for finding in output.findings] == ["summary"]
+    assert output.status == "needs_revision"
+
+
+def test_confirmed_edit_requirements_are_available_as_exact_source_counterevidence():
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [
+        {"shot_id": "first", "image": {"image_id": "a", "version": 1},
+         "action": "Hold the lantern.", "transition": "Stow the lantern and open the compass."},
+        {"shot_id": "second", "image": {"image_id": "b", "version": 2},
+         "action": "Hold the open compass."}]})
+    fields = service._review_fields(draft)
+    primary = next(ref for ref, coordinate in fields.items()
+                   if coordinate == {"shot_id": "second", "field": "action"})
+    transition = next(ref for ref, coordinate in fields.items()
+                      if coordinate == {"shot_id": "first", "field": "transition"})
+    sources = [{"image": shot.image.model_dump(), "authorized_requirements": [
+        {"requirement_id": "confirmed-edit", "requirement": shot.action,
+         "source": {"kind": "manual_region"}}]} for shot in draft.shots]
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision", "findings": [{
+        "severity": "error", "shot_id": "second", "field": "action", "code": "continuity",
+        "evidence_id": primary, "related_fields": [transition],
+        "message": "The compass has not been obtained."}]})
+    calls = []
+    def audit(messages):
+        payload = json.loads(messages[1]["content"])
+        calls.append(payload)
+        assert len(payload["audit_requirements"]["1"]["source_fields_by_image"]) == 2
+        quotes = {primary: draft.shots[1].action, transition: draft.shots[0].transition}
+        quotes.update({ref: item["quote"] for ref, item in payload["source_fields"].items()})
+        return json.dumps({"checks": [{"finding": 1, "verdict": "already_satisfied",
+            "supporting_quotes": quotes, "reason": "Both actual sources and handoff agree."}]})
+
+    service._audit_finding_quotes(draft, output, audit, sources)
+    assert len(calls) == 1 and output.findings == []
+
+
+def test_audit_deduplicates_source_text_without_losing_evidence_or_real_findings():
+    from types import SimpleNamespace
+
+    from kantoku.core.conversation_context import token_size
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": str(index),
+        "image": {"image_id": f"image-{index}", "version": 1},
+        "action": f"Hold object {index}.", "transition": f"Prepare for frame {index + 1}."}
+        for index in range(6)]})
+    sources = []
+    for index, shot in enumerate(draft.shots):
+        requirement = f"起始画面 {index} 的有效要求：" + "保留画面中明确的道具与主体。" * 80
+        sources.append({"image": shot.image.model_dump(), "constraints": [{"status": "active",
+            "origin": "user_request", "source_quote": f"原始要求 {index}",
+            "effective_requirement": requirement, "scope": "image"}]})
+    fields = service._review_fields(draft)
+    def ref(index, field):
+        return next(key for key, value in fields.items()
+                    if value == {"shot_id": str(index), "field": field})
+    findings = [{"severity": "error", "shot_id": str(index), "field": "action",
+        "evidence_id": ref(index, "action"), "evidence": draft.shots[index].action,
+        "related_fields": [ref(index - 1, "transition")], "code": "continuity",
+        "message": "The handoff needs checking.", "suggestion": "Explain the handoff."}
+        for index in range(1, 6)]
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision",
+                                                   "findings": findings})
+    calls = []
+
+    def audit(messages):
+        calls.append(messages)
+        payload = json.loads(messages[1]["content"])
+        assert all("evidence" not in finding for finding in payload["findings"].values())
+        assert all(item["primary_field_id"] in payload["review_fields"]
+                   for item in payload["audit_requirements"].values())
+        for index, source in enumerate(payload["image_sources"]):
+            constraint = source["constraints"][0]
+            reference = constraint["effective_requirement_ref"]
+            assert payload["source_fields"][reference]["quote"] == (
+                sources[index]["constraints"][0]["effective_requirement"])
+            assert constraint["source_quote"] == f"原始要求 {index}"
+            assert constraint["scope"] == "image"
+        assert token_size(messages) <= 18000
+        return json.dumps({"checks": [{"finding": int(index), "verdict": "retain",
+            "reason": "The actual handoff still needs work."} for index in payload["findings"]]})
+
+    service._audit_finding_quotes(draft, output, audit, sources)
+    assert len(calls) == 1 and len(output.findings) == 5
+    assert output.status == "needs_revision"
+
+
+@pytest.mark.parametrize("invalid", ["missing", "wrong_quote", "missing_transition", "fits"])
+def test_duration_errors_require_a_grounded_budget_for_action_and_transition(invalid):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"title": "A transfer", "shots": [{
+        "shot_id": "one", "image": {"image_id": "a", "version": 1},
+        "action": "Close and stow the lantern.", "transition": "Take out and open the compass.",
+        "duration_seconds": 4.0}]})
+    timing = [{"field": "action", "evidence": draft.shots[0].action, "seconds": 3.0},
+              {"field": "transition", "evidence": draft.shots[0].transition, "seconds": 3.0}]
+    bad = copy.deepcopy(timing)
+    if invalid == "missing":
+        bad = []
+    elif invalid == "wrong_quote":
+        bad[0]["evidence"] = "An action not in the current story."
+    elif invalid == "missing_transition":
+        bad.pop()
+    else:
+        for beat in bad:
+            beat["seconds"] = 1.0
+    calls = []
+    def review(messages):
+        calls.append(messages)
+        finding = {"severity": "error", "shot_id": "one", "field": "duration_seconds",
+            "code": "duration_conflict", "evidence": "4.0", "message": "Four seconds is too short.",
+            "suggestion": "Allow six seconds for the two movements."}
+        if len(calls) == 1:
+            if bad:
+                finding["timing_plan"] = bad
+        else:
+            content = messages[-1]["content"]
+            diagnostics = json.loads(content[content.index("{"):])
+            assert diagnostics["issues"][0]["reason"] == "invalid_timing_plan"
+            issue = diagnostics["issues"][0]
+            assert issue["required_phases"] == ["action", "transition"]
+            assert issue["provided_phases"] == sorted({beat["field"] for beat in bad})
+            assert issue["budget_seconds"] == sum(beat["seconds"] for beat in bad)
+            assert issue["quote_mismatch_beats"] == ([0] if invalid == "wrong_quote" else [])
+            assert issue["minimum_error_budget_exclusive"] == 4.0
+            finding["timing_plan"] = timing
+        return json.dumps({"status": "needs_revision", "findings": [finding]})
+
+    checked = service._review_output(draft, [], review, [])
+    assert len(calls) == 2
+    assert checked["status"] == "needs_revision"
+    assert checked["findings"][0]["timing_plan"] == timing
+
+
+def test_ungrounded_duration_review_never_publishes_or_confirms_a_generated_draft(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    draft = _draft(image)
+    original = _save(app, pid, cid, draft)["story"]
+    visions, reviews = [], []
+    def vision(messages):
+        visions.append(messages)
+        return json.dumps(draft)
+    def review(messages):
+        reviews.append(messages)
+        return json.dumps({"status": "needs_revision", "findings": [{
+            "severity": "error", "shot_id": "story-shot-1", "field": "duration_seconds",
+            "code": "duration_conflict", "evidence": "4.0",
+            "message": "Too many actions.", "suggestion": "Add one second."}]})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    request = {**_request(app, pid, cid, "unproven-timing"), "draft": draft,
+               "images": [_ref(image)], "instruction": "Allow time for the entire movement."}
+    with pytest.raises(ToolError, match="节拍预算"):
+        app.comic_story_operation(cid, "generate", request)
+    assert len(visions) == 1 and len(reviews) == 2
+    assert app.get_comic_story(cid)["story"] == original
+    with pytest.raises(ToolError):
+        app.comic_story_operation(cid, "generate", request)
+    assert len(visions) == 1 and len(reviews) == 2
+    run = next(run for run in app.runtime_store.list_runs(project_id=pid)
+               if run.state.get("request_id") == request["request_id"])
+    assert run.status.value == "failed"
+    assert run.state["story_candidate"]["draft"] == {**draft, "instruction": request["instruction"]}
+    with pytest.raises(ToolError, match="候选.*未通过"):
+        app.comic_story_operation(cid, "adopt-candidate", {
+            **_request(app, pid, cid, "reject-unproven-timing"), "candidate_run_id": run.id})
+
+
+def test_duration_budget_allows_an_instantaneous_editorial_cut():
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": "one",
+        "image": {"image_id": "a", "version": 1}, "action": "Walk to the mark.",
+        "transition": "Cut.", "duration_seconds": 4.0}]})
+    timing = [{"field": "action", "evidence": "Walk to the mark.", "seconds": 6.0},
+              {"field": "transition", "evidence": "Cut.", "seconds": 0.0}]
+    calls = []
+    def review(messages):
+        calls.append(messages)
+        return json.dumps({"status": "needs_revision", "findings": [{
+            "severity": "error", "shot_id": "one", "field": "duration_seconds",
+            "code": "duration_conflict", "evidence": "4.0", "timing_plan": timing,
+            "message": "The walk needs six seconds.", "suggestion": "Allow six seconds."}]})
+
+    checked = service._review_output(draft, [], review, [])
+    assert len(calls) == 1 and checked["status"] == "needs_revision"
+    assert checked["findings"][0]["timing_plan"] == timing
+
+
+@pytest.mark.parametrize("repair_changes_story", [True, False])
+def test_unbudgeted_timing_warning_must_be_fixed_before_a_story_is_saved(
+    story_app, monkeypatch, repair_changes_story,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    draft = _draft(image)
+    original = _save(app, pid, cid, draft)["story"]
+    fixed = copy.deepcopy(draft)
+    fixed["shots"][0]["duration_seconds"] = 6.0
+    calls, checks = [], []
+
+    def vision(messages):
+        calls.append(messages)
+        return json.dumps(fixed if len(calls) > 1 and repair_changes_story else draft)
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        checks.append(payload)
+        shot = payload["draft"]["shots"][0]
+        if shot["duration_seconds"] == 6.0:
+            return json.dumps({"status": "pass", "findings": []})
+        return json.dumps({"status": "warning", "findings": [{"severity": "warning",
+            "shot_id": shot["shot_id"], "field": "duration_seconds", "code": "duration_conflict",
+            "evidence": str(shot["duration_seconds"]), "message": "The pace can be improved.",
+            "suggestion": "Allow six seconds for the whole movement.", "timing_plan": []}]})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "unbudgeted-advice"), "draft": draft,
+        "images": [_ref(image)], "instruction": draft["instruction"]})
+    if repair_changes_story:
+        assert result["generation_status"] == "ready" and len(checks) == 2
+        assert result["story"]["shots"][0]["duration_seconds"] == 6.0
+        assert result["review"]["findings"] == []
+    else:
+        assert result["generation_status"] == "needs_revision" and len(checks) == 1
+        assert result["candidate_review"]["findings"][0]["severity"] == "warning"
+        assert app.get_comic_story(cid)["story"] == original
+
+
+def test_invalid_review_field_reference_correction_includes_the_current_field_id():
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": "one",
+        "image": {"image_id": "a", "version": 1}, "action": "Put the lantern away.",
+        "transition": "Take the compass.", "duration_seconds": 4.0}]})
+    fields = service._review_fields(draft)
+    expected = next(ref for ref, value in fields.items() if value["field"] == "transition")
+    wrong = next(ref for ref, value in fields.items() if value["field"] == "action")
+    calls = []
+
+    def review(messages):
+        calls.append(messages)
+        if len(calls) == 2:
+            content = messages[-1]["content"]
+            diagnostics = json.loads(content[content.index("{"):])
+            assert diagnostics["issues"][0]["expected_field_reference"] == expected
+        return json.dumps({"status": "needs_revision", "findings": [{"severity": "error",
+            "shot_id": "one", "field": "transition", "code": "other", "evidence": "",
+            "evidence_id": wrong if len(calls) == 1 else expected,
+            "message": "The transition needs a clear handoff.",
+            "suggestion": "Clarify the handoff."}]})
+
+    output = service._review_output(draft, [], review, [])
+    assert len(calls) == 2 and output["status"] == "needs_revision"
+    assert output["findings"][0]["evidence"] == draft.shots[0].transition
+
+
+@pytest.mark.parametrize("severity", ["error", "warning"])
+def test_repair_applies_the_verified_timing_budget_even_if_the_model_undercuts_it(severity):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": "one",
+        "image": {"image_id": "a", "version": 1}, "action": "Close the lantern.",
+        "transition": "Stow the lantern and take out the compass.", "duration_seconds": 3.5}]})
+    finding = {"severity": severity, "shot_id": "one", "field": "transition",
+        "code": "duration_conflict", "evidence": draft.shots[0].transition,
+        "message": "The complete action and handoff require 5.5 seconds.",
+        "suggestion": "Allow the full timing budget.", "timing_plan": [
+            {"field": "action", "evidence": draft.shots[0].action, "seconds": 3.0},
+            {"field": "transition", "evidence": draft.shots[0].transition, "seconds": 2.5}]}
+    inputs = []
+    def repair(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        inputs.append(payload)
+        assert payload["minimum_durations"] == {"one": 5.5}
+        returned = draft.model_copy(deep=True)
+        returned.shots[0].camera = "Follow the complete handoff."
+        return returned.model_dump_json()
+
+    fixed = service._repair_once(draft, [finding], [], [], repair, "", {("a", 1)},
+                                  include_warnings=True)
+    assert fixed.shots[0].duration_seconds == 5.5
+    assert fixed.shots[0].camera == "Follow the complete handoff."
+    assert fixed.shots[0].image == draft.shots[0].image
+    assert draft.shots[0].duration_seconds == 3.5 and len(inputs) == 1
+
+
+@pytest.mark.parametrize("changed_field", ["action", "transition"])
+def test_old_timing_budget_is_not_applied_to_a_rewritten_action_or_transition(changed_field):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": "one",
+        "image": {"image_id": "a", "version": 1}, "action": "Close the lantern.",
+        "transition": "Stow the lantern and take the compass.", "duration_seconds": 3.5}]})
+    finding = {"severity": "error", "shot_id": "one", "field": "duration_seconds",
+        "code": "duration_conflict", "evidence": "3.5", "message": "The movements need time.",
+        "timing_plan": [{"field": "action", "evidence": draft.shots[0].action, "seconds": 3.0},
+            {"field": "transition", "evidence": draft.shots[0].transition, "seconds": 2.5}]}
+    def repair(messages):
+        current = json.loads(messages[1]["content"][0]["text"])["current_draft"]
+        current["shots"][0][changed_field] = "The movement has been changed."
+        return json.dumps(current)
+
+    result = service._repair_once(draft, [finding], [], [], repair, "", {("a", 1)})
+    assert getattr(result.shots[0], changed_field) == "The movement has been changed."
+    assert result.shots[0].duration_seconds == 3.5
+
+
+def test_rewritten_timing_is_rechecked_and_unresolved_draft_is_not_saved(story_app, monkeypatch):
+    app = story_app
+    pid, cid, image = _setup(app)
+    draft = _draft(image)
+    draft["shots"][0].update(action="Close the lantern.",
+        transition="Stow the lantern and take the compass.", duration_seconds=3.5)
+    original = _save(app, pid, cid, draft)["story"]
+    rewritten = copy.deepcopy(draft)
+    rewritten["shots"][0]["action"] = "Close and secure the lantern."
+    visions, reviews = [], []
+
+    def vision(messages):
+        visions.append(messages)
+        return json.dumps(draft if len(visions) == 1 else rewritten)
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        reviews.append(payload)
+        shot = payload["draft"]["shots"][0]
+        return json.dumps({"status": "needs_revision", "findings": [{"severity": "error",
+            "shot_id": shot["shot_id"], "field": "duration_seconds", "code": "duration_conflict",
+            "evidence": str(shot["duration_seconds"]),
+            "message": "The full handoff needs more time.",
+            "timing_plan": [{"field": "action", "evidence": shot["action"],
+                             "seconds": shot["duration_seconds"]},
+                {"field": "transition", "evidence": shot["transition"], "seconds": 2.5}]}]})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "recheck-changed-timing"), "draft": draft,
+        "images": [_ref(image)], "instruction": draft["instruction"]})
+    assert len(reviews) >= 2 and reviews[1]["draft"]["shots"] == rewritten["shots"]
+    assert result["generation_status"] == "needs_revision"
+    assert result["candidate_review"]["status"] == "needs_revision"
+    assert app.get_comic_story(cid)["story"] == original
+
+
+@pytest.mark.parametrize("severity", ["error", "warning"])
+def test_one_organize_click_finishes_all_six_real_timing_fixes_before_saving(
+    story_app, monkeypatch, severity,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    draft = _draft(*[image] * 6)
+    for index, shot in enumerate(draft["shots"], 1):
+        shot.update(action=f"Close lantern {index}.",
+                    transition=f"Stow lantern {index} and take out compass {index}.",
+                    duration_seconds=3.5)
+    original = _save(app, pid, cid, draft)["story"]
+    visions, reviews = [], []
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        visions.append(payload)
+        assert app.get_comic_story(cid)["story"] == original
+        # This substitute keeps returning the too-short duration: the application must apply
+        # the independently verified budget, not depend on this writer following advice.
+        return json.dumps(draft if len(visions) == 1 else payload["current_draft"])
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        reviews.append(payload)
+        current = payload["draft"]
+        remaining = next((shot for shot in current["shots"]
+                          if shot["duration_seconds"] < 5.5), None)
+        if remaining is None:
+            assert all(shot["action"] == old["action"] and shot["transition"] == old["transition"]
+                       for shot, old in zip(current["shots"], draft["shots"], strict=True))
+            return json.dumps({"status": "pass", "findings": []})
+        return json.dumps({"status": "needs_revision" if severity == "error" else "warning",
+            "findings": [{"severity": severity, "shot_id": remaining["shot_id"],
+                "field": "duration_seconds", "code": "duration_conflict",
+                "evidence": str(remaining["duration_seconds"]),
+                "message": "The two movements need 5.5 seconds.",
+                "suggestion": "Apply the complete action and transition budget.",
+                "timing_plan": [
+                    {"field": "action", "evidence": remaining["action"], "seconds": 3.0},
+                    {"field": "transition", "evidence": remaining["transition"],
+                     "seconds": 2.5}]}]})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    request = {**_request(app, pid, cid, "six-fixes-one-click"), "draft": draft,
+               "images": [_ref(image)], "instruction": draft["instruction"]}
+    result = app.comic_story_operation(cid, "generate", request)
+    assert result["generation_status"] == "ready" and result["can_confirm"]
+    assert len(visions) == len(reviews) == 7
+    assert all(shot["duration_seconds"] == 5.5 for shot in result["story"]["shots"])
+    assert result["story"]["version"] == original["version"] + 1
+    assert len(app.runtime_store.get_run(result["run_id"]).state["story_attempts"]) == 7
+    monkeypatch.setattr(app, "_comic_image_vision_model", _forbidden)
+    monkeypatch.setattr(app, "_comic_constraint_model", _forbidden)
+    checked = app.comic_story_operation(cid, "review", _request(app, pid, cid, "review-six-fixes"))
+    assert checked["review"]["status"] == "pass" and checked["review"]["findings"] == []
+    assert checked["review_reused"] and checked["story"]["shots"] == result["story"]["shots"]
+    assert app.comic_story_operation(cid, "generate", request) == result
+
+
+@pytest.mark.parametrize("invalid", ["stale_quote", "unbound_reference", "over_capacity"])
+def test_timing_projection_cannot_apply_an_unverified_or_illegal_budget(invalid):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": "one",
+        "image": {"image_id": "a", "version": 1}, "action": "Put the lantern away.",
+        "transition": "Take and open the compass.", "duration_seconds": 3.5}]})
+    finding = {"severity": "error", "shot_id": "one", "field": "duration_seconds",
+        "code": "duration_conflict", "evidence": "3.5", "message": "Complete the full handoff.",
+        "timing_plan": [{"field": "action", "evidence": draft.shots[0].action, "seconds": 3.0},
+                        {"field": "transition", "evidence": draft.shots[0].transition,
+                         "seconds": 2.5}]}
+    if invalid == "stale_quote":
+        finding["timing_plan"][0]["evidence"] = "An action absent from the current draft."
+    elif invalid == "unbound_reference":
+        finding["evidence_id"] = "shot.1.duration_seconds:obsolete"
+    else:
+        for beat in finding["timing_plan"]:
+            beat["seconds"] = 40.0
+    assert service._minimum_durations(draft, [finding]) == {}
+    assert draft.shots[0].duration_seconds == 3.5
+
+
+@pytest.mark.parametrize("subjects", [("sword", "knife"), ("lantern", "compass")])
+def test_organize_binds_scrambled_sources_and_repairs_before_the_next_starting_frame(
+    story_app, monkeypatch, subjects,
+):
+    app = story_app
+    pid, cid, first = _setup(app)
+    second = _upload(app, pid, cid, content=_png(66))
+    _select(app, cid, second)
+    skeleton = _draft(first, second, first)
+    for shot, subject in zip(skeleton["shots"], (*subjects, subjects[0]), strict=True):
+        shot.update(action=f"Hold the {subject}.", transition="Keep holding it.")
+    original = _save(app, pid, cid, skeleton)["story"]
+    sources = [{"image": _ref(image), "user_requirements": [f"Hold the {subject}."]}
+               for image, subject in zip((second, first), reversed(subjects), strict=True)]
+    monkeypatch.setattr(app.comic_stories, "_source_contexts", lambda *_args, **_kwargs: sources)
+    fixed = copy.deepcopy(skeleton)
+    fixed["shots"][0].update(transition=f"Put away the {subjects[0]}, take the {subjects[1]}.",
+                             duration_seconds=8.0)
+    fixed["shots"][1].update(transition=f"Put away the {subjects[1]}, take the {subjects[0]}.",
+                             duration_seconds=8.0)
+    visions, reviews = [], []
+    def assert_context(payload):
+        assert [source["image"] for source in payload["image_sources"]] == [
+            _ref(first), _ref(second)]
+        assert [image["image_id"] for image in payload["images"]] == [
+            first["image_id"], second["image_id"]]
+        assert payload["image_sources"][0]["applies_to_shots"] == ["story-shot-1", "story-shot-3"]
+        assert payload["shot_source_map"]["story-shot-3"]["image_source_index"] == 0
+        boundaries = payload["shot_boundaries"]
+        assert len(boundaries) == 2
+        assert [(edge["from_shot_id"], edge["to_shot_id"]) for edge in boundaries] == [
+            ("story-shot-1", "story-shot-2"), ("story-shot-2", "story-shot-3")]
+        assert boundaries[0]["handoff_field"] in boundaries[0]["before_cut_fields"]
+        assert boundaries[1]["handoff_field"].startswith("shot.2.transition:")
+
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        assert_context(payload)
+        visions.append(payload)
+        # Actual visual attachments follow story order and are deduplicated for the repeated image.
+        labels = [part["text"] for part in messages[1]["content"][1:] if part["type"] == "text"]
+        assert len(labels) == 2 and first["image_id"] in labels[0]
+        if len(visions) == 1:
+            return json.dumps(skeleton)
+        assert app.get_comic_story(cid)["story"] == original
+        return json.dumps(fixed)
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        if payload.get("stage") == "story_finding_audit":
+            return json.dumps({"checks": [{"finding": int(index), "verdict": "retain",
+                "reason": "The missing before-cut movement is real."}
+                for index in payload["findings"]]})
+        assert_context(payload)
+        reviews.append(payload)
+        if payload["draft"]["shots"] == fixed["shots"]:
+            return json.dumps({"status": "pass", "findings": []})
+        findings = []
+        for edge in payload["shot_boundaries"]:
+            primary = next(ref for ref, coordinate in payload["review_fields"].items()
+                           if coordinate == {"shot_id": edge["to_shot_id"], "field": "action"})
+            findings.append({"severity": "error", "shot_id": edge["to_shot_id"],
+                "field": "action", "code": "continuity", "evidence_id": primary,
+                "related_fields": [edge["handoff_field"]],
+                "message": "The handoff must occur before the next image, not after it.",
+                "suggestion": "Show the put-away and take-out movement before cutting."})
+        return json.dumps({"status": "needs_revision", "findings": findings})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    request = {**_request(app, pid, cid, "ordered-boundary-repair"), "draft": skeleton,
+               "images": [_ref(second), _ref(first)], "instruction": "Preserve all fixed frames."}
+    result = app.comic_story_operation(cid, "generate", request)
+    assert len(visions) == len(reviews) == 2
+    assert result["generation_status"] == "ready" and result["story"]["shots"] == fixed["shots"]
+    assert result["story"]["version"] == original["version"] + 1
+    assert result["can_confirm"] and result["review"]["findings"] == []
+    monkeypatch.setattr(app, "_comic_constraint_model", _forbidden)
+    monkeypatch.setattr(app, "_comic_image_vision_model", _forbidden)
+    assert app.comic_story_operation(cid, "generate", request) == result
+    app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "confirm-ordered-boundaries"))
+    checked = app.comic_story_operation(cid, "review", _request(app, pid, cid, "check-fixed-draft"))
+    assert checked["review_reused"] and checked["review"]["findings"] == []
+
+
+def test_quote_audit_transport_unknown_stops_without_clearing_or_resubmitting():
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"title": "New title"})
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision", "findings": [{
+        "severity": "error", "field": "title", "message": 'Title says "Old title".',
+        "evidence": "New title"}]})
+    calls = []
+    def unavailable(messages):
+        calls.append(messages)
+        raise ToolError("Offline result unknown")
+    with pytest.raises(ToolError, match="unknown"):
+        service._audit_finding_quotes(draft, output, unavailable, [])
+    assert len(calls) == 1 and len(output.findings) == 1
+
+
+@pytest.mark.parametrize("current_duration,verdict,expected_audit,expected_removed", [
+    (10.0, "stale_current_quote", True, True),
+    (10.0, "retain", True, False),
+    (3.0, "retain", False, False),
+])
+def test_audit_checks_stale_current_duration_without_discarding_a_real_finding(
+    current_duration, verdict, expected_audit, expected_removed,
+):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": "one",
+        "image": {"image_id": "a", "version": 1}, "action": "Draw the sword.",
+        "transition": "Parry the arrow.", "duration_seconds": current_duration}]})
+    fields = service._review_fields(draft)
+    primary = next(key for key, value in fields.items() if value["field"] == "duration_seconds")
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision", "findings": [{
+        "severity": "error", "shot_id": "one", "field": "duration_seconds", "code": "other",
+        "evidence_id": primary, "evidence": str(current_duration),
+        "message": "本镜需在3秒内完成拔剑与格挡，时长不足。", "suggestion": "检查完整节拍。"}]})
+    calls = []
+
+    def audit(messages):
+        calls.append(messages)
+        payload = json.loads(messages[1]["content"])
+        assert payload["audit_requirements"]["1"]["absent_current_quotes"] == ["3秒"]
+        if verdict == "retain":
+            return json.dumps({"checks": [{"finding": 1, "verdict": "retain",
+                "reason": "Another current conflict is still present."}]})
+        return json.dumps({"checks": [{"finding": 1, "verdict": "stale_current_quote",
+            "field_id": primary, "claimed_quote": "3秒", "current_quote": "10.0",
+            "reason": "The only claimed duration is from an old draft."}]})
+
+    service._audit_finding_quotes(draft, output, audit, [])
+    assert bool(calls) == expected_audit
+    assert bool(output.findings) != expected_removed
+
+
+@pytest.mark.parametrize("code", ["continuity", "other"])
+@pytest.mark.parametrize("invalid", [
+    None, "ids", "stale_id", "quote", "unrelated", "primary", "transition", "source",
+    "source_quote", "model_choice",
+])
+def test_cross_image_audit_requires_bound_current_and_source_counterevidence(invalid, code):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [
+        {"shot_id": "lantern", "image": {"image_id": "a", "version": 1},
+         "action": "Hold the closed lantern.",
+         "transition": "Clip the lantern to the belt, take out and open the compass."},
+        {"shot_id": "compass", "image": {"image_id": "b", "version": 1},
+         "action": "Hold the open compass.", "transition": "Cut to the landscape."},
+        {"shot_id": "unrelated", "image": {"image_id": "c", "version": 1},
+         "action": "Show the landscape."}]})
+    sources = [{"image": shot.image.model_dump(), "constraints": [{"requirement": shot.action}]}
+               for shot in draft.shots]
+    if invalid == "model_choice":
+        sources[0]["constraints"][0]["origin"] = "model_choice"
+    fields = service._review_fields(draft)
+    def ref(shot, field):
+        return next(key for key, value in fields.items()
+                    if value == {"shot_id": shot, "field": field})
+    primary, transition = ref("compass", "action"), ref("lantern", "transition")
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision", "findings": [{
+        "severity": "error", "shot_id": "compass", "field": "action",
+        "evidence_id": primary, "related_fields": [transition], "code": code,
+        "message": "The preceding shot does not explain how the compass is obtained.",
+        "suggestion": "Add a handoff."}]})
+    calls = []
+
+    def audit(messages):
+        payload = json.loads(messages[1]["content"])
+        calls.append(payload)
+        quotes = {primary: draft.shots[1].action, transition: draft.shots[0].transition}
+        quotes.update({key: value["quote"] for key, value in payload["source_fields"].items()})
+        if invalid == "ids":
+            quotes = {key: key for key in quotes}
+        elif invalid == "stale_id":
+            quotes[transition] = transition + "-old"
+        elif invalid == "quote":
+            quotes[transition] = "A handoff that is not in the current draft."
+        elif invalid == "unrelated":
+            quotes[ref("unrelated", "action")] = draft.shots[2].action
+        elif invalid == "primary":
+            quotes.pop(primary)
+        elif invalid == "transition":
+            quotes.pop(transition)
+        elif invalid == "source":
+            quotes = {key: value for key, value in quotes.items() if key in fields}
+        elif invalid == "source_quote":
+            quotes[next(iter(payload["source_fields"]))] = "A fact absent from the fixed source."
+        return json.dumps({"checks": [{"finding": 1, "verdict": "already_satisfied",
+            "supporting_quotes": quotes, "reason": "The current transition supplies it."}]})
+
+    service._audit_finding_quotes(draft, output, audit, sources)
+    assert len(calls) == 1
+    assert bool(output.findings) == (invalid not in (None, "ids"))
+    assert sources[0]["constraints"][0]["requirement"] == "Hold the closed lantern."
+
+
+def test_cross_image_audit_corrects_bad_repair_advice_without_dismissing_the_real_issue():
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [
+        {"shot_id": "sword", "image": {"image_id": "a", "version": 1},
+         "action": "Parry with the sword.", "transition": "Stand with the sword."},
+        {"shot_id": "knife", "image": {"image_id": "b", "version": 1},
+         "action": "Hold the knife."}]})
+    sources = [{"image": shot.image.model_dump(), "user_requirements": [shot.action]}
+               for shot in draft.shots]
+    fields = service._review_fields(draft)
+    primary = next(key for key, value in fields.items()
+                   if value == {"shot_id": "knife", "field": "action"})
+    previous = next(key for key, value in fields.items()
+                    if value == {"shot_id": "sword", "field": "transition"})
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision", "findings": [{
+        "severity": "error", "shot_id": "knife", "field": "action", "evidence_id": primary,
+        "related_fields": [previous], "code": "continuity", "message": "A handoff is missing.",
+        "suggestion": "Change the knife into the sword in the second starting frame."}]})
+    suggestion = "Sheathe the sword and draw the knife before cutting to the next frame."
+
+    def audit(messages):
+        payload = json.loads(messages[1]["content"])
+        quotes = {primary: draft.shots[1].action, previous: draft.shots[0].transition}
+        quotes.update({key: value["quote"] for key, value in payload["source_fields"].items()})
+        return json.dumps({"checks": [{"finding": 1, "verdict": "retain",
+            "supporting_quotes": quotes, "corrected_suggestion": suggestion,
+            "reason": "Both fixed frames must stay; the missing event belongs before the cut."}]})
+
+    service._audit_finding_quotes(draft, output, audit, sources)
+    assert len(output.findings) == 1 and output.findings[0].severity == "error"
+    assert output.findings[0].suggestion == suggestion
+    assert draft.shots[1].action == "Hold the knife."
+
+
+def test_incoming_continuity_repairs_can_fix_the_preceding_outgoing_transition():
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    draft = ComicStoryDraft.model_validate({"shots": [
+        {"shot_id": str(index), "image": {"image_id": str(index), "version": 1}}
+        for index in range(4)]})
+    scope = ComicStoryService._repair_scope(draft, [{"severity": "error", "shot_id": "2",
+        "field": "action", "code": "continuity", "related_fields": []}])
+    assert set(scope["shots"]) == {"1", "2"}
+    assert all("image" not in fields for fields in scope["shots"].values())
+    following = next(ref for ref, coordinate in ComicStoryService._review_fields(draft).items()
+                     if coordinate == {"shot_id": "3", "field": "action"})
+    outgoing = ComicStoryService._repair_scope(draft, [{"severity": "error", "shot_id": "2",
+        "field": "action", "code": "continuity", "related_fields": [following]}])
+    assert set(outgoing["shots"]) == {"2", "3"}, "An explicit outgoing issue cannot rewrite shot 1"
+    previous_image = next(ref for ref, coordinate in ComicStoryService._review_fields(draft).items()
+                          if coordinate == {"shot_id": "1", "field": "image"})
+    image_conflict = [{"severity": "error", "shot_id": "2", "field": "action",
+                       "code": "image_conflict", "related_fields": [previous_image]}]
+    scoped = ComicStoryService._repair_scope(draft, image_conflict)["shots"]
+    assert scoped["1"] == ["duration_seconds", "transition"]
+    unrelated_image = next(ref for ref, coordinate in
+        ComicStoryService._review_fields(draft).items()
+        if coordinate == {"shot_id": "0", "field": "image"})
+    image_conflict[0]["related_fields"] = [unrelated_image]
+    assert set(ComicStoryService._repair_scope(draft, image_conflict)["shots"]) == {"2"}
+
+
+def test_a_unique_timing_quote_can_be_bound_to_its_actual_phase():
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": "one",
+        "image": {"image_id": "a", "version": 1}, "action": "Parry the arrow.",
+        "transition": "Stand up, then take the knife.", "duration_seconds": 5.5}]})
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision", "findings": [{
+        "severity": "error", "shot_id": "one", "field": "duration_seconds",
+        "code": "duration_conflict", "evidence": "5.5", "message": "The handoff needs time.",
+        "timing_plan": [{"field": "action", "evidence": "Parry the arrow.", "seconds": 2.5},
+            {"field": "action", "evidence": "Stand up", "seconds": 1.5},
+            {"field": "transition", "evidence": "take the knife", "seconds": 4.0}]}]})
+    checked, issues = service._review_findings(draft, output)
+    assert issues == [] and len(checked) == 1
+    assert [beat.field for beat in checked[0].timing_plan] == ["action", "transition", "transition"]
+    assert service._minimum_durations(draft, [checked[0].model_dump()]) == {"one": 8.0}
+
+
+@pytest.mark.parametrize("invalid", ["wrong_quote", "fits"])
+def test_unverified_other_timing_plan_is_not_forwarded_as_trusted_budget(invalid):
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.models import ComicStoryReviewOutput
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": "one",
+        "image": {"image_id": "a", "version": 1}, "action": "Parry the arrow.",
+        "transition": "Put away the sword.", "duration_seconds": 5.0}]})
+    timing = [{"field": "action", "evidence": draft.shots[0].action, "seconds": 4.0},
+              {"field": "transition", "evidence": draft.shots[0].transition, "seconds": 4.0}]
+    if invalid == "wrong_quote":
+        timing[0]["evidence"] = "An action absent from the current story."
+    else:
+        timing[0]["seconds"] = timing[1]["seconds"] = 2.0
+    output = ComicStoryReviewOutput.model_validate({"status": "needs_revision", "findings": [{
+        "severity": "error", "shot_id": "one", "field": "duration_seconds", "code": "other",
+        "evidence": "5.0", "message": "The timing still needs review.", "timing_plan": timing}]})
+    checked, issues = service._review_findings(draft, output)
+    assert issues == [] and len(checked) == 1
+    assert checked[0].severity == "error" and checked[0].timing_plan == []
+
+
+@pytest.mark.parametrize("code", ["image_conflict", "other"])
+def test_image_conflict_can_repair_an_explicitly_linked_previous_image_handoff(
+    story_app, monkeypatch, code,
+):
+    app = story_app
+    pid, cid, first = _setup(app)
+    second = _upload(app, pid, cid, content=_png(67))
+    _select(app, cid, second)
+    draft = _draft(first, second, first)
+    draft["shots"][0].update(action="Parry with a sword.",
+                             transition="Sheathe sword and take knife.")
+    draft["shots"][1].update(action="Hold a knife.", transition="Keep holding the knife.")
+    draft["shots"][2].update(action="Raise the knife.", transition="Cut to black.")
+    original = _save(app, pid, cid, draft)["story"]
+    fixed = copy.deepcopy(draft)
+    fixed["shots"][1]["transition"] = "Put the knife away and draw the sword before the cut."
+    fixed["shots"][2]["action"] = "Raise the sword."
+    sources = [{"image": _ref(first), "user_requirements": ["The starting frame has a sword."]},
+               {"image": _ref(second), "user_requirements": ["The starting frame has a knife."]}]
+    monkeypatch.setattr(app.comic_stories, "_source_contexts", lambda *_args, **_kwargs: sources)
+    visions, reviews = [], []
+
+    def vision(messages):
+        visions.append(messages)
+        return json.dumps(draft if len(visions) == 1 else fixed)
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        if payload.get("stage") == "story_finding_audit":
+            return json.dumps({"checks": [{"finding": int(index), "verdict": "retain",
+                "reason": "The source conflict must be fixed."} for index in payload["findings"]]})
+        reviews.append(payload)
+        shots = payload["draft"]["shots"]
+        if shots == fixed["shots"]:
+            return json.dumps({"status": "pass", "findings": []})
+        fields = payload["review_fields"]
+        def ref(shot_id, field):
+            return next(key for key, value in fields.items()
+                        if value == {"shot_id": shot_id, "field": field})
+        return json.dumps({"status": "needs_revision", "findings": [{
+            "severity": "error", "shot_id": "story-shot-3", "field": "action",
+            "code": code, "evidence_id": ref("story-shot-3", "action"),
+            "related_fields": [ref("story-shot-2", "image"), ref("story-shot-3", "image")],
+            "message": "The third frame requires a sword, not a knife.",
+            "suggestion": "Respect both image sources and perform the handoff before the cut."}]})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    request = {**_request(app, pid, cid, "source-bound-handoff"), "draft": draft,
+               "images": [_ref(first), _ref(second)], "instruction": draft["instruction"]}
+    result = app.comic_story_operation(cid, "generate", request)
+    assert result["generation_status"] == "ready"
+    assert result["story"]["version"] == original["version"] + 1
+    assert result["story"]["shots"] == fixed["shots"]
+    assert len(visions) == len(reviews) == 2
+    checked = app.comic_story_operation(cid, "review", _request(app, pid, cid, "check-handoff"))
+    assert checked["review"]["findings"] == [] and checked["review_reused"]
+
+
+def test_source_compatible_handoff_is_repaired_reviewed_and_saved_in_one_organize_operation(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, first = _setup(app)
+    second = _upload(app, pid, cid, content=_png(33))
+    _select(app, cid, second)
+    skeleton = _draft(first, second)
+    skeleton["shots"][0].update(action="Parry with the sword.", transition="Stand with the sword.")
+    skeleton["shots"][1]["action"] = "Hold the knife."
+    original = _save(app, pid, cid, skeleton)["story"]
+    fixed = copy.deepcopy(skeleton)
+    fixed["shots"][0].update(
+        transition="Sheathe the sword, take the knife from the belt and grip it before the cut.",
+        duration_seconds=8.0)
+    sources = [{"image": _ref(image), "user_requirements": [shot["action"]]}
+               for image, shot in zip((first, second), skeleton["shots"], strict=True)]
+    monkeypatch.setattr(app.comic_stories, "_source_contexts", lambda *_args, **_kwargs: sources)
+    vision_calls, review_calls, audit_calls = [], [], []
+
+    def vision(messages):
+        payload = json.loads(messages[-1]["content"][0]["text"])
+        vision_calls.append(payload)
+        if len(vision_calls) == 1:
+            return json.dumps(skeleton)
+        assert set(payload["repair_scope"]["shots"]) == {"story-shot-1", "story-shot-2"}
+        assert "Sheathe" in payload["issues"][0]["suggestion"]
+        assert app.get_comic_story(cid)["story"] == original
+        return json.dumps(fixed)
+
+    def review(messages):
+        payload = json.loads(messages[1]["content"])
+        fields = payload["review_fields"]
+        primary = next(key for key, value in fields.items()
+                       if value == {"shot_id": "story-shot-2", "field": "action"})
+        previous = next(key for key, value in fields.items()
+                        if value == {"shot_id": "story-shot-1", "field": "transition"})
+        if payload.get("stage") == "story_finding_audit":
+            audit_calls.append(payload)
+            quotes = {primary: skeleton["shots"][1]["action"],
+                      previous: skeleton["shots"][0]["transition"]}
+            quotes.update({key: value["quote"] for key, value in payload["source_fields"].items()})
+            return json.dumps({"checks": [{"finding": 1, "verdict": "retain",
+                "corrected_suggestion": fixed["shots"][0]["transition"],
+                "supporting_quotes": quotes, "reason": "Keep each fixed starting frame."}]})
+        review_calls.append(payload)
+        if len(review_calls) == 1:
+            return json.dumps({"status": "needs_revision", "findings": [{
+                "severity": "error", "shot_id": "story-shot-2", "field": "action",
+                "evidence_id": primary, "related_fields": [previous], "code": "continuity",
+                "message": "No handoff between the fixed frames.",
+                "suggestion": "Use a sword in both images."}]})
+        assert payload["draft"]["shots"] == fixed["shots"]
+        return json.dumps({"status": "pass", "findings": []})
+
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "grounded-handoff"), "images": [_ref(first), _ref(second)],
+        "draft": skeleton, "instruction": "Preserve the distinct fixed frames."})
+    assert len(vision_calls) == len(review_calls) == 2 and len(audit_calls) == 1
+    assert result["generation_status"] == "ready" and result["can_confirm"]
+    assert result["story"]["version"] == original["version"] + 1
+    assert result["story"]["shots"] == fixed["shots"]
+    run = app.runtime_store.get_run(result["run_id"])
+    assert run.state["story_review_audits"][0]["checks"][0]["verdict"] == "retain"
+    app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "confirm-handoff"))
+    again = app.comic_story_operation(cid, "review", _request(app, pid, cid, "review-handoff"))
+    assert again["review_reused"] and again["review"]["findings"] == []
+    assert len(review_calls) == 2
+
+
+def test_repair_transport_unknown_is_not_treated_as_an_unchanged_draft():
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"title": "A sequence", "shots": [{
+        "shot_id": "one", "image": {"image_id": "image", "version": 1},
+        "camera": "Move right."}]})
+    calls = []
+    def unavailable(messages):
+        calls.append(messages)
+        raise ToolError("Offline repair submission unknown")
+    with pytest.raises(ToolError, match="submission unknown"):
+        service._repair(draft, [{"severity": "error", "shot_id": "one", "field": "camera",
+            "code": "camera_conflict"}], [], [], unavailable, "Coordinate the camera.")
+    assert len(calls) == 1
+
+
+def test_unfinished_candidate_cannot_be_promoted_and_ai_continues_it_before_delivery(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    draft = _draft(image)
+    repaired = copy.deepcopy(draft)
+    repaired["shots"][0]["camera"] = "Track forward, then stop."
+    visions = []
+    def vision(messages):
+        visions.append(messages)
+        return json.dumps(draft)
+    def review(messages):
+        current = json.loads(messages[1]["content"])["draft"]
+        if current["shots"][0]["camera"] == repaired["shots"][0]["camera"]:
+            return json.dumps({"status": "pass", "findings": []})
+        return json.dumps({"status": "needs_revision", "findings": [{
+            "severity": "error", "shot_id": "story-shot-1", "field": "camera",
+            "code": "camera_conflict", "evidence": current["shots"][0]["camera"],
+            "message": "A real movement conflict remains.",
+            "suggestion": "Coordinate the movement."}]})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    request = {**_request(app, pid, cid, "quality-pending"), "draft": draft,
+               "images": [_ref(image)], "instruction": "Track forward, then stop."}
+    pending = app.comic_story_operation(cid, "generate", request)
+    assert pending["generation_status"] == "needs_revision"
+    with pytest.raises(ToolError, match="候选.*未通过"):
+        app.comic_story_operation(cid, "adopt-candidate", {
+            **_request(app, pid, cid, "reject-unreviewed"),
+            "candidate_run_id": pending["candidate_run_id"]})
+    assert app.get_comic_story(cid)["story"] is None
+    inputs = []
+    def repair(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        inputs.append(payload)
+        assert payload["current_draft"] == pending["candidate_draft"]
+        return json.dumps(repaired)
+    monkeypatch.setattr(app, "_comic_image_vision_model", repair)
+    rechecks = []
+    def recheck(messages):
+        current = json.loads(messages[1]["content"])["draft"]
+        assert current["shots"] == repaired["shots"], "Known errors must be repaired first"
+        rechecks.append(current)
+        return json.dumps({"status": "pass", "findings": []})
+    monkeypatch.setattr(app, "_comic_constraint_model", recheck)
+    payload_calls = []
+    build_payload = app.comic_stories._vision_payload
+    def record_payload(*args, **kwargs):
+        payload_calls.append(1)
+        return build_payload(*args, **kwargs)
+    monkeypatch.setattr(app.comic_stories, "_vision_payload", record_payload)
+    continued_request = {
+        **_request(app, pid, cid, "continue-quality"), "draft": pending["candidate_draft"],
+        "candidate_run_id": pending["candidate_run_id"], "images": [_ref(image)],
+        "instruction": request["instruction"]}
+    result = app.comic_story_operation(cid, "generate", continued_request)
+    assert len(payload_calls) == 1  # Only the actual repair needs image encoding.
+    assert len(inputs) == 1  # 直接校验并修复原候选，没有重新生成另一份初稿。
+    assert len(rechecks) == 1  # 已知错误稿不靠再次抽校验结论变成通过。
+    assert result["generation_status"] == "ready" and result["can_confirm"]
+    assert result["story"]["shots"] == repaired["shots"]
+    assert result["review"]["status"] == "pass" and not result["review"]["findings"]
+    monkeypatch.setattr(app, "_comic_constraint_model", _forbidden)
+    monkeypatch.setattr(app, "_comic_image_vision_model", _forbidden)
+    assert app.comic_story_operation(cid, "generate", continued_request) == result
+    with pytest.raises(ToolError, match="候选与当前故事"):
+        app.comic_story_operation(cid, "generate", {
+            **_request(app, pid, cid, "stale-candidate"), "draft": pending["candidate_draft"],
+            "candidate_run_id": pending["candidate_run_id"], "images": [_ref(image)],
+            "instruction": request["instruction"]})
+
+
+def test_final_reconciliation_is_independently_checked_before_delivery(story_app, monkeypatch):
+    app = story_app
+    pid, cid, image = _setup(app)
+    original = _draft(image, image, image)
+    drafts = [copy.deepcopy(original) for _ in range(4)]
+    drafts[1]["shots"][0]["action"] = "Pick up the signal lamp before handing it over."
+    drafts[2] = copy.deepcopy(drafts[1])
+    drafts[2]["shots"][1]["action"] = "Put down the signal lamp and take the beacon."
+    drafts[3] = copy.deepcopy(drafts[2])
+    drafts[3]["shots"][2]["action"] = "Take the beacon after the handoff, then raise it."
+    calls = []
+    def vision(messages):
+        payload = json.loads(messages[1]["content"][0]["text"])
+        calls.append(payload)
+        return json.dumps(drafts[len(calls) - 1])
+    def review(messages):
+        current = json.loads(messages[1]["content"])["draft"]
+        if current["shots"] == drafts[3]["shots"]:
+            return json.dumps({"status": "pass", "findings": []})
+        index = next(i for i in range(3)
+                     if current["shots"][i]["action"] != drafts[3]["shots"][i]["action"])
+        return json.dumps({"status": "needs_revision", "findings": [{
+            "severity": "error", "shot_id": current["shots"][index]["shot_id"],
+            "field": "action", "code": "continuity", "evidence": current["shots"][index]["action"],
+            "message": "The handoff is not yet coherent.",
+            "suggestion": "Complete this handoff."}]})
+    monkeypatch.setattr(app, "_comic_image_vision_model", vision)
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "complete-quality"), "draft": original,
+        "images": [_ref(image)],
+        "instruction": "Hand over the lamp, then take and raise the beacon."})
+    assert result["generation_status"] == "ready"
+    assert result["story"]["shots"] == drafts[3]["shots"]
+    assert calls[-1]["repair_strategy"] == "reconcile"
+    assert len(calls[-1]["repair_history"]) == 3
+    assert len(app.runtime_store.get_run(result["run_id"]).state["story_attempts"]) == 4
+
+
+def test_content_conflict_returns_waiting_candidate_with_diagnostics_and_replays_without_models(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    saved = _save(app, pid, cid, _draft(image))
+    calls = []
+    finding = {"severity": "error", "shot_id": "story-shot-1", "field": "camera",
+               "code": "requirement_conflict", "evidence": "Camera remains still.",
+               "message": "Two explicit simultaneous requirements conflict.",
+               "suggestion": "Choose which simultaneous camera requirement should apply."}
+    monkeypatch.setattr(app, "_comic_image_vision_model", lambda messages: (
+        calls.append("vision") or json.dumps(_draft(image))))
+    monkeypatch.setattr(app, "_comic_constraint_model", lambda messages: (
+        calls.append("review") or json.dumps({"status": "needs_revision", "findings": [finding]})))
+    request = {**_request(app, pid, cid, "conflicting-input"), "images": [_ref(image)],
+               "draft": _draft(image), "instruction": "Keep both explicit requirements."}
+    result = app.comic_story_operation(cid, "generate", request)
+    assert result["generation_status"] == "needs_revision"
+    assert result["story"] == saved["story"]
+    assert result["candidate_review"]["findings"][0]["suggestion"] == finding["suggestion"]
+    run = app.runtime_store.get_run(result["run_id"])
+    assert run.status.value == "waiting" and run.error is None
+    assert run.state["task_status"] == "needs_revision"
+    assert not result["can_confirm"] and result["confirmation"] is None
+    before = list(calls)
+    assert app.comic_story_operation(cid, "generate", request) == result
+    assert calls == before
+    assert app.get_comic_story(cid)["story"] == saved["story"]
 
 
 def test_ai_repairs_only_reported_fields_before_publishing_a_passing_draft(story_app, monkeypatch):
@@ -950,11 +2638,12 @@ def test_unresolved_ai_errors_preserve_candidate_and_never_replace_current_story
     monkeypatch.setattr(app, "_comic_image_vision_model", lambda _: json.dumps(draft))
     monkeypatch.setattr(app, "_comic_constraint_model",
                         _forbidden if structural else lambda _: json.dumps(output))
-    with pytest.raises(ToolError, match="初稿自动修复尚未完成.*候选已保留") as error:
-        app.comic_story_operation(cid, "generate", {
-            **_request(app, pid, cid, "unresolved"), "images": [_ref(image)],
-            "instruction": "A new sequence."})
-    assert len(error.value.message) < 100
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "unresolved"), "images": [_ref(image)],
+        "instruction": "A new sequence."})
+    assert result["generation_status"] == "needs_revision"
+    assert result["candidate_review"]["findings"]
+    assert app.runtime_store.get_run(result["run_id"]).status.value == "waiting"
     assert app.get_comic_story(cid)["story"] == original
     runs = app.runtime_store.list_runs(domain="comic")
     candidates = [run.state["story_candidate"] for run in runs
@@ -1107,8 +2796,84 @@ def test_review_corrects_bad_public_structure_once_and_preserves_verified_errors
         app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "blocked"))
 
 
+@pytest.mark.parametrize("malformed", ["timing_type", "private_extra", "invalid_status"])
+def test_review_keeps_valid_errors_when_another_part_has_a_schema_error(
+    story_app, monkeypatch, malformed,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    draft = _draft(image)
+    _save(app, pid, cid, draft)
+    good = {"severity": "error", "shot_id": "story-shot-1", "field": "camera",
+            "evidence": draft["shots"][0]["camera"], "message": "A real direction conflict.",
+            "suggestion": "Choose one direction."}
+    bad = {"severity": "error", "shot_id": "story-shot-1", "field": "duration_seconds",
+           "code": "duration_conflict", "evidence": "4.0", "message": "Allow enough time.",
+           "timing_plan": _timing_plan(draft["shots"][0])}
+    first = {"status": "needs_revision", "findings": [good, bad]}
+    secret = "PRIVATE_INVALID_VALUE_MUST_NOT_BE_ECHOED"
+    if malformed == "timing_type":
+        bad["timing_plan"][0]["seconds"] = {"private": secret}
+    elif malformed == "private_extra":
+        bad[secret] = secret
+    else:
+        first["status"] = secret
+        first["findings"] = [good]
+    calls = []
+    def review(messages):
+        calls.append(messages)
+        if len(calls) == 1:
+            return json.dumps(first)
+        content = messages[-1]["content"]
+        correction = json.loads(content[content.index("{"):])
+        diagnostics = correction["issues"][0].get("schema_errors", [])
+        assert diagnostics, "Correction needs field locations and error types, not a generic error"
+        assert secret not in json.dumps(messages)
+        assert correction["verified_findings"][0]["message"] == good["message"]
+        return json.dumps({"status": "pass", "findings": []})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    checked = app.comic_story_operation(cid, "review", _request(app, pid, cid, "partial-schema"))
+    assert len(calls) == 2
+    assert checked["review"]["status"] == "needs_revision"
+    assert [finding["field"] for finding in checked["review"]["findings"]] == ["camera"]
+    assert checked["can_confirm"] is False
+
+
+def test_review_repairs_a_bad_timing_number_with_a_precise_field_diagnostic():
+    from types import SimpleNamespace
+
+    from kantoku.domains.comic.stories import ComicStoryService
+
+    service = ComicStoryService(SimpleNamespace(projects=None, runtime=None))
+    draft = ComicStoryDraft.model_validate({"shots": [{"shot_id": "one",
+        "image": {"image_id": "a", "version": 1}, "action": "Put the lamp away.",
+        "transition": "Take and open the compass.", "duration_seconds": 4.0}]})
+    timing = [{"field": "action", "evidence": draft.shots[0].action, "seconds": 3.0},
+              {"field": "transition", "evidence": draft.shots[0].transition, "seconds": 3.0}]
+    finding = {"severity": "error", "shot_id": "one", "field": "duration_seconds",
+        "code": "duration_conflict", "evidence": "4.0", "message": "The handoff needs six seconds.",
+        "suggestion": "Give the full handoff six seconds.", "timing_plan": timing}
+    calls = []
+    def review(messages):
+        calls.append(messages)
+        current = copy.deepcopy(finding)
+        if len(calls) == 1:
+            current["timing_plan"][0]["seconds"] = "3 seconds"
+        else:
+            content = messages[-1]["content"]
+            correction = json.loads(content[content.index("{"):])
+            assert correction["issues"][0]["schema_errors"][0]["loc"] == [
+                "findings", 0, "timing_plan", 0, "seconds"]
+        return json.dumps({"status": "needs_revision", "findings": [current]})
+
+    result = service._review_output(draft, [], review, [])
+    assert len(calls) == 2 and result["status"] == "needs_revision"
+    assert result["findings"][0]["timing_plan"] == timing
+
+
 @pytest.mark.parametrize("stage", ["first_review", "after_repair"])
-@pytest.mark.parametrize("failure", ["evidence", "schema", "transport"])
+@pytest.mark.parametrize("failure", ["evidence", "schema", "transport", "billing"])
 def test_review_failures_retain_recoverable_candidate_without_replacing_current_story(
     story_app, monkeypatch, stage, failure,
 ):
@@ -1135,6 +2900,8 @@ def test_review_failures_retain_recoverable_candidate_without_replacing_current_
             return json.dumps(first_review)
         if failure == "transport":
             raise ToolError("Offline transport result unknown")
+        if failure == "billing":
+            raise LLMError("模型服务账户余额不足")
         if failure == "schema":
             return '{"private_reasoning":"DO_NOT_ECHO_INVALID_RESPONSE"}'
         output = copy.deepcopy(first_review)
@@ -1145,10 +2912,12 @@ def test_review_failures_retain_recoverable_candidate_without_replacing_current_
     monkeypatch.setattr(app, "_comic_constraint_model", review)
     request = {**_request(app, pid, cid, "review-failed"),
                "images": [_ref(image)], "instruction": "Track forward."}
-    with pytest.raises(ToolError, match="候选已保留"):
+    with pytest.raises(LLMError if failure == "billing" else ToolError,
+                       match="余额不足" if failure == "billing" else "候选已保留"):
         app.comic_story_operation(cid, "generate", request)
     assert len(vision_calls) == (2 if stage == "after_repair" else 1)
-    assert len(review_calls) == (1 if failure == "transport" else 2) + (stage == "after_repair")
+    assert len(review_calls) == (1 if failure in {"transport", "billing"} else 2) + (
+        stage == "after_repair")
     assert "DO_NOT_ECHO_INVALID_RESPONSE" not in json.dumps(review_calls)
     assert app.get_comic_story(cid)["story"] == original
     runs = [run for run in app.runtime_store.list_runs(domain="comic", conversation_id=cid)
@@ -1165,16 +2934,11 @@ def test_review_failures_retain_recoverable_candidate_without_replacing_current_
     monkeypatch.setattr(app, "_comic_constraint_model", _forbidden)
     with pytest.raises(ToolError):
         app.comic_story_operation(cid, "generate", request)
-    recovered = app.comic_story_operation(cid, "adopt-candidate", {
-        **_request(app, pid, cid, "recover"), "candidate_run_id": runs[0].id})
-    assert recovered["confirmation"] is None
-    with pytest.raises(ToolError, match="尚未通过校验"):
-        app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "blocked"))
-    if stage == "after_repair":
-        # 原候选有真实错误，恢复后不能靠重按校验将错误清掉；先修改被指出的字段。
-        corrected = _story_draft(recovered["story"])
-        corrected["shots"][0]["camera"] = fixed["shots"][0]["camera"]
-        _save(app, pid, cid, corrected, "fix-recovered")
+    with pytest.raises(ToolError, match="候选.*未通过"):
+        app.comic_story_operation(cid, "adopt-candidate", {
+            **_request(app, pid, cid, "recover"), "candidate_run_id": runs[0].id})
+    assert app.get_comic_story(cid)["story"] == original
+    # 模型失败不会污染用户当前稿件，当前稿仍可独立校验与确认。
     assert _confirm(app, pid, cid, monkeypatch)["confirmation"]["confirmed"]
 
 
@@ -1201,11 +2965,12 @@ def test_repair_with_no_effective_change_keeps_real_review_without_calling_again
 
     monkeypatch.setattr(app, "_comic_image_vision_model", vision)
     monkeypatch.setattr(app, "_comic_constraint_model", review)
-    with pytest.raises(ToolError, match="初稿自动修复尚未完成"):
-        app.comic_story_operation(cid, "generate", {
-            **_request(app, pid, cid, "no-op-repair"), "images": [_ref(image)],
-            "draft": skeleton, "instruction": "Track forward."})
-    assert len(vision_calls) == 2 and len(review_calls) == 1
+    result = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "no-op-repair"), "images": [_ref(image)],
+        "draft": skeleton, "instruction": "Track forward."})
+    assert result["generation_status"] == "needs_revision"
+    assert len(vision_calls) == 3 and len(review_calls) == 1
+    assert json.loads(vision_calls[-1][1]["content"][0]["text"])["repair_strategy"] == "reconcile"
 
 
 def test_ai_corrects_nonempty_problem_fields_and_preserves_valid_user_content(
@@ -1272,7 +3037,7 @@ def test_ai_corrects_nonempty_problem_fields_and_preserves_valid_user_content(
 
 
 @pytest.mark.parametrize("passes", [True, False])
-def test_ai_applies_followup_corrections_but_stops_after_two_content_repairs(
+def test_ai_applies_followup_corrections_with_a_bounded_final_reconciliation(
     story_app, monkeypatch, passes,
 ):
     app = story_app
@@ -1283,7 +3048,7 @@ def test_ai_applies_followup_corrections_but_stops_after_two_content_repairs(
     second = copy.deepcopy(first)
     second["shots"][0]["duration_seconds"] = 8.0
     calls = {"vision": 0, "review": 0}
-    visions = iter([skeleton, first, second])
+    visions = iter([skeleton, first, second, second])
 
     def vision(_messages):
         calls["vision"] += 1
@@ -1313,10 +3078,10 @@ def test_ai_applies_followup_corrections_but_stops_after_two_content_repairs(
         assert result["story"]["shots"][0]["duration_seconds"] == 8.0
         assert result["story"]["shots"][0]["camera"] == "Track forward."
     else:
-        with pytest.raises(ToolError, match="自动修复尚未完成"):
-            app.comic_story_operation(cid, "generate", request)
+        result = app.comic_story_operation(cid, "generate", request)
+        assert result["generation_status"] == "needs_revision"
         assert app.get_comic_story(cid)["story"] is None
-    assert calls == {"vision": 3, "review": 3}
+    assert calls == {"vision": 3 if passes else 4, "review": 3}
 
 
 @pytest.mark.parametrize("subject", ["A robot crosses a rain-soaked bridge",
@@ -1368,7 +3133,11 @@ def test_repaired_multishot_draft_recovers_from_stale_evidence_then_validates_an
     assert sorted(contents) == sorted([_png(), _webp()])
 
 
-@pytest.mark.parametrize("old_contract", [None, "comic-story-1", "comic-story-2"])
+@pytest.mark.parametrize("old_contract", [
+    None, "comic-story-1", "comic-story-2", "comic-story-3", "comic-story-4", "comic-story-5",
+    "comic-story-6", "comic-story-7", "comic-story-8", "comic-story-9", "comic-story-10",
+    "comic-story-11", "comic-story-12", "comic-story-13",
+])
 def test_restoring_an_old_candidate_rechecks_instead_of_relabeling_its_old_review(
     story_app, monkeypatch, old_contract,
 ):
@@ -1381,8 +3150,7 @@ def test_restoring_an_old_candidate_rechecks_instead_of_relabeling_its_old_revie
         "evidence": draft["shots"][0]["camera"], "suggestion": "Reconsider under current policy."}]}
     monkeypatch.setattr(app, "_comic_image_vision_model", lambda _: json.dumps(draft))
     monkeypatch.setattr(app, "_comic_constraint_model", lambda _: json.dumps(old_review))
-    with pytest.raises(ToolError, match="自动修复尚未完成"):
-        app.comic_story_operation(cid, "generate", {
+    pending = app.comic_story_operation(cid, "generate", {
             **_request(app, pid, cid, "legacy-candidate"), "images": [_ref(image)],
             "instruction": "A coherent sequence."})
     run = next(run for run in app.runtime_store.list_runs(domain="comic", conversation_id=cid)
@@ -1395,14 +3163,23 @@ def test_restoring_an_old_candidate_rechecks_instead_of_relabeling_its_old_revie
     app.runtime_store.update_run(run.id, status=run.status,
         state={**run.state, "story_candidate": candidate}, current_node=run.current_node,
         error=run.error)
-    recovered = app.comic_story_operation(cid, "adopt-candidate", {
-        **_request(app, pid, cid, "restore-legacy"), "candidate_run_id": run.id})
-    assert recovered["story"]["title"] == draft["title"]
-    assert recovered["review"] is None and recovered["confirmation"] is None
-    checked, calls = _review(app, pid, cid, monkeypatch, key="new-policy-review")
-    assert len(calls) == 1 and not checked.get("review_reused")
+    with pytest.raises(ToolError, match="候选.*未通过"):
+        app.comic_story_operation(cid, "adopt-candidate", {
+            **_request(app, pid, cid, "restore-legacy"), "candidate_run_id": run.id})
+    calls = []
+    def current_review(messages):
+        calls.append(messages)
+        return json.dumps({"status": "pass", "findings": []})
+    monkeypatch.setattr(app, "_comic_constraint_model", current_review)
+    monkeypatch.setattr(app, "_comic_image_vision_model", _forbidden)
+    checked = app.comic_story_operation(cid, "generate", {
+        **_request(app, pid, cid, "recheck-legacy"), "candidate_run_id": run.id,
+        "images": [_ref(image)], "draft": pending["candidate_draft"],
+        "instruction": "A coherent sequence."})
+    assert len(calls) == 1
     assert checked["review"]["status"] == "pass"
-    assert checked["review"]["contract"] == "comic-story-3"
+    assert pending["generation_status"] == "needs_revision"
+    assert checked["review"]["contract"] == "comic-story-14"
     confirmed = app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "new-confirm"))
     assert confirmed["confirmation"]["confirmed"]
 
@@ -1473,6 +3250,7 @@ def test_action_finding_can_repair_timing_and_camera_without_changing_another_sh
             return json.dumps({"status": "needs_revision", "findings": [{
                 "severity": "error", "shot_id": "story-shot-1", "field": "action",
                 "code": "duration_conflict",
+                "timing_plan": _timing_plan(draft["shots"][0]),
                 "message": "The action needs time to complete the line.",
                 "evidence": draft["shots"][0]["action"],
                 "suggestion": "Coordinate the action, camera movement and timing."}]})
@@ -1553,6 +3331,7 @@ def test_original_user_intent_reaches_generation_repair_and_internal_review_only
             return json.dumps({"status": "needs_revision", "findings": [{
                 "severity": "error", "shot_id": "story-shot-1", "field": "action",
                 "code": "duration_conflict", "message": "The requested line needs more time.",
+                "timing_plan": _timing_plan(payload["draft"]["shots"][0]),
                 "evidence": skeleton["shots"][0]["action"],
                 "suggestion": "Preserve the line and extend the action timing."}]})
         return json.dumps({"status": "pass", "findings": []})
@@ -1627,6 +3406,7 @@ def test_model_inputs_separate_static_negative_prompt_from_explicit_persistent_r
             return json.dumps({"status": "needs_revision", "findings": [{
                 "severity": "error", "shot_id": "story-shot-1", "field": "duration_seconds",
                 "code": "duration_conflict", "message": "Give the lamp lift and camera orbit time.",
+                "timing_plan": _timing_plan(payload["draft"]["shots"][0]),
                 "evidence": "4", "suggestion": "Extend the duration while retaining the badge."}]})
         return json.dumps({"status": "pass", "findings": []})
 
@@ -1657,7 +3437,9 @@ def test_only_real_transition_errors_authorize_repairing_the_next_shot(
                     duration_seconds=float(index + 6), transition=f"Close step {index} smoothly.")
     visions = iter([skeleton, fixed])
     vision_calls, review_calls = [], []
-    editable = {"story-shot-1", "story-shot-2"} if severity == "error" else {"story-shot-3"}
+    editable = {"story-shot-1", "story-shot-2"}
+    if severity == "warning":
+        editable.add("story-shot-3")  # 本轮 AI 整理同时处理优化建议及真实错误。
 
     def vision(messages):
         payload = json.loads(messages[-1]["content"][0]["text"])
@@ -1683,6 +3465,7 @@ def test_only_real_transition_errors_authorize_repairing_the_next_shot(
                 findings.append({
                     "severity": "error", "shot_id": "story-shot-3", "field": "action",
                     "code": "duration_conflict", "message": "The final action needs more time.",
+                    "timing_plan": _timing_plan(payload["draft"]["shots"][2]),
                     "evidence": skeleton["shots"][2]["action"],
                     "suggestion": "Coordinate the final action and its duration."})
             return json.dumps({"status": "needs_revision", "findings": findings})

@@ -4,7 +4,7 @@ import { Pencil, Trash2 } from 'lucide-vue-next'
 import type { Conversation } from '../../types'
 
 type HistoryEntry = Pick<Conversation, 'id' | 'title'>
-defineProps<{ conversations: HistoryEntry[]; activeId: string; busy: boolean; listOnly?: boolean }>()
+defineProps<{ conversations: HistoryEntry[]; activeId: string; busy: boolean; listOnly?: boolean; placeholder?: string }>()
 const emit = defineEmits<{
   create: []
   select: [id: string]
@@ -28,7 +28,7 @@ function finishRename(): void {
 <template>
   <aside class="conversation-history" :class="{ 'history-rail': !listOnly }" aria-label="历史聊天">
     <button v-if="!listOnly" class="history-new" type="button" :disabled="busy" @click="emit('create')">＋ 新建对话</button>
-    <label class="conversation-search"><span class="sr-only">搜索对话</span><input v-model="search" type="search" placeholder="搜索对话" /></label>
+    <label class="conversation-search"><span class="sr-only">搜索对话</span><input v-model="search" type="search" :placeholder="placeholder ?? '搜索对话'" /></label>
     <div class="conversation-list" tabindex="0" aria-label="最近对话列表">
       <div v-for="item in conversations.filter((entry) => entry.title.toLowerCase().includes(search.trim().toLowerCase()))" :key="item.id" class="conversation-row" :data-active="item.id === activeId">
         <input v-if="editing === item.id" v-model="title" class="history-rename" :aria-label="`重命名 ${item.title}`" @keyup.enter="finishRename" @keyup.esc="editing = ''" @blur="finishRename" />

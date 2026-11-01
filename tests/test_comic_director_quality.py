@@ -23,6 +23,7 @@ from kantoku.domains.comic.models import (
     DirectorPlan,
     DirectorSpecDraft,
 )
+from kantoku.domains.comic.storyboards import plan_storyboard
 
 app = app_fixture
 REQUEST = "东方修仙少女夜晚站山巅"
@@ -131,6 +132,50 @@ def test_one_final_decision_and_model_choices_are_bound_to_real_stage_requests(a
     assert story.evidence[0].reference == app.comic_projects.get(project_id).creative_brief.brief_id
     assert not result["ready_for_prompt"]  # 保持真实的用户确认门。
     assert "_model_requests" not in spec.model_dump_json()
+
+
+@pytest.mark.parametrize("event,focus,pose", [
+    ("数支箭从前景急速射向船中侠客", "侠客的双眼", "侠客坐在船中，双手保持垂钓姿态"),
+    ("无人机从维修台上方快速掠过机械师", "机械师与无人机的关系", "机械师半蹲在维修台旁"),
+])
+def test_single_image_storyboard_keeps_current_event_separate_from_retained_pose(
+    app, monkeypatch, event, focus, pose,
+):
+    project_id, _result, _calls = _generate(
+        app, monkeypatch, director_fields={"visual_focus": focus, "character_pose": pose},
+    )
+    director = app.comic_projects.get_director(project_id)
+    before = director.model_dump()
+    plan = plan_storyboard(
+        app.comic_projects.get(project_id), director, task=event, assets=[],
+        model_call=lambda _: pytest.fail("已确认的单幅方案不应再调用分镜模型"),
+    )
+    assert len(plan.shots) == 1
+    assert plan.shots[0].action == event
+    assert plan.shots[0].subject == director.director_plan.character_presence
+    assert director.director_plan.character_pose == pose
+    assert director.model_dump() == before
+
+
+def test_single_image_long_intent_uses_existing_planning_without_truncating_input(app, monkeypatch):
+    project_id, _result, _calls = _generate(app, monkeypatch)
+    director = app.comic_projects.get_director(project_id)
+    intent = "机械鸟群依次穿过窗外，每只鸟都向塔楼飞去。" * 110
+    director.creative_decision.intent_summary = intent
+    seen = []
+
+    def model(messages):
+        seen.append(json.loads(messages[-1]["content"]))
+        return json.dumps({"title": "飞鸟经过", "description": "保留完整导演依据",
+                           "shots": [{"purpose": "呈现飞行事件", "subject": "机械鸟群",
+                                      "action": "机械鸟群依次飞向塔楼"}]}, ensure_ascii=False)
+
+    plan = plan_storyboard(
+        app.comic_projects.get(project_id), director, task=None, assets=[], model_call=model,
+    )
+    assert len(seen) == 1
+    assert intent in json.dumps(seen[0], ensure_ascii=False)
+    assert plan.shots[0].action == "机械鸟群依次飞向塔楼"
 
 
 def test_projected_camera_summary_keeps_component_provenance(app, monkeypatch):

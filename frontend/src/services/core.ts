@@ -57,7 +57,7 @@ export interface ComicLegacyPreview {
 }
 export function previewComicLegacy(owner: string): Promise<ComicLegacyPreview | null> { return coreGet(`/api/comic/works/legacy-preview?conversation_id=${encodeURIComponent(owner)}`, `legacy-preview:${owner}`) }
 export function importComicLegacy(body: Record<string, unknown>): Promise<ComicWork> { return corePost('/api/comic/works/legacy-import', body) }
-export async function listComicWorks(): Promise<ComicWork[]> { return (await coreGet<{ works: ComicWork[] }>('/api/comic/works', 'comic-workspaces'))?.works ?? [] }
+export async function listComicWorks(): Promise<ComicWork[]> { return (await cachedGet<{ works: ComicWork[] }>('/api/comic/works', 'comic-workspaces'))?.works ?? [] }
 export function getComicWork(id: string): Promise<ComicWork | null> { return coreGet(`/api/comic/works/${encodeURIComponent(id)}`, `comic-workspace:${id}`) }
 export function createComicWork(title = '未命名作品'): Promise<ComicWork> { return corePost('/api/comic/works', { request_id: crypto.randomUUID(), title }) }
 export function renameComicWork(work: ComicWork, title: string): Promise<ComicWork> { return corePost(`/api/comic/works/${encodeURIComponent(work.work_id)}/rename`, { request_id: crypto.randomUUID(), expected_version: work.version, title }) }
@@ -145,7 +145,9 @@ export async function getComicProject(projectId: string): Promise<ComicProjectCo
   return coreGet(`/api/comic/projects/${encodeURIComponent(projectId)}`, `comic-project:${projectId}`)
 }
 export async function getDirectorExecutions(projectId: string): Promise<DirectorExecution[] | null> {
-  const result = await coreGet<{ tasks: unknown[] }>(
+  /* 这个投影一次要 200KB、后端要重新拼一遍方案，而它是「进页面就看」的列表：
+     写操作成功后 corePost 会整体作废展示缓存，因此缓存不会让人看到过期的执行记录。 */
+  const result = await cachedGet<{ tasks: unknown[] }>(
     `/api/comic/projects/${encodeURIComponent(projectId)}/tasks`, `comic-director-tasks:${projectId}`,
   )
   // 请求被并发取消时 coreGet 返回 null；此时必须让调用方区分“取消”与“空列表”，
@@ -156,7 +158,9 @@ export async function getDirectorExecutions(projectId: string): Promise<Director
   )
 }
 export async function getComicImageRequests(projectId: string, owner: string): Promise<CoreRun[] | null> {
-  const response = await coreGet<{ tasks: CoreRun[] }>(`/api/comic/projects/${encodeURIComponent(projectId)}/tasks`, `image-requests:${projectId}:${owner}`)
+  /* 与 getDirectorExecutions 打的是同一个 URL：缓存后两者共享同一次在途请求，
+     进入工作区不必把同一份 200KB 投影拉两遍。 */
+  const response = await cachedGet<{ tasks: CoreRun[] }>(`/api/comic/projects/${encodeURIComponent(projectId)}/tasks`, `image-requests:${projectId}:${owner}`)
   return response ? response.tasks.filter(item => item.state?.conversation_id === owner && item.state?.task_type === 'image.edit') : null
 }
 export async function createDirectorExecution(
@@ -175,6 +179,7 @@ export interface ComicAssetView {
 }
 export interface ComicStoryboardView {
   storyboard_id: string; title: string; description: string; version: number; director_spec_version: number; status: string
+  project_version?: number
 }
 export interface ComicShotView {
   shot_id: string; storyboard_id: string; sequence_number: number; purpose: string; subject: string; action: string
@@ -193,7 +198,7 @@ export function deleteComicAsset(projectId: string, assetId: string,
   })
 }
 export async function getComicStoryboards(id: string): Promise<ComicStoryboardView[] | null> {
-  return (await coreGet<{ storyboards: ComicStoryboardView[] }>(`/api/comic/projects/${encodeURIComponent(id)}/storyboards`, `comic-boards:${id}`))?.storyboards ?? null
+  return (await cachedGet<{ storyboards: ComicStoryboardView[] }>(`/api/comic/projects/${encodeURIComponent(id)}/storyboards`, `comic-boards:${id}`))?.storyboards ?? null
 }
 export function createComicStoryboard(id: string, projectVersion: number, task: string, assetIds: string[] = []): Promise<{ storyboard: ComicStoryboardView; shots: ComicShotView[] }> {
   return corePost(`/api/comic/projects/${encodeURIComponent(id)}/storyboards`, {
@@ -201,10 +206,10 @@ export function createComicStoryboard(id: string, projectVersion: number, task: 
   })
 }
 export async function getComicShots(id: string): Promise<ComicShotView[] | null> {
-  return (await coreGet<{ shots: ComicShotView[] }>(`/api/comic/storyboards/${encodeURIComponent(id)}/shots`, `comic-shots:${id}`))?.shots ?? null
+  return (await cachedGet<{ shots: ComicShotView[] }>(`/api/comic/storyboards/${encodeURIComponent(id)}/shots`, `comic-shots:${id}`))?.shots ?? null
 }
 export async function getDirectorVersions(id: string): Promise<Record<string, unknown>[]> {
-  return (await coreGet<{ versions: Record<string, unknown>[] }>(`/api/comic/projects/${encodeURIComponent(id)}/director-spec/versions`, `comic-director-versions:${id}`))?.versions ?? []
+  return (await cachedGet<{ versions: Record<string, unknown>[] }>(`/api/comic/projects/${encodeURIComponent(id)}/director-spec/versions`, `comic-director-versions:${id}`))?.versions ?? []
 }
 export function getCurrentDirector(id: string): Promise<Record<string, unknown> | null> {
   return coreGet(`/api/comic/projects/${encodeURIComponent(id)}/director-spec`, `comic-director-current:${id}`)
@@ -224,7 +229,7 @@ export function confirmDirectorVersion(id: string, version: number, projectVersi
   return corePost(`/api/comic/projects/${encodeURIComponent(id)}/director-spec/confirm`, { version, expected_project_version: projectVersion })
 }
 export async function getComicPromptVersions(id: string): Promise<Record<string, unknown>[] | null> {
-  return (await coreGet<{ versions: Record<string, unknown>[] }>(`/api/comic/shots/${encodeURIComponent(id)}/prompt/versions`, `comic-prompt-versions:${id}`))?.versions ?? null
+  return (await cachedGet<{ versions: Record<string, unknown>[] }>(`/api/comic/shots/${encodeURIComponent(id)}/prompt/versions`, `comic-prompt-versions:${id}`))?.versions ?? null
 }
 export function compileComicPrompt(id: string, projectVersion: number, shotVersion: number,
   externalConversationId?: string, completePrompt = false): Promise<Record<string, unknown>> {
@@ -235,9 +240,16 @@ export function compileComicPrompt(id: string, projectVersion: number, shotVersi
   })
 }
 export async function getProjectPrompts(projectId: string): Promise<Record<string, unknown>[] | null> {
-  return (await coreGet<{ prompts: Record<string, unknown>[] }>(
+  return (await cachedGet<{ prompts: Record<string, unknown>[] }>(
     `/api/comic/projects/${encodeURIComponent(projectId)}/prompts`, `comic-prompts:${projectId}`,
   ))?.prompts ?? null
+}
+export interface ComicCodexTask {
+  task_id: string; artifact_id: string; task_path: string; task_sha256: string
+  reference_count: number; handoff_text: string; materials_directory?: string; delivery_status?: string
+}
+export function exportComicCodexTask(id: string, body: Record<string, unknown>): Promise<ComicCodexTask> {
+  return corePost(`/api/comic/shots/${encodeURIComponent(id)}/prompt/codex-task`, body)
 }
 export function confirmComicPrompt(id: string, projectVersion: number, version: number,
   conversationId: string): Promise<Record<string, unknown>> {
@@ -274,6 +286,9 @@ export interface ComicImageView extends ComicImageRef {
 export interface ComicImageFinding {
   finding_id: string; observation: string; suggested_change: string; confidence: number
   uncertainty?: string; region?: number[] | null
+  category?: 'clear_deviation' | 'optional_improvement' | 'uncertain'
+  target?: string; attribute?: string; evidence?: string[]; goal?: string; expected_benefit?: string
+  preserve?: string[]; risk?: string; risk_level?: 'low' | 'medium' | 'high' | 'unknown'
 }
 interface ComicImageBasis {
   project_id: string; conversation_id: string; source_image: ComicImageRef
@@ -281,18 +296,37 @@ interface ComicImageBasis {
   constraints?: { requirement: string; target?: string }[]
   /* 报告实际使用的图片（第 0 项为目标图）。版本号会被复用，sha256 才是内容身份。 */
   images?: { image_id: string; version: number; artifact_id: string; sha256: string }[]
+  references?: { established_elements?: { entity_id?: string; attribute?: string; target: string }[] }
 }
 export interface ComicImageAnalysis {
   artifact_id: string; basis: ComicImageBasis
-  output: { summary: string; findings: ComicImageFinding[]; protected_features: string[]; limitations: string[] }
+  analysis_policy?: string
+  output: { summary: string; findings: ComicImageFinding[]; protected_features: string[]; limitations: string[]; recommendation?: 'retain' | 'consider_edit' | 'uncertain' }
 }
 export interface ComicEditInstruction {
+  edit_status?: 'ready'
   artifact_id: string; run_id?: string; basis: ComicImageBasis; analysis_artifact_id: string | null; round_id?: string | null
-  scope: { user_instruction: string; selected_findings: ComicImageFinding[]; protected_features: string[]; edit_scope?: ComicEditScope | null }
+  scope: { user_instruction: string; selected_findings: ComicImageFinding[]; protected_features: string[]; edit_scope?: ComicEditScope | null; unified_plan?: ComicUnifiedEditPlan }
   output: { positive_prompt: string; negative_prompt: string; summary: string }
   requires_confirmation: boolean
   confirmation?: { confirmed: boolean } | null
 }
+export interface ComicEditResolution {
+  edit_status: 'needs_clarification' | 'needs_scope_confirmation' | 'review_unavailable'
+  run_id: string; round_id: string | null; source_image: ComicImageRef; input_sha256: string
+  message: string; review_diagnostics: ComicEditDiagnostics
+  candidate?: { verified: false; output: { positive_prompt: string; negative_prompt: string; summary: string } } | null
+  correction: { used: boolean; stage: string | null }; error_id?: string; trace_id?: string
+  plan_fingerprint?: string; edit_plan?: ComicUnifiedEditPlan
+}
+export interface ComicUnifiedEditPlan {
+  contract?: string
+  items: { item_id: string; target: string; attribute: string; desired_state: string; preserve: string[]; edit_bounds: number[] | null; operation?: 'modify' | 'preserve' }[]
+  handling: { action: string; reason: string; requirement_ids: string[] }[]
+  questions: { reason: string; requirement_ids: string[] }[]
+  scope_proposals: { item_id: string; target: string; bounds: number[]; reason: string; within_scope_alternative: string }[]
+}
+export interface ComicPlanConfirmation { run_id: string; fingerprint: string; accepted_item_ids: string[] }
 export interface ComicEditDiagnostics {
   stage: string; diagnostic_artifact_id: string; run_id: string; source_image: ComicImageRef; round_id: string | null
   issues: { code: string; reason: string; requirement_ids: string[]; finding_ids: string[]; region_ids: string[]; constraint_ids: string[] }[]
@@ -320,6 +354,10 @@ export interface ComicStoryReview {
 export interface ComicStoryExport { artifact_id: string; filename: string; content_url: string; sha256: string; story_version: number; available?: boolean }
 export interface ComicStoryView {
   story: ComicStory | null; review: ComicStoryReview | null
+  can_confirm?: boolean
+  generation_status?: 'needs_revision' | 'ready'
+  candidate_draft?: ComicStoryDraft
+  candidate_review?: ComicStoryReview
   confirmation: { confirmed: boolean; story_version?: number; content_sha256?: string } | null
   export_text: string; project_version: number | null
   anchor_project_id?: string | null
@@ -329,6 +367,36 @@ export interface ComicStoryView {
   exports: ComicStoryExport[]; candidate_run_id?: string | null; run_id?: string
 }
 export interface ComicStoryWrite extends ComicMediaWrite { anchor_project_id: string; expected_story_version: number }
+export type ComicVideoShot = NonNullable<ComicStoryView['manifest']>['shots'][number]
+export interface ComicVideoTask {
+  run_id: string; request_id: string; status: string; phase: string; can_query: boolean
+  scope: 'shot' | 'story'; prompt: string; submitted_prompt?: string; artifact_id: string | null; error: string | null
+  created_at: string; actual_fen: number | null
+  snapshot: { story_id: string; version: number; content_sha256: string; title: string; shots: ComicVideoShot[]
+    images?: { artifact_id: string; image_id: string; version: string; sha256: string }[] }
+}
+export interface ComicVideoView {
+  story_id: string | null; story_version: number; content_sha256: string | null; confirmed: boolean
+  ready: boolean; provider: string; model_label: string; unavailable_reason: string | null
+  credentials_configurable?: boolean; session_credentials_configured?: boolean
+  manifest: ComicStoryView['manifest']; story_context: string; tasks: ComicVideoTask[]
+}
+export interface ComicVideoWrite extends ComicStoryWrite {
+  content_sha256: string; prompt: string; scope: 'shot' | 'story'; shot_id: string | null
+}
+export function getComicVideo(owner: string): Promise<ComicVideoView | null> {
+  return coreGet(`${comicStoryPath(owner)}/video`, `comic-video:${owner}`)
+}
+export function configureVideoCredentials(accessKey: string, secretKey: string): Promise<{ configured: boolean }> {
+  return corePost('/api/video/credentials', { access_key: accessKey, secret_key: secretKey })
+}
+export function submitComicVideo(owner: string, body: ComicVideoWrite): Promise<ComicVideoTask> {
+  return corePost(`${comicStoryPath(owner)}/video`, storyWrite(owner, body))
+}
+export function queryComicVideo(owner: string, body: { conversation_id: string; anchor_project_id: string; run_id: string }): Promise<ComicVideoTask> {
+  const { conversation_id, ...rest } = body
+  return corePost(`${comicStoryPath(owner)}/video-query`, owner.startsWith('work:') ? rest : { ...rest, conversation_id })
+}
 function comicStoryPath(owner: string): string { return owner.startsWith('work:')
   ? `/api/comic/works/${encodeURIComponent(owner.slice(5))}/story` : `/api/comic/conversations/${encodeURIComponent(owner)}/story` }
 function storyWrite(owner: string, body: ComicStoryWrite): Record<string, unknown> {
@@ -336,25 +404,25 @@ function storyWrite(owner: string, body: ComicStoryWrite): Record<string, unknow
   return owner.startsWith('work:') ? rest : { ...rest, conversation_id }
 }
 export function getComicStory(owner: string): Promise<ComicStoryView | null> {
-  return coreGet(comicStoryPath(owner), `comic-story:${owner}`)
+  return cachedGet(comicStoryPath(owner), `comic-story:${owner}`)
 }
 export interface ComicStoryImagePage {
   images: ComicImageView[]; unavailable_images?: (ComicImageRef & { reason: string })[]
 }
 export async function getComicStoryImages(owner: string): Promise<ComicStoryImagePage | null> {
-  return coreGet(`${comicStoryPath(owner)}/images`, `comic-story-images:${owner}`)
+  return cachedGet(`${comicStoryPath(owner)}/images`, `comic-story-images:${owner}`)
 }
 export async function getComicStoryVersions(owner: string): Promise<ComicStory[]> {
-  return (await coreGet<{ versions: ComicStory[] }>(`${comicStoryPath(owner)}/versions`, `comic-story-versions:${owner}`))?.versions ?? []
+  return (await cachedGet<{ versions: ComicStory[] }>(`${comicStoryPath(owner)}/versions`, `comic-story-versions:${owner}`))?.versions ?? []
 }
 export async function getComicStoryRequests(owner: string): Promise<CoreRun[]> {
-  return (await coreGet<{ tasks: CoreRun[] }>(`${comicStoryPath(owner)}/requests`, `comic-story-requests:${owner}`))?.tasks ?? []
+  return (await cachedGet<{ tasks: CoreRun[] }>(`${comicStoryPath(owner)}/requests`, `comic-story-requests:${owner}`))?.tasks ?? []
 }
 export function saveComicStory(owner: string, body: ComicStoryWrite & { draft: ComicStoryDraft }): Promise<ComicStoryView> {
   return owner.startsWith('work:') ? corePost(`${comicStoryPath(owner)}/save`, storyWrite(owner, body), 'POST', true)
     : corePost(comicStoryPath(owner), { ...body }, 'PUT', true)
 }
-export function generateComicStory(owner: string, body: ComicStoryWrite & { instruction: string; images: ComicImageRef[]; draft?: ComicStoryDraft }): Promise<ComicStoryView> {
+export function generateComicStory(owner: string, body: ComicStoryWrite & { instruction: string; images: ComicImageRef[]; draft?: ComicStoryDraft; candidate_run_id?: string }): Promise<ComicStoryView> {
   return corePost(`${comicStoryPath(owner)}/generate`, storyWrite(owner, body))
 }
 export function reviewComicStory(owner: string, body: ComicStoryWrite): Promise<ComicStoryView> {
@@ -377,6 +445,7 @@ export interface ComicInstructionTarget { mode: 'whole' | 'selected_regions' | '
 export interface ComicEditScope {
   mode: 'whole' | 'regions' | 'mixed'; regions: ComicEditRegion[]
   whole_finding_ids?: string[]; instruction_target?: ComicInstructionTarget | null
+  region_semantics?: 'strict' | 'locator'
 }
 export interface ComicReviewDraft {
   image: ComicImageRef; round_id: string; task: string; analysis_artifact_id: string | null
@@ -389,7 +458,7 @@ export interface ComicSavedState<T> { version: number; state: T | null; unavaila
 export interface ComicReportPage<T> { items: T[]; next_cursor: string | null; image_available?: boolean; unavailable_reason?: string | null; unavailable_items?: { artifact_id: string; reason: string }[] }
 export interface ComicComparison {
   artifact_id: string; before: ComicImageView; after: ComicImageView
-  output: { summary: string; changes: { check_id: string; status: string; evidence: string }[]; preservation: { check_id: string; status: string; evidence: string }[]; limitations: string[] }
+  output: { summary: string; changes: { check_id: string; status: string; evidence: string }[]; preservation: { check_id: string; status: string; evidence: string }[]; limitations: string[]; new_problems?: string[]; recommendation?: 'retain_before' | 'consider_after' | 'uncertain' }
 }
 export function getComicWorkbench(projectId: string, owner: string): Promise<ComicSavedState<ComicWorkbenchState> | null> {
   return coreGet(`/api/comic/projects/${encodeURIComponent(projectId)}/image-workbench?conversation_id=${encodeURIComponent(owner)}`, `workbench:${projectId}:${owner}`)
@@ -417,7 +486,7 @@ export function getComicImageReport<T>(projectId: string, owner: string, kind: '
 export function compareComicImages(projectId: string, body: ComicMediaWrite & { before: ComicImageRef; after: ComicImageRef; instruction_artifact_id: string }): Promise<ComicComparison> {
   return corePost(`/api/comic/projects/${encodeURIComponent(projectId)}/image-comparisons`, { ...body })
 }
-export function selectComicImage(imageId: string, body: ComicMediaWrite & { version: number; expected_selection_version: number }): Promise<unknown> {
+export function selectComicImage(imageId: string, body: ComicMediaWrite & { version: number; expected_selection_version: number; accepted_visual_changes?: { entity_id: string; target: string; attributes: string[]; quote: string; operation: 'change' }[] }): Promise<unknown> {
   return corePost(`/api/comic/images/${encodeURIComponent(imageId)}/selection`, { ...body }, 'PUT')
 }
 /* 删除一张已导入图片及其全部版本：后端会拒绝故事已固定或正作参考资产的图片。
@@ -452,8 +521,8 @@ export function analyzeComicImage(projectId: string, body: ComicMediaWrite & { i
   return corePost(`/api/comic/projects/${encodeURIComponent(projectId)}/image-analyses`, { ...body })
 }
 export function createComicEditInstruction(projectId: string, body: ComicMediaWrite & {
-  image: ComicImageRef; task: string; analysis_artifact_id?: string | null; selected_finding_ids: string[]; instruction: string; edit_scope?: ComicEditScope | null; round_id?: string
-}): Promise<ComicEditInstruction> {
+  image: ComicImageRef; task: string; analysis_artifact_id?: string | null; selected_finding_ids: string[]; instruction: string; edit_scope?: ComicEditScope | null; round_id?: string; plan_confirmation?: ComicPlanConfirmation
+}): Promise<ComicEditInstruction | ComicEditResolution> {
   return corePost(`/api/comic/projects/${encodeURIComponent(projectId)}/edit-instructions`, { ...body })
 }
 export function confirmComicEditInstruction(projectId: string, artifactId: string, body: ComicMediaWrite): Promise<unknown> {
@@ -481,12 +550,21 @@ export function deleteComicPromptVersion(shotId: string, version: number,
   })
 }
 
+const devHost = typeof window !== 'undefined' && window.location?.hostname === 'localhost'
+  ? 'localhost' : '127.0.0.1'
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '')
-  ?? (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '')
+  ?? (import.meta.env.DEV ? `http://${devHost}:8000` : '')
 let token = document.querySelector<HTMLMetaElement>('meta[name="studio-token"]')?.content ?? ''
 let tokenPromise: Promise<string> | null = null
 
 function api(path: string): string { return `${API_BASE}${path}` }
+async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  const response = await fetch(path, { ...options, credentials: 'include' })
+  if (response.status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('kantoku-auth-required'))
+  }
+  return response
+}
 
 export class CoreApiError extends Error {
   constructor(
@@ -519,7 +597,7 @@ async function apiFailure(response: Response, fallback: string): Promise<CoreApi
 
 async function ensureToken(): Promise<string> {
   if (token && token !== '__TOKEN__') return token
-  tokenPromise ??= fetch(api('/api/session')).then(async (response) => {
+  tokenPromise ??= apiFetch(api('/api/session')).then(async (response) => {
     if (!response.ok) throw await apiFailure(response, '无法连接 Kantoku 后端')
     const result = await response.json() as { token: string }
     token = result.token
@@ -533,43 +611,84 @@ const inflight = new Map<string, AbortController>()
 const appliedSeq = new Map<string, number>()
 let globalSeq = 0
 
+/* 展示型读取的短时缓存。
+   切换页签（分镜/镜头/Prompt 版本/故事…）反复读同一份数据，每次都要同步等 200–800ms，
+   表现为「点一下先卡一下才出内容」。这里按 URL 缓存 + 共享在途请求：
+     · 命中缓存直接返回，切页立即出内容；
+     · 同一 URL 并发读取共用一次请求，不再互相 abort；
+     · 任何写请求（corePost）都会整体作废缓存，改完立刻看到新结果。
+   只对「展示用」读取开启（默认关闭）。轮询与状态判定仍走真实请求，保证进度不被旧值拖住。 */
+const READ_TTL_MS = 15_000
+const readCache = new Map<string, { at: number; data: unknown }>()
+const sharedReads = new Map<string, Promise<unknown>>()
+let writeEpoch = 0
+
+function cloneRead<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value
+  try { return structuredClone(value) } catch { return JSON.parse(JSON.stringify(value)) as T }
+}
+
+function invalidateReads(): void {
+  writeEpoch += 1
+  readCache.clear()
+}
+
 function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
 }
 
-async function coreGet<T>(path: string, key: string): Promise<T | null> {
-  await ensureToken()
-  inflight.get(key)?.abort()
-  const controller = new AbortController()
-  inflight.set(key, controller)
-  const seq = ++globalSeq
-  try {
-    const sentToken = token
-    let response = await fetch(api(path), {
-      headers: { 'X-Studio-Token': sentToken },
-      signal: controller.signal,
-    })
-    if (response.status === 403) {
-      if (token === sentToken) token = ''
-      const refreshedToken = await ensureToken()
-      response = await fetch(api(path), { headers: { 'X-Studio-Token': refreshedToken }, signal: controller.signal })
-    }
-    if (!response.ok) throw await apiFailure(response, '请求没有完成')
-    const result = (await response.json()) as T
-    if (seq < (appliedSeq.get(key) ?? 0)) return null
-    appliedSeq.set(key, seq)
-    return result
-  } catch (error) {
-    if (isAbort(error)) return null
-    throw error
-  } finally {
-    if (inflight.get(key) === controller) inflight.delete(key)
+async function coreGet<T>(path: string, key: string, options: { cache?: boolean } = {}): Promise<T | null> {
+  const cacheable = !!options.cache
+  if (cacheable) {
+    const hit = readCache.get(path)
+    if (hit && Date.now() - hit.at < READ_TTL_MS) return cloneRead(hit.data) as T
+    const shared = sharedReads.get(path)
+    if (shared) return shared as Promise<T | null>
   }
+  const epoch = writeEpoch
+  const pending = (async (): Promise<T | null> => {
+    await ensureToken()
+    inflight.get(key)?.abort()
+    const controller = new AbortController()
+    inflight.set(key, controller)
+    const seq = ++globalSeq
+    try {
+      const sentToken = token
+      let response = await apiFetch(api(path), {
+        headers: { 'X-Studio-Token': sentToken },
+        signal: controller.signal,
+      })
+      if (response.status === 403) {
+        if (token === sentToken) token = ''
+        const refreshedToken = await ensureToken()
+        response = await apiFetch(api(path), { headers: { 'X-Studio-Token': refreshedToken }, signal: controller.signal })
+      }
+      if (!response.ok) throw await apiFailure(response, '请求没有完成')
+      const result = (await response.json()) as T
+      if (seq < (appliedSeq.get(key) ?? 0)) return null
+      appliedSeq.set(key, seq)
+      if (cacheable && epoch === writeEpoch) readCache.set(path, { at: Date.now(), data: cloneRead(result) })
+      return result
+    } catch (error) {
+      if (isAbort(error)) return null
+      throw error
+    } finally {
+      if (inflight.get(key) === controller) inflight.delete(key)
+    }
+  })()
+  if (!cacheable) return pending
+  sharedReads.set(path, pending)
+  try { return await pending } finally { if (sharedReads.get(path) === pending) sharedReads.delete(path) }
+}
+
+/* 展示型读取：允许命中短时缓存。用于「打开就看不改」的列表页。 */
+function cachedGet<T>(path: string, key: string): Promise<T | null> {
+  return coreGet<T>(path, key, { cache: true })
 }
 
 async function corePost<T>(path: string, body: Record<string, unknown> = {}, method: 'POST' | 'PUT' = 'POST', keepalive = false): Promise<T> {
   await ensureToken()
-  const response = await fetch(api(path), {
+  const response = await apiFetch(api(path), {
     method,
     keepalive,
     headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
@@ -577,7 +696,58 @@ async function corePost<T>(path: string, body: Record<string, unknown> = {}, met
   })
   if (!response.ok) throw await apiFailure(response, '请求没有完成')
   const result = (await response.json()) as T
+  // 写成功即作废展示缓存：下一位读者拿到的一定是刚提交的结果。
+  invalidateReads()
   return result
+}
+
+export function logout(): Promise<{ authenticated: boolean }> {
+  return corePost('/api/auth/logout')
+}
+
+export interface AccountProfile {
+  username: string
+  nickname: string
+  avatar: string | null
+  session_started_at?: number | null
+}
+export interface ProviderCredentialField { id: string; label: string; configured: boolean }
+export interface ProviderCredential {
+  id: string; label: string; fields: ProviderCredentialField[]
+  editable?: boolean
+  credentials_configurable?: boolean; session_credentials_configured?: boolean
+}
+export interface ProviderCredentials { providers: ProviderCredential[] }
+export function getProviderCredentials(): Promise<ProviderCredentials | null> {
+  return coreGet('/api/account/provider-credentials', 'account-provider-credentials')
+}
+export function saveProviderCredentials(provider: string, fields: Record<string, string>): Promise<ProviderCredentials & { message?: string }> {
+  return corePost('/api/account/provider-credentials', { provider, fields })
+}
+/** 余额无法确定时后端返回 `unavailable`，此时 `balances` 必为空数组，不代表余额为 0。 */
+export interface TextBalance {
+  platform: string
+  balances: { currency: string; amount: string }[]
+  unavailable?: { code: string; message: string }
+}
+export function getTextBalance(): Promise<TextBalance | null> {
+  return coreGet('/api/account/text-balance', 'account-text-balance')
+}
+export function getCreativeBalance(): Promise<TextBalance | null> {
+  return coreGet('/api/account/creative-balance', 'account-creative-balance')
+}
+export function getAccountProfile(): Promise<AccountProfile | null> {
+  return coreGet('/api/account/profile', 'account-profile')
+}
+export function saveAccountProfile(
+  nickname: string, avatar: string | null, removeAvatar = false,
+): Promise<AccountProfile> {
+  return corePost('/api/account/profile', {
+    nickname, avatar, remove_avatar: removeAvatar,
+  })
+}
+export function changeAccountPassword(oldPassword: string, newPassword: string): Promise<{ updated: boolean }> {
+  return corePost('/api/account/password', { old_password: oldPassword, new_password: newPassword })
 }
 
 export function disposeAll(): void {
@@ -618,7 +788,7 @@ export function changeArtifactLifecycle(artifact: CoreArtifact, action: Artifact
 
 export async function getArtifactContentBlob(artifactId: string, reportFailure = false): Promise<Blob | null> {
   await ensureToken()
-  const response = await fetch(api(`/api/artifacts/${encodeURIComponent(artifactId)}/content`), {
+  const response = await apiFetch(api(`/api/artifacts/${encodeURIComponent(artifactId)}/content`), {
     headers: { 'X-Studio-Token': token },
   })
   if (!response.ok) {
@@ -639,7 +809,7 @@ export async function getArtifact(artifactId: string): Promise<CoreArtifact | nu
 
 export async function getTaskImageUrl(requestId: string, reportFailure = false): Promise<string | null> {
   await ensureToken()
-  const response = await fetch(api(`/media/${encodeURIComponent(requestId)}`), {
+  const response = await apiFetch(api(`/media/${encodeURIComponent(requestId)}`), {
     headers: { 'X-Studio-Token': token },
   })
   if (!response.ok) {
@@ -711,6 +881,7 @@ export function subscribeRunEvents(
 ): () => void {
   const source = new EventSource(
     api(`/api/runs/${encodeURIComponent(runId)}/events/stream?after=${after}&token=${encodeURIComponent(token)}`),
+    { withCredentials: true },
   )
   const types = [
     'run_started', 'run_waiting', 'run_completed', 'run_failed', 'run_cancelled',
@@ -753,7 +924,7 @@ export async function getConversations(domain?: string, query = ''): Promise<Con
 
 export async function renameConversation(id: string, title: string): Promise<Conversation> {
   await ensureToken()
-  const response = await fetch(api(`/api/conversations/${encodeURIComponent(id)}`), {
+  const response = await apiFetch(api(`/api/conversations/${encodeURIComponent(id)}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
     body: JSON.stringify({ title }),
@@ -766,7 +937,7 @@ export async function setConversationFastDomain(
   id: string, domain: 'comic' | 'commerce' | 'studio' | null,
 ): Promise<Conversation> {
   await ensureToken()
-  const response = await fetch(api(`/api/conversations/${encodeURIComponent(id)}`), {
+  const response = await apiFetch(api(`/api/conversations/${encodeURIComponent(id)}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
     body: JSON.stringify({ fast_domain: domain }),
@@ -786,7 +957,7 @@ export function decideMediaCost(
 
 export async function deleteConversation(id: string): Promise<void> {
   await ensureToken()
-  const response = await fetch(api(`/api/conversations/${encodeURIComponent(id)}`), {
+  const response = await apiFetch(api(`/api/conversations/${encodeURIComponent(id)}`), {
     method: 'DELETE', headers: { 'X-Studio-Token': token },
   })
   if (!response.ok) throw await apiFailure(response, '删除聊天失败')
@@ -826,9 +997,13 @@ export async function streamConversationMessage(
   await ensureToken()
   const response = await fetch(api(`/api/conversations/${encodeURIComponent(id)}/messages/stream`), {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
     body: JSON.stringify({ content, domain_hint: domainHint, data_mode: dataMode, enhance_prompt: enhancePrompt === true, generation_request_id: generationRequestId, ...executionContext }),
   })
+  if (response.status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('kantoku-auth-required'))
+  }
   if (!response.ok || !response.body) {
     throw await apiFailure(response, '消息发送失败')
   }

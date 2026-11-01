@@ -134,3 +134,27 @@ test('completed image replaces the loader once; persisted artifact still renders
   assert.doesNotMatch(html, /ImageGenerationPlaceholder|private-report-marker/)
   assert.match(await renderMessages(persisted), /\/api\/artifacts\/real-image\/content/)
 })
+
+test('long histories keep image jobs and the first saved result bound to their own request', async () => {
+  const history = Array.from({ length: 200 }, (_, index) => ({
+    id: `history-${index}`, role: 'user', content: `历史 ${index}`,
+  }))
+  const user = { id: 'pending', role: 'user', content: '生成图片', event_id: 'generation-user:request-a' }
+  const first = { id: 'first', role: 'assistant', content: '', artifact_id: 'artifact-a', event_id: 'generation-artifact:request-b' }
+  const duplicate = { id: 'second', role: 'assistant', content: '', artifact_id: 'artifact-b', event_id: 'generation-artifact:request-b' }
+  const prompt = { id: 'prompt', role: 'assistant', content: '提示词', event_id: 'generation-prompt:request-b' }
+  const html = await renderMessages({ messages: [...history, user, prompt, first, duplicate],
+    mediaJobs: [
+      { generation_request_id: 'request-a', status: 'pending', estimate_fen: 5 },
+      { generation_request_id: 'request-a', status: 'pending', approval_status: 'pending', estimate_fen: 20 },
+    ],
+    messageMedia: {
+      first: { type: 'image', url: '/first.png', filename: 'first.png' },
+      second: { type: 'image', url: '/second.png', filename: 'second.png' },
+    },
+  })
+  assert.match(html, /本次生图需要确认费用/)
+  assert.match(html, /预计 ¥0\.05/)
+  assert.match(html, /\/first\.png/)
+  assert.doesNotMatch(html, /\/second\.png/)
+})

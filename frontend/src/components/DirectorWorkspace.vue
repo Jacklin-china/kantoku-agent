@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Clapperboard, Layers, FileText, Film, MessageSquareText, ArrowLeft, ArrowRight, Check, Download, Video } from 'lucide-vue-next'
+import { Clapperboard, Layers, FileText, Film, MessageSquareText, ArrowLeft, ArrowRight, Check, Download, Video, History, Plus } from 'lucide-vue-next'
 import MessageComposer from './chat/MessageComposer.vue'
 import UserMessageBubble from './chat/UserMessageBubble.vue'
 import AssistantMessageBlock from './chat/AssistantMessageBlock.vue'
 import UiDropdown from './ui/UiDropdown.vue'
 import WorkspaceShell from './workspace/WorkspaceShell.vue'
+import HistoryDrawer from './layout/HistoryDrawer.vue'
 import ConversationHistory from './chat/ConversationHistory.vue'
 import { conversationTaskTitle, ownsConversationRun } from './chat/conversationPresentation'
 import DirectorNodeView from './DirectorNodeView.vue'
@@ -19,23 +20,26 @@ import WorkSettings from './comic/WorkSettings.vue'
 import LegacyWorkImport from './comic/LegacyWorkImport.vue'
 import { importComicLegacy } from '../services/core'
 import { getComicWorkConversation, sendComicWorkTurn, getComicWorkTurn, deleteComicWork } from '../services/core'
-import { copyPromptDelivery, externalShotPrompt, finalImagePrompt, imagePromptReferences, readPromptReference, promptVersionDiff, reviewImageSources, type PromptReference } from '../domains/comic/shotGeneration'
-import { getArtifactContentBlob } from '../services/core'
+import { copyPromptDelivery, externalShotPrompt, finalImagePrompt, imagePromptReferences, readPromptReference, visualContinuityMessages, promptVersionDiff, reviewImageSources, type PromptReference } from '../domains/comic/shotGeneration'
+import { getArtifactContentBlob, exportComicCodexTask } from '../services/core'
 import { createComicStoryboard } from '../services/core'
 import { getComicConversationWorks, type ComicConversationWork } from '../services/core'
 import { createComicWork, createComicImageTask, getComicWork, listComicWorks, renameComicWork, sendComicTaskTurn, getComicTaskTurn, getComicWorkbench, type ComicWork, type ComicImageTask } from '../services/core'
 import { comicProductionProgress } from '../domains/comic/productionProgress'
-import { conversationWorkspaceRun, directorConversationTask, quickDirectorMessage } from '../domains/comic/directorPresentation'
+import { buildDirectorChatTurns, conversationWorkspaceRun, directorConversationTask, directorProductionSteps } from '../domains/comic/directorPresentation'
 import { directorFeedbackTarget } from '../domains/comic/directorPresentation'
 import { confirmComicPrompt, getProjectPrompts, resumeRun, saveComicPrompt, uploadComicExternalImage } from '../services/core'
 import { navigate, route } from '../router'
-import { canConfirmDirector, canDispatchDirectorInput, directorConversationExecutions, directorConversationSummary, directorDraftFields, discardDirectorNodeDraft, editableDirectorDraft, directorFieldLabels, directorIsStale, directorNodeLabels, directorStageSections, fastDirectorNodeLabels, directorStateLabels, directorSummary, editableDirectorNode, mergeChatTurnsByTime, selectDirectorExecution, stageDraftKey } from '../domains/comic/directorPresentation'
-import type { MergedChatTurn } from '../domains/comic/directorPresentation'
+import { canConfirmDirector, canDispatchDirectorInput, directorConversationExecutions, directorConversationSummary, directorDraftFields, discardDirectorNodeDraft, editableDirectorDraft, directorFieldLabels, directorIsStale, directorNodeLabels, directorStageSections, fastDirectorNodeLabels, directorStateLabels, directorSummary, editableDirectorNode, selectDirectorExecution, stageDraftKey } from '../domains/comic/directorPresentation'
 import { CoreApiError, cancelRun, compileComicPrompt, confirmDirectorVersion, saveDirectorDraft, createComicProject, createConversation, createDirectorExecution, deleteComicAsset, deleteComicPromptVersion, deleteConversation, deleteDirectorVersion, getArtifactContentUrl, getComicAssets, getComicProject, getComicPromptVersions, getComicShots, getComicStoryboards, getConversation, getConversations, getCurrentDirector, getDirectorExecutions, getDirectorVersions, getEvents, getRun, renameConversation, restoreComicPrompt, restoreDirectorVersion, type ComicAssetView, type ComicProjectContext, type ComicShotView, type ComicStoryboardView, type CreationMode, type DirectorExecution, type RuntimeEvent } from '../services/core'
 import type { Conversation, ConversationMessage } from '../types'
 import type { CoreRun } from '../types'
+import type { CriticFeedback } from '../services/core'
 
-const props = defineProps<{ initialRunId?: string }>()
+// 工作区保留页面生命周期与请求所有权；聊天和步骤的纯展示规则在
+// domains/comic/directorPresentation.ts。切换对话或作品后，异步回调必须检查 epoch，
+// 防止旧响应覆盖当前选择；不要把页面上的临时状态当成服务端版本。
+const props = defineProps<{ initialRunId?: string; historySignal?: number }>()
 defineEmits<{ newProject: [] }>()
 const legacyOnly = ref(false)
 const project = ref<ComicProjectContext | null>(null)
@@ -87,11 +91,21 @@ function readNavCollapsed(): boolean {
   try { return localStorage.getItem(navCollapsedKey) === '1' } catch { return false }
 }
 const navCollapsed = ref(readNavCollapsed())
+/* 作品与历史对话抽屉：工作区此前完全没有历史入口——点了「新建作品」，
+   上一个作品的画面、方案、Prompt 全都还在，却在界面上找不到任何入口回去。
+   抽屉常驻一条入口按钮，列表复用首页那套真实会话/作品数据与重命名、删除能力。 */
+const historyDrawer = ref(false)
+/* 左栏「历史」入口从这里落到抽屉上：左栏是全局的，抽屉的数据属于本页，
+   所以用父级递增信号驱动，而不是把会话数据提到 App 层重复一份。 */
+watch(() => props.historySignal, (value, previous) => {
+  if (value && value !== previous) historyDrawer.value = true
+})
 function toggleNavCollapsed(value: boolean): void {
   navCollapsed.value = value
   try { localStorage.setItem(navCollapsedKey, value ? '1' : '0') } catch { /* 忽略写入失败 */ }
 }
 const chatExpanded = ref(!route.value.workspacePage || route.value.workspacePage === 'conversation')
+const nodeCollapsed = ref(false)
 const composer = ref<InstanceType<typeof MessageComposer> | null>(null)
 const directorNodeView = ref<InstanceType<typeof DirectorNodeView> | null>(null)
 const timeline = ref<HTMLElement | null>(null)
@@ -308,39 +322,10 @@ async function loadConversationMessages(id: string): Promise<void> {
   messageRequest = { key, promise: pending }
   return pending
 }
-const chatTurns = computed<ChatTurn[]>(() => {
-  const persisted: MergedChatTurn[] = conversationMessages.value.map(item => ({
-    id: item.id, role: item.role === 'user' ? 'user' : 'assistant',
-    content: item.role === 'assistant' && runs.value[item.run_id ?? '']?.state.generation_incomplete === true
-      ? '本轮方案的系统内部检查尚未完成，候选内容已保留。请进入方案重新执行内部检查。'
-      : item.role === 'assistant' && item.type === 'plan' ? quickDirectorMessage(item.content) : item.content,
-    artifactId: item.artifact_id ?? undefined, runId: item.run_id ?? undefined, at: item.created_at,
-  }))
-  const knownTurns = new Set(conversationMessages.value.filter(item => item.run_id).map(item => `${item.run_id}:${item.role}`))
-  const derived: MergedChatTurn[] = []
-  for (const entry of transcript.value) {
-    if (Object.values(runs.value).some(run => (run.state.quick_creation as Record<string, unknown> | undefined)?.director_run_id === entry.execution.run_id)) continue
-    const inputMessageId = (runs.value[entry.execution.run_id]?.state.creative_context as Record<string, unknown> | undefined)?.input_message_id
-    const savedUser = conversationMessages.value.find(item => item.role === 'user'
-      && (item.run_id === entry.execution.run_id || item.id === inputMessageId))
-    // 历史 Run 早于消息落库，用Run 的开始时间还原它在对话中的真实位置。
-    const at = savedUser?.created_at ?? runs.value[entry.execution.run_id]?.started_at ?? ''
-    if (entry.text && !runs.value[entry.execution.run_id]?.state.task_system && !savedUser) derived.push({ id: `run-user-${entry.execution.run_id}`, role: 'user', content: entry.text, runId: entry.execution.run_id, at })
-    // 执行状态标签不是对话内容；只在尚无正式回答且仍在执行时作为占位显示。
-    const answer = entry.answer || entry.label
-    if (answer && !knownTurns.has(`${entry.execution.run_id}:assistant`)) derived.push({ id: `run-ai-${entry.execution.run_id}`, role: 'assistant', content: answer, runId: entry.execution.run_id, at })
-  }
-  // 刚提交、尚未落库的用户消息必须与已有气泡同轴排序，
-  // 否则它会落在列表末尾之后，视觉上跑到已完成回答的上方。
-  if (pendingText.value && !conversationMessages.value.some(item => item.role === 'user'
-      && ((pendingRequestId.value && item.event_id === `director-request:${pendingRequestId.value}`)
-        || (item.content === pendingText.value && item.run_id && !previousRunIds.value.includes(item.run_id))))
-      && !derived.some(item => item.role === 'user' && item.content === pendingText.value
-        && item.runId && !previousRunIds.value.includes(item.runId))) {
-    derived.push({ id: 'pending-user', role: 'user', content: pendingText.value, at: '' })
-  }
-  return mergeChatTurnsByTime(persisted, derived)
-})
+const chatTurns = computed<ChatTurn[]>(() => buildDirectorChatTurns(
+  conversationMessages.value, runs.value, transcript.value,
+  pendingText.value, pendingRequestId.value, previousRunIds.value,
+))
 
 async function loadConversations(worksReady: Promise<void> = Promise.resolve()): Promise<void> {
   const [all] = await Promise.all([getConversations('comic'), worksReady])
@@ -603,6 +588,17 @@ const selectedShotHint = computed(() => {
   const shot = shots.value.find(item => item.shot_id === selectedShot.value)
   return shot ? `为镜头 ${shot.sequence_number} · ${shot.subject} 生成完整 Image Prompt` : ''
 })
+/* 生成按钮不能因为"还不能生成"就整个消失——用户会以为功能不存在。
+   按钮常驻，只在不可用时禁用，并说清卡在哪一步。 */
+const productionLockReason = computed(() => {
+  if (!spec.value) return '还没有导演方案，先生成并确认方案'
+  if (stale.value) return '方案来源已变化，需要先更新导演方案'
+  if (dirty.value) return '方案有未保存的修改，保存后重新确认'
+  if (spec.value.schema_version !== 2) return '这是旧版方案，需要重新生成 v2 导演方案'
+  if (!confirmed.value) return '导演方案还没确认，确认后才能生成完整指令'
+  if (!productionEligible.value) return '摄影方案或审核结论尚未通过，暂时不能生成'
+  return ''
+})
 // 历史方案必须能看出“什么时候保存的”，用户才知道它与当前作品差了多少。
 const stalePlanSavedAt = computed(() => {
   const wanted = Number((spec.value as { version?: number } | null)?.version)
@@ -658,6 +654,49 @@ const editable = computed(() => spec.value?.schema_version === 2 ? !stale.value 
 const visibleNodes = computed(() => mode.value === 'fast' ? fastDirectorNodeLabels
   : spec.value?.review_required === false ? { ...directorNodeLabels, director_critic: '方案检查' }
   : directorNodeLabels)
+const directorPipelineIndex = computed(() => Math.max(0, Object.keys(visibleNodes.value).indexOf(selectedStage.value)))
+const directorFindings = computed(() => (spec.value?.critic_feedback as CriticFeedback[] | undefined) ?? summary.value?.critic_feedback ?? [])
+/* 真实审核结果里 level 有 blocking / warning 两档：前者是必须改的语义冲突，
+   后者只是优化建议。挤在同一张卡里会让人分不清哪些真的挡住确认。 */
+const directorBlocking = computed(() => directorFindings.value.filter(item => item.level === 'blocking'))
+const directorAdvisory = computed(() => directorFindings.value.filter(item => item.level !== 'blocking'))
+
+/* 方案的来路决定审核该说什么：
+   - model    ：模型一次生成，用户没改过 → 按设计默认通过，不该报"暂无意见"
+   - manual   ：用户改过并保存 → 已重审，无冲突就是真通过
+   - restored ：从历史版本恢复 → 只读，不重新审核
+   判据取后端现有字段，不在前端另造状态。 */
+const specOrigin = computed<'model' | 'manual' | 'restored'>(() => {
+  const declared = (spec.value as { source?: string } | null)?.source
+  if (declared === 'manual' || declared === 'restored') return declared
+  const provenance = (spec.value?.field_provenance ?? {}) as Record<string, { source_type?: string }>
+  return Object.values(provenance).some(item => item?.source_type === 'manual_edit') ? 'manual' : 'model'
+})
+
+const specOriginLabel = computed(() => ({
+  model: '模型初稿', manual: '你的修改', restored: '历史恢复',
+}[specOrigin.value]))
+
+/* 空审核时标题不再重复挂状态小字：那点宽度留给正文，一行才说得完整。 */
+const auditStateLabel = computed(() => {
+  if (directorBlocking.value.length) return `${directorBlocking.value.length} 条须先改`
+  if (directorAdvisory.value.length) return '仅建议'
+  return ''
+})
+
+/* 空审核时的说明：要说清"为什么没有问题"，而不是留一句像没接上的"暂无"。 */
+const auditQuietText = computed(() => {
+  if (spec.value?.critic_status === 'unavailable') return '审核暂不可用，方案已保留'
+  if (dirty.value) return '改动未保存 · 保存后重新审核'
+  if (spec.value && !directorFindings.value.length) {
+    if (specOrigin.value === 'manual') return '已按你的改动重审 · 未发现冲突'
+    if (specOrigin.value === 'restored') return '历史恢复稿 · 未重新审核'
+    return '初稿默认通过 · 改动后会重新审核'
+  }
+  if (!spec.value) return '尚未生成方案，暂无审核内容'
+  return summary.value?.critic_result?.public_summary || '暂无审核意见'
+})
+const directorConstraints = computed(() => project.value?.creative_brief?.hard_constraints ?? [])
 const projectTitle = computed(() => activeWork.value?.title ?? conversations.value.find(item => item.id === activeConversationId.value)?.title ?? '新作品')
 const title = computed(() => section.value === 'director' ? visibleNodes.value[selectedStage.value] : navigation.find(item => item.id === toNavId(section.value))?.label)
 const activeNavigation = computed(() => chatExpanded.value ? 'conversation' : toNavId(section.value))
@@ -667,9 +706,8 @@ const activeNavigation = computed(() => chatExpanded.value ? 'conversation' : to
    - current ：用户此刻正在这一步
    - todo    ：尚未开始
    状态判据只读现有 computed，不新增任何后端字段。
-   视频生成不做 done 判定：后端能力未接入，没有任何真实产物可依据。 */
-type StepStatus = 'done' | 'current' | 'todo'
-const productionSteps = computed<{ id: string; label: string; hint: string; status: StepStatus }[]>(() => {
+   视频生成暂不做 done 判定：此处没有读取可用于确认完成的产物状态。 */
+const productionSteps = computed(() => {
   const planIncomplete = spec.value?.generation_incomplete === true
   const hasPlan = !planIncomplete && (typeof spec.value?.version === 'number'
     || workExecutions.value.some(item => typeof item.director_spec?.version === 'number'
@@ -683,15 +721,8 @@ const productionSteps = computed<{ id: string; label: string; hint: string; stat
   const storyConfirmed = storyWorkbench.confirmed.value
   const hasStoryExport = !!storyWorkbench.state.view?.exports.some(item => item.available !== false && item.story_version === storyWorkbench.state.view?.story?.version)
   const hasSelected = workbench ? workbench.adopted : !!activeTask.value?.adopted_image_count
-  const base: { id: string; label: string; hint: string; done: boolean }[] = [
-    { id: 'plan', label: '画面方案', hint: planIncomplete ? '内部检查未完成' : hasPlan ? '方案已保存' : '描述画面或导入图片', done: hasPlan },
-    { id: 'prompt', label: '生图指令', hint: hasPrompt ? '指令已就绪' : '确认后整理提示词', done: hasPrompt },
-    { id: 'images', label: '图片工作台', hint: hasSelected ? '已采用图片，可继续修改' : hasImage ? '查看图片并持续修改' : '导入图片开始修改', done: hasSelected },
-    { id: 'story', label: '故事编排', hint: storyConfirmed ? '故事已确认' : hasStory ? '故事草稿已保存' : '选图后排镜头', done: storyConfirmed },
-    { id: 'export', label: '导出材料', hint: hasStoryExport ? '素材包已导出' : storyConfirmed ? '可导出文字与图片' : '确认故事后导出', done: hasStoryExport },
-    { id: 'video', label: '视频生成', hint: hasStoryExport ? '可按镜生成视频' : '导出材料后进入', done: false },
-  ]
-  return base.map(step => ({ id: step.id, label: step.label, hint: step.hint, status: activeNavigation.value === step.id ? 'current' : step.done ? 'done' : 'todo' }))
+  return directorProductionSteps({ planIncomplete, hasPlan, hasPrompt, hasImage, hasSelected,
+    hasStory, storyConfirmed, hasStoryExport, activeNavigation: activeNavigation.value })
 })
 const activeRun = computed(() => !restoredSpec.value && active.value ? runs.value[active.value.run_id] : null)
 const runningExecution = computed(() => executions.value.find(item => ['running', 'pending'].includes(item.status) && !item.recovery_required))
@@ -717,6 +748,33 @@ function nodeState(stage: string): string {
 }
 function nodeStatus(stage: string): string {
   return !restoredSpec.value && !stale.value ? summary.value?.stages.find(item => item.stage === stage)?.status ?? '' : ''
+}
+/* 关卡流水线的三态：展开 / 已完成 / 只读。状态用轨道方块与贴纸表达，不再堆文字。 */
+function isNodeOpen(stage: string): boolean {
+  return selectedStage.value === stage && !nodeCollapsed.value
+}
+function nodeClass(stage: string): string {
+  if (isNodeOpen(stage)) return 'is-open'
+  if (nodeStatus(stage) === 'completed') return 'is-done'
+  if (spec.value && !nodeEditable(stage)) return 'is-lock'
+  return ''
+}
+function nodeSticker(stage: string): string {
+  if (nodeStatus(stage) === 'completed') return 'is-grass'
+  if (selectedStage.value === stage) return 'is-gold'
+  return ''
+}
+function nodeEditable(stage: string): boolean {
+  if (!editableDirectorNode(stage)) return false
+  return spec.value?.schema_version === 2 ? !stale.value
+    : !!summary.value?.stages.some(item => item.stage === stage) && summary.value.mode === 'professional' && summary.value.available_actions.includes('edit_stage')
+}
+function nodePreview(stage: string): string {
+  if (!spec.value) return ''
+  if (stage === 'director_critic') return summary.value?.critic_result?.public_summary ?? ''
+  if (stage === 'director_assemble') return typeof spec.value.version === 'number' ? `方案 v${spec.value.version} · ${confirmed.value ? '已确认' : '草稿'}` : ''
+  const prefix = `${directorStageSections[stage]}.`
+  return Object.entries(directorDraftFields(spec.value)).find(([key, value]) => key.startsWith(prefix) && value.trim())?.[1] ?? ''
 }
 async function openDraft(runId?: string): Promise<void> {
   if (runId) await selectPlan(runId)
@@ -945,7 +1003,8 @@ async function refresh(initial: { context?: ComicProjectContext | null; workspac
     // 否则新一轮生成后列表会被清空，用户看不到之前的结果。
     if (taskGroups.some(tasks => !tasks)) return
     const tasks = taskGroups.flatMap(tasks => tasks ?? [])
-    if (context) project.value = context
+    // A refresh started before a write must not roll back its committed revision.
+    if (context && (context.project.current_version ?? 0) >= (project.value?.project.current_version ?? 0)) project.value = context
     if (workspace && activeWork.value?.work_id === workspace.work_id) {
       activeWork.value = workspace
       activeTask.value = workspace.tasks.find(task => task.project_id === id) ?? null
@@ -1270,10 +1329,12 @@ async function compilePrompt(): Promise<void> {
     if (epoch !== conversationEpoch || workEpoch !== workSelectionEpoch) return
     shotPrompts.value[shot.shot_id] = [prepared, ...(shotPrompts.value[shot.shot_id] ?? []).filter(prompt => prompt.artifact_id !== prepared.artifact_id)]
     if (selectedShot.value === shot.shot_id) promptPreview.value = prepared
-    try { await refresh() } catch (failure) {
-      if (epoch === conversationEpoch && workEpoch === workSelectionEpoch) refreshConnectionError.value = failureText(failure)
-    }
-    if (epoch === conversationEpoch && workEpoch === workSelectionEpoch && selectedShot.value === shot.shot_id) await loadPrompts()
+    await Promise.all([
+      refresh().catch(failure => {
+        if (epoch === conversationEpoch && workEpoch === workSelectionEpoch) refreshConnectionError.value = failureText(failure)
+      }),
+      selectedShot.value === shot.shot_id ? loadPrompts() : Promise.resolve(),
+    ])
   } catch (failure) { if (epoch === conversationEpoch && workEpoch === workSelectionEpoch) shotErrors.value[shot.shot_id] = failureText(failure) }
   finally { if (epoch === conversationEpoch && workEpoch === workSelectionEpoch) { compiling.value = false; preparingShot.value = '' } }
 }
@@ -1298,6 +1359,31 @@ async function copyImagePrompt(prompt: Record<string, unknown>, mode: 'combined'
       : result === 'image' ? '参考图已复制，可直接粘贴到外部对话。提示词可用“仅复制文字”补齐。'
         : imagePromptReferences(prompt).length ? '文字已复制；请同时附上此处列出的参考图。' : '完整生图 Prompt 已复制，含禁止内容。'
   } catch (failure) { if (current()) error.value = promptCopyError.value = `无法复制 Prompt：${failureText(failure)}` }
+  finally { if (copyingPrompt.value === id) copyingPrompt.value = '' }
+}
+async function copyCodexTask(prompt: Record<string, unknown>): Promise<void> {
+  if (copyingPrompt.value || !project.value) return
+  const epoch = conversationEpoch, workEpoch = workSelectionEpoch, id = String(prompt.artifact_id)
+  const current = () => epoch === conversationEpoch && workEpoch === workSelectionEpoch && !disposed
+  const owner = project.value.project.project_id
+  if (owner !== prompt.project_id) return
+  if (error.value === promptCopyError.value) error.value = ''
+  promptCopyError.value = ''; copiedPrompt.value = ''; promptCopyFeedback.value = ''
+  copyingPrompt.value = id
+  try {
+    const task = await exportComicCodexTask(String(prompt.shot_id), {
+      request_id: `codex-task-${id}-${project.value.project.current_version}`,
+      conversation_id: activeConversationId.value,
+      expected_project_version: project.value.project.current_version,
+      expected_prompt_version: Number(prompt.version), expected_shot_version: Number(prompt.shot_version),
+    })
+    if (!current() || project.value?.project.project_id !== owner) return
+    // Keep the saved instruction available if the browser rejects a clipboard write.
+    promptCopyFeedback.value = task.handoff_text
+    copiedPrompt.value = id
+    await navigator.clipboard.writeText(task.handoff_text)
+    if (current()) promptCopyFeedback.value = `工作任务已复制，已保存 ${task.reference_count} 张参考图。${task.materials_directory ? `首次请在 Codex 本机工作模式中关联资料夹：${task.materials_directory}。` : ""}将短指令粘贴到能读取该资料夹的工作对话；生成后回到图片工作台上传结果。实际出图尚待验收。`
+  } catch (failure) { if (current()) error.value = promptCopyError.value = `无法复制 Codex 工作任务：${failureText(failure)}` }
   finally { if (copyingPrompt.value === id) copyingPrompt.value = '' }
 }
 async function downloadPromptReference(prompt: Record<string, unknown>, reference: PromptReference): Promise<void> {
@@ -1397,24 +1483,31 @@ function changeImageModel(): void {
   error.value = '模型从 config/settings.yaml 的 image.model / image.protocol 读取。修改兼容模型并重启后端后再生成；原任务结果未知时需先查询或对账，不能通过换模型重提。'
 }
 async function enterStoryboard(): Promise<void> {
-  if (!confirmed.value || !productionEligible.value || busy.value || hasRunning.value) return
-  openSection('storyboard')
+  if (!project.value || !spec.value || !confirmed.value || !productionEligible.value || busy.value || hasRunning.value) return
   const epoch = conversationEpoch, workEpoch = workSelectionEpoch
+  const projectId = project.value.project.project_id, directorVersion = spec.value.version
   busy.value = true; error.value = ''
+  openSection('storyboard')
   try {
     await loadPage()
-    if (epoch !== conversationEpoch || workEpoch !== workSelectionEpoch || !project.value || !spec.value) return
+    if (epoch !== conversationEpoch || workEpoch !== workSelectionEpoch || projectId !== project.value?.project.project_id || directorVersion !== spec.value?.version) return
     if (!boards.value.some(board => board.director_spec_version === spec.value?.version)) {
-      const planned = await createComicStoryboard(project.value.project.project_id, project.value.project.current_version,
+      const planned = await createComicStoryboard(projectId, project.value.project.current_version,
         project.value.creative_brief.original_request,
         Object.keys((spec.value.asset_versions ?? {}) as Record<string, number>).map(key => key.replace(/^asset:/, '')))
-      if (epoch !== conversationEpoch || workEpoch !== workSelectionEpoch) return
+      if (epoch !== conversationEpoch || workEpoch !== workSelectionEpoch || projectId !== project.value?.project.project_id || directorVersion !== spec.value?.version) return
+      // Use the server's returned revision, never guess current_version + 1.
+      if (planned.storyboard.project_version !== undefined) project.value = { ...project.value,
+        project: { ...project.value.project, current_version: Math.max(
+          project.value.project.current_version, planned.storyboard.project_version) } }
+      boards.value = [planned.storyboard, ...boards.value.filter(board => board.storyboard_id !== planned.storyboard.storyboard_id)]
+      shots.value = planned.shots
       selectedBoard.value = planned.storyboard.storyboard_id
       selectedShot.value = planned.shots[0]?.shot_id ?? ''
       await refresh(); await loadPage()
     }
   } catch (failure) { if (epoch === conversationEpoch && workEpoch === workSelectionEpoch) error.value = failureText(failure) }
-  finally { if (epoch === conversationEpoch) busy.value = false }
+  finally { if (epoch === conversationEpoch && workEpoch === workSelectionEpoch) busy.value = false }
 }
 async function restore(version: number): Promise<void> {
   if (!project.value || busy.value || hasRunning.value) return
@@ -1516,6 +1609,11 @@ function resetConversationView(preserveStory = false): void {
   section.value = 'director'; selectedStage.value = 'director_assemble'; chatExpanded.value = true; restoreChoice.value = null
 }
 function visitStage(stage: string): void {
+  // 再点当前已展开的节点 → 折叠面板内容，不切对话
+  if (selectedStage.value === stage && section.value === 'director' && !chatExpanded.value && stage !== 'director_assemble') {
+    nodeCollapsed.value = !nodeCollapsed.value
+    return
+  }
   // 后续任务没有产出时，导演页仍可打开本会话已保存的方案；失败记录留在历史中。
   if (!spec.value && !busy.value && !hasRunning.value) {
     const saved = workExecutions.value.find(item => typeof item.director_spec?.version === 'number'
@@ -1523,15 +1621,35 @@ function visitStage(stage: string): void {
       ?? workExecutions.value.find(item => typeof item.director_spec?.version === 'number')
     if (saved) selectedRun.value = saved.run_id
   }
+  nodeCollapsed.value = false
   section.value = 'director'; selectedStage.value = stage; chatExpanded.value = false
 }
 function openSection(id: string): void {
   if (id === 'conversation') {
     chatExpanded.value = true
+    nodeCollapsed.value = false
     return
   }
-  // 01 画面方案 = 导演节点视图；其余七步按内部 section 渲染。
-  if (id === 'plan') { visitStage(selectedStage.value); return }
+  // 01 画面方案 = 导演节点视图
+  if (id === 'plan') {
+    // 已在该页时再点：保持整页内容可见，只重新解析当前方案；
+    // 单个节点的收起/展开由「导演流程」节点按钮负责，避免整页变空白。
+    if (section.value === 'director' && !chatExpanded.value) {
+      nodeCollapsed.value = false
+      visitStage(selectedStage.value)
+      nodeCollapsed.value = false
+      return
+    }
+    nodeCollapsed.value = false
+    visitStage(selectedStage.value)
+    return
+  }
+  // 其他页：已在该页时再点不做切换，避免整页内容被收起而留下空白
+  if (!chatExpanded.value && section.value === toInternalSection(id)) {
+    nodeCollapsed.value = false
+    return
+  }
+  nodeCollapsed.value = false
   section.value = toInternalSection(id)
   chatExpanded.value = false
 }
@@ -1804,25 +1922,27 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <WorkspaceShell v-model:navigation-open="navOpen" :navigation-collapsed="navCollapsed" :hide-heading="chatExpanded || ['images', 'story', 'export', 'video'].includes(section)" :navigation="navigation" :active-page="activeNavigation" :creating-conversation="conversationBusy" identity="Kantoku" subtitle="漫剧创作" workspace-label="Comic 漫剧工作台" new-conversation-label="新建作品" @update:navigation-collapsed="toggleNavCollapsed" @select-page="openSection" @new-conversation="createNewWorkspace">
+  <WorkspaceShell v-model:navigation-open="navOpen" :navigation-collapsed="navCollapsed" hide-heading hide-navigation :navigation="navigation" :active-page="activeNavigation" :creating-conversation="conversationBusy" identity="Kantoku" subtitle="漫剧创作" workspace-label="Comic 漫剧工作台" new-conversation-label="新建作品" @update:navigation-collapsed="toggleNavCollapsed" @select-page="openSection" @new-conversation="createNewWorkspace">
     <template #toolbar>
-      <div class="toolbar-identity"><strong class="toolbar-project" :title="projectTitle">{{ projectTitle }}</strong><small v-if="activeWork" class="toolbar-task" :title="activeTask?.title">{{ activeTask?.title || '尚未添加画面' }}</small></div>
-      <button v-if="activeWork" class="ui-button quiet sm" @click="renameWorkspace">改名</button>
+      <div class="toolbar-identity">
+        <strong class="toolbar-project" :title="projectTitle">{{ projectTitle }}</strong>
+        <small v-if="activeWork" class="toolbar-task" :title="activeTask?.title">· {{ activeTask?.title || '尚未添加画面' }}</small>
+      </div>
+      <span class="toolbar-status" role="status">{{ executionLabel }}</span>
+      <button type="button" class="ui-button quiet sm toolbar-history" :aria-expanded="historyDrawer" :aria-pressed="historyDrawer" title="作品与历史对话（Esc 关闭）" @click="historyDrawer = true">
+        <History :size="14" /><span>历史</span><b v-if="historyEntries.length">{{ historyEntries.length }}</b>
+      </button>
       <UiDropdown
         v-model="mode"
         class="toolbar-mode"
         label="创作模式"
         menu-label="创作模式"
+        title="导演方案需人工确认 · 外部图片"
         :options="modeOptions"
         :disabled="busy || hasRunning || loading"
       />
-      <span class="toolbar-mode toolbar-policy">导演方案需人工确认 · 外部图片</span>
-      <span class="toolbar-status" role="status">{{ executionLabel }}</span>
       <button v-if="activeWork" class="ui-button quiet sm" :disabled="conversationBusy" @click="addImageTask()">新增画面</button>
       <button class="ui-button quiet sm toolbar-new" :disabled="busy || hasRunning" @click="newProject">新建作品</button>
-    </template>
-    <template #recent>
-      <ConversationHistory list-only :conversations="historyEntries" :active-id="activeWork?.work_id ?? activeConversationId" :busy="conversationBusy" @select="selectHistory" @rename="finishConversationRename" @remove="removeConversation" />
     </template>
             <template #heading>
               <div><small>{{ chatExpanded ? 'AI 导演助手' : section === 'director' ? '导演工作区' : '项目工作区' }}</small><h2>{{ chatExpanded ? projectTitle : title }}</h2></div>
@@ -1830,7 +1950,23 @@ onBeforeUnmount(() => {
               <span v-if="refreshConnectionError" class="workspace-connection-notice" role="status" :title="refreshConnectionError">连接中断，正在恢复<button class="ui-button quiet sm" @click="refresh().catch(failure => refreshConnectionError = failureText(failure))">重新读取</button></span>
             </template>
         <div class="workspace-content">
-          <main class="workspace-stage">
+          <main class="workspace-stage" :class="{ 'is-chat': chatExpanded }">
+            <div class="trackWrap">
+              <ol class="level" aria-label="漫剧制作流程">
+                <li>
+                  <button type="button" class="step" :data-status="activeNavigation === 'conversation' ? 'current' : (activeWork || chatTurns.length ? 'done' : 'todo')" :aria-current="activeNavigation === 'conversation' ? 'step' : undefined" @click="chatExpanded = true">
+                    <span class="block"><svg v-if="activeNavigation === 'conversation'" class="sprite" viewBox="0 0 18 22" aria-hidden="true"><path fill="#e43030" d="M3 0h12v4h3v5H0V4h3z"/><path fill="#ffe24b" d="M3 8h12v7H3z"/><path fill="#3a5bd9" d="M2 15h14v5H2z"/><path fill="#141414" d="M0 20h7v2H0zm11 0h7v2h-7z"/></svg><i v-else-if="activeWork || chatTurns.length" class="coin" /><span class="num">00</span>对话</span>
+                  </button>
+                </li>
+                <li v-for="(step, index) in productionSteps" :key="step.id">
+                  <button type="button" class="step" :data-status="step.status" :aria-current="activeNavigation === step.id ? 'step' : undefined" :title="step.hint" @click="openSection(step.id)">
+                    <span class="block"><svg v-if="step.status === 'current'" class="sprite" viewBox="0 0 18 22" aria-hidden="true"><path fill="#e43030" d="M3 0h12v4h3v5H0V4h3z"/><path fill="#ffe24b" d="M3 8h12v7H3z"/><path fill="#3a5bd9" d="M2 15h14v5H2z"/><path fill="#141414" d="M0 20h7v2H0zm11 0h7v2h-7z"/></svg><i v-else-if="step.status === 'done'" class="coin" /><span class="num">{{ String(index + 1).padStart(2, '0') }}</span>{{ step.label }}</span>
+                  </button>
+                </li>
+                <li class="goal" aria-hidden="true"><i class="pole" /></li>
+              </ol>
+              <div class="ground" aria-hidden="true" />
+            </div>
               <div v-if="!activeWork && works.length" class="workspace-work-choice" aria-label="历史对话的方案来源">
                 <UiDropdown :model-value="selectedWorkId" :options="workOptions" label="当前作品" menu-label="本对话的作品" :disabled="loading" @update:model-value="value => selectWork(value)" />
                 <button v-if="chatExpanded" class="ui-button quiet sm" @click="openSection(currentWork?.has_director ? 'plan' : 'images')">打开作品 <ArrowRight :size="14" /></button>
@@ -1843,51 +1979,35 @@ onBeforeUnmount(() => {
               <p v-if="activeTask?.settings_updates?.length" class="pane-note" role="status">作品公共设定有 {{ activeTask.settings_updates.length }} 项可更新。<button class="ui-button sm" @click="openSection('assets')">查看并选择同步</button></p>
               <p v-if="activeTask?.legacy_source" class="pane-note">来源：历史方案 Brief {{ activeTask.legacy_source.brief_version ?? '未绑定' }} · <a :href="`/workspace/comic/plan?conversation=${encodeURIComponent(activeTask.legacy_source.conversation_id)}&work=${encodeURIComponent(activeTask.legacy_source.source_id)}${activeTask.legacy_source.director_run_id ? '&director_run=' + encodeURIComponent(activeTask.legacy_source.director_run_id) : ''}`">查看原方案、Prompt 和图片历史</a></p>
 
+              <div class="panelWrap">
               <Transition name="ws-cross" mode="out-in">
-              <div v-if="!chatExpanded" :key="`${section}:${selectedStage}:${selectedRun}`" ref="stageScroll" class="stage-scroll" :class="{ 'image-workbench-stage': section === 'images', 'video-stage-scroll': section === 'video' }" aria-label="当前节点工作区">
+              <div v-if="!chatExpanded" :key="`${section}:${selectedStage}:${selectedRun}`" ref="stageScroll" class="stage-scroll panel on" :class="{ 'director-stage-scroll': section === 'director', 'prompt-stage-scroll': section === 'storyboard' || section === 'prompt', 'image-workbench-stage': section === 'images', 'flow-stage-scroll': section === 'story' || section === 'export', 'video-stage-scroll': section === 'video' }" aria-label="当前节点工作区">
                 <!-- 七步制作流程条：单行椭圆胶囊（与「导演流程」同一套视觉语言），
                      只占一行高度，避免此前两行卡片式导航挤压工作区。
                      三态语汇：已完成=实心勾；当前=白底滑块 + 强调色；待办=空心环。 -->
-                <nav class="flow-steps" :class="{ 'image-flow': section === 'images', 'flow-expanded': imageFlowExpanded }" aria-label="漫剧制作流程">
-                  <!-- 图片工作台：标题块与步骤条同处一行，省掉原页眉独占的一整条横向层级。
-                       标题放在 rail 之外，才不会跟着 rail 一起横向滚动。 -->
-                  <div v-if="section === 'images'" class="image-flow-title">
-                    <small>项目工作区</small>
-                    <h2>{{ title }}</h2>
-                  </div>
-                  <button v-if="section === 'images'" class="ui-button quiet sm image-flow-toggle" :aria-expanded="imageFlowExpanded" @click="imageFlowExpanded = !imageFlowExpanded">制作流程</button>
-                  <div class="flow-steps-rail">
-                    <button
-                      v-for="(step, index) in productionSteps"
-                      :key="step.id"
-                      type="button"
-                      :data-status="step.status"
-                      :aria-current="activeNavigation === step.id ? 'step' : undefined"
-                      :title="`${String(index + 1).padStart(2, '0')} ${step.label} · ${step.hint}`"
-                      @click="openSection(step.id)"
-                    >
-                      <span class="flow-steps-index">
-                        <Check v-if="step.status === 'done'" :size="12" />
-                        <template v-else>{{ String(index + 1).padStart(2, '0') }}</template>
-                      </span>
-                      <span class="flow-steps-body">
-                        <strong>{{ step.label }}</strong>
-                        <small>{{ step.hint }}</small>
-                      </span>
-                    </button>
-                  </div>
-                  <button v-if="section === 'images'" class="ui-button quiet sm" @click="chatExpanded = true"><MessageSquareText :size="15" />打开创作对话</button>
-                </nav>
                 <div v-if="section === 'images' && (busy || hasRunning)" class="execution-controls" role="status"><span>{{ executionLabel }}</span><button v-if="hasRunning" class="ui-button quiet sm" :disabled="cancelling" @click="cancelExecution">{{ cancelling ? '正在取消' : '取消当前任务' }}</button></div>
                 <p v-if="section === 'images' && error" class="workspace-error" role="alert">{{ error }}</p>
                 <template v-if="section === 'director'">
                   <div v-if="currentWork && !currentWork.has_director" class="pane-note" role="status"><p>这份作品从图片导入，尚未生成导演方案。可直接进入图片工作台，或将已采用图片加入聊天故事。</p><button class="ui-button sm" @click="openSection('images')">打开本作品图片</button><button class="ui-button sm" @click="openSection('story')">打开聊天故事</button></div>
-<nav class="director-flow" aria-label="导演流程">
-  <button v-for="(label, stage) in visibleNodes" :key="stage" :aria-current="selectedStage === stage ? 'step' : undefined" :data-status="nodeStatus(String(stage))" @click="visitStage(String(stage))">
-    <span class="flow-marker"><Check v-if="nodeStatus(String(stage)) === 'completed'" :size="11" /></span>
-    <span>{{ label }}<small v-if="mode === 'professional'">{{ nodeState(String(stage)) }}</small></span>
-  </button>
-</nav>
+<p class="pipeline-caption">导演流程 · {{ Object.keys(visibleNodes).length }} 个节点<span v-if="nodeCollapsed" class="pipeline-caption-hint">节点内容已收起 · 点击任一节点展开</span></p>
+<div class="dir-grid">
+  <div class="pipe-col">
+    <nav class="director-flow" aria-label="导演流程">
+      <template v-for="(label, stage, index) in visibleNodes" :key="stage">
+        <div class="pnode" :class="nodeClass(String(stage))">
+          <span class="pnode__rail" aria-hidden="true">
+            <span class="pnode__blk">{{ String(index + 1).padStart(2, '0') }}</span>
+            <i class="pnode__cord"></i>
+          </span>
+          <div class="pnode__box">
+            <button type="button" class="pnode__hd" :aria-current="selectedStage === stage ? 'step' : undefined" :aria-expanded="isNodeOpen(String(stage))" :data-status="nodeStatus(String(stage))" @click="visitStage(String(stage))">
+              <strong>{{ label }}</strong>
+              <span class="mk-sticker" :class="nodeSticker(String(stage))">{{ nodeState(String(stage)) }}</span>
+              <span v-if="spec && editableDirectorNode(String(stage))" class="mk-sticker" :class="nodeEditable(String(stage)) ? 'is-gold' : ''">{{ nodeEditable(String(stage)) ? '可编辑' : '只读' }}</span>
+              <span class="pnode__cnt">{{ isNodeOpen(String(stage)) ? '展开中' : nodePreview(String(stage)) ? '点击展开' : '待生成' }}</span>
+            </button>
+            <p v-if="!isNodeOpen(String(stage))" class="pnode__sum">{{ nodePreview(String(stage)) || '尚未生成内容' }}</p>
+            <div v-else class="pnode__body">
                   <Transition name="panel-collapse">
                   <section v-if="stale && spec" class="stale-plan" role="status">
                     <div class="stale-plan-head">
@@ -1918,11 +2038,66 @@ onBeforeUnmount(() => {
                   <p v-if="selectedStage === 'cinematography' && (spec?.cinematography as { status?: string })?.status && (spec?.cinematography as { status?: string })?.status !== 'complete'" class="review-notice">摄影方案待补充或调整。已保留真实草稿，不会自动进入制作。</p>
                   <p v-if="spec?.critic_status === 'unavailable'" class="review-notice" role="status">导演审核暂不可用，未产生合法审核结果。导演方案已保留；你可以查看并确认最终方案后进入分镜。</p>
                   <DirectorNodeView ref="directorNodeView" :mode="mode" :stage="selectedStage" :node="node" :spec="spec" :fields="fields" :editing="editing" :editable="editable" :rerunnable="mode === 'professional' && !restoredSpec && !!node && !!summary?.available_actions.includes('rerun_stage') && !dirty" :busy="busy || hasRunning" :critic="summary?.critic_result" :critic-feedback="summary?.critic_feedback" @edit="beginEdit" @field="updateField" @cancel="discardNode" @save="spec?.schema_version === 2 ? saveFinal() : rerun(true)" @rerun="rerun()" @revise="editFinal('visual_direction')" @open="visitStage" @locate="locateSuggestion" />
-                  <Transition name="panel-collapse">
-                  <div v-if="manualDirectorApproval && spec && selectedStage === 'director_assemble'" class="final-approval"><p>{{ stale ? '来源已变化，需要更新方案' : confirmed ? '当前版本已确认，可以进入分镜制作' : dirty ? '请先保存编辑，再检查并确认' : '这是可修改的草稿，确认后才进入下一阶段。' }}</p><div class="draft-actions"><button class="ui-button sm" :disabled="busy || hasRunning || stale || dirty" @click="reviewFinal">检查当前方案</button><button class="ui-button quiet sm" :disabled="busy || hasRunning || stale || dirty" @click="reviseByInstruction">用对话修改</button><button class="ui-button quiet sm" :disabled="busy || hasRunning || dirty" @click="regenerate">重新生成</button><button class="ui-button primary sm" :disabled="!confirmable || confirmed" @click="confirm">确认最终方案</button><button class="ui-button sm" :disabled="!confirmed || !productionEligible || busy || hasRunning" @click="enterStoryboard">进入下一步</button></div></div>
-                  </Transition>
-                  <button v-if="spec && selectedStage !== 'director_assemble' && !editing && selectedStage !== 'director_critic'" class="ui-button quiet sm" @click="visitStage('director_assemble')">{{ mode === 'fast' ? '查看整体方案并确认' : '返回最终导演稿' }}</button>
                   <p v-if="spec?.schema_version !== 2 && spec" class="pane-note">这是旧版方案，仅保留历史查看。请在对话中重新生成 v2 导演方案。</p>
+                  <div v-if="spec && selectedStage !== 'director_assemble' && !editing && selectedStage !== 'director_critic'" class="pnode__acts">
+                    <button class="ui-button quiet sm" @click="visitStage('director_assemble')">{{ mode === 'fast' ? '查看整体方案并确认' : '返回最终导演稿' }}</button>
+                    <small>本节点只改这一段，其他节点保持不变</small>
+                  </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </nav>
+  </div>
+
+  <!-- 确认条是整页动作，横跨两栏放在关卡轨道之下：
+       之前它 sticky 在轨道内部，会压住展开节点里的方案卡。 -->
+  <div v-if="manualDirectorApproval && spec && selectedStage === 'director_assemble'" class="final-approval"><p>{{ stale ? '来源已变化，需要更新方案' : confirmed ? '当前版本已确认，可以进入分镜制作' : dirty ? '请先保存编辑，再检查并确认' : '这是可修改的草稿，确认后才进入下一阶段。' }}</p><div class="draft-actions"><button class="ui-button sm" :disabled="busy || hasRunning || stale || dirty" @click="reviewFinal">检查当前方案</button><button class="ui-button sm" :disabled="busy || hasRunning || stale || dirty" @click="reviseByInstruction">用对话修改</button><button class="ui-button sm" :disabled="busy || hasRunning || dirty" @click="regenerate">重新生成</button><button class="ui-button primary sm" :disabled="!confirmable || confirmed" @click="confirm">确认最终方案</button><button class="ui-button sm" :disabled="!confirmed || !productionEligible || busy || hasRunning" @click="enterStoryboard">进入下一步</button></div></div>
+
+  <aside class="audit-col" aria-label="导演方案审核与约束">
+    <section class="audit-sheet" :class="{ 'is-empty': !directorFindings.length, 'is-quiet': !directorFindings.length && spec, 'is-pass': !directorFindings.length && spec && spec.critic_status !== 'unavailable' }">
+      <header>导演审核 <small v-if="auditStateLabel">{{ auditStateLabel }}</small></header>
+      <div v-if="directorFindings.length" class="audit-body">
+        <details v-for="finding in directorBlocking" :key="finding.affected_field + finding.message" class="audit-finding is-blocking" open>
+          <summary><span class="mk-sticker is-brick">须改</span><span>{{ finding.affected_field_label }} · {{ finding.message }}</span></summary>
+          <p class="audit-finding__why">{{ finding.reason }}</p>
+          <p v-if="finding.suggestion" class="audit-finding__todo">{{ finding.suggestion }}</p>
+          <button type="button" class="ui-button sm" :disabled="busy || hasRunning" @click="locateSuggestion(finding.affected_field)">定位修改</button>
+        </details>
+        <details v-if="directorAdvisory.length" class="audit-more">
+          <summary>另有 {{ directorAdvisory.length }} 条优化建议</summary>
+          <article v-for="finding in directorAdvisory" :key="finding.affected_field + finding.message" class="audit-finding is-advisory">
+            <strong>{{ finding.affected_field_label }} · {{ finding.message }}</strong>
+            <p>{{ finding.reason }}</p>
+            <button type="button" class="ui-button quiet sm" :disabled="busy || hasRunning" @click="locateSuggestion(finding.affected_field)">定位修改</button>
+          </article>
+        </details>
+      </div>
+      <p v-else class="audit-quiet" :class="{ 'is-pass': spec && spec.critic_status !== 'unavailable' }">
+        <span class="audit-quiet__mark" aria-hidden="true">{{ spec && spec.critic_status !== 'unavailable' ? '✓' : '!' }}</span>
+        <span>{{ auditQuietText }}</span>
+      </p>
+    </section>
+    <section class="audit-sheet" :class="{ 'is-empty': !directorConstraints.length }">
+      <header>创作约束 <small v-if="directorConstraints.length">{{ directorConstraints.length }} 条</small></header>
+      <ul v-if="directorConstraints.length" class="audit-body con-list"><li v-for="(constraint, index) in directorConstraints" :key="index">{{ constraint }}</li></ul>
+      <p v-else class="audit-oneline">尚无已记录的硬约束</p>
+    </section>
+    <section class="audit-sheet" :class="{ 'is-empty': !spec }">
+      <header>方案状态与产物 <small v-if="spec">v{{ spec.version }}</small></header>
+      <div v-if="spec" class="audit-body">
+        <dl>
+          <div><dt>当前方案</dt><dd>{{ stale ? '来源已变化' : confirmed ? '已确认' : '草稿' }}</dd></div>
+          <div><dt>方案来源</dt><dd>{{ specOriginLabel }}</dd></div>
+          <div><dt>待处理意见</dt><dd>{{ directorFindings.length ? `${directorFindings.length} 条` : '无' }}</dd></div>
+          <div><dt>已导入图片</dt><dd>{{ uploadedPrompts.length }}</dd></div>
+        </dl>
+        <p class="audit-note">初稿按需求一次生成时默认通过；你在节点里改动保存后会重新审核。</p>
+      </div>
+      <p v-else class="audit-oneline">尚未生成方案</p>
+    </section>
+  </aside>
+</div>
                 </template>
                 <template v-else-if="section === 'assets'">
                   <details v-if="activeWork"><summary>引用或发布作品公共设定</summary><WorkSettings :key="activeWork.work_id + ':' + activeTask?.task_id" :work-id="activeWork.work_id" :task-id="activeTask?.task_id" :local-assets="assets" @changed="refresh(); loadWorks()" /></details>
@@ -1984,6 +2159,7 @@ onBeforeUnmount(() => {
                   <template v-if="imageMode !== 'external'"><h3>生成结果</h3><slot name="works" /></template>
                 </template>
                 <template v-else-if="section === 'storyboard' || section === 'prompt'">
+                  <header class="production-stage-heading"><div><span>02 · IMAGE PROMPT</span><h2>生图指令</h2><p>确认每个镜头的画面描述，复制指令后导入外部图片。</p></div><span class="production-stage-count">{{ shots.length }} 个镜头</span></header>
                   <div v-if="promptEdit" class="draft-actions prompt-editor">
                     <label>正向 Prompt<textarea v-model="promptEdit.positive_prompt" rows="6" /></label>
                     <label>负向约束<textarea v-model="promptEdit.negative_prompt" rows="3" /></label>
@@ -2009,11 +2185,16 @@ onBeforeUnmount(() => {
                         <div><dt>意图</dt><dd>{{ shot.purpose }}</dd></div>
                         <div v-if="shot.action"><dt>动作</dt><dd>{{ shot.action }}</dd></div>
                       </dl>
-                      <ComicShotGeneration :run="null" :image-mode="imageMode" :preparing="preparingShot === shot.shot_id" :external-prompt="externalPromptForShot(shot)" :external-image-url="referenceUrls[uploadedArtifact(externalPromptForShot(shot))]" :uploading="uploadingShot === shot.shot_id" :prompt-error="shotErrors[shot.shot_id] || promptReadErrors[shot.shot_id]" :disabled="busy || hasRunning || compiling" :copying="!!copyingPrompt" :copy-feedback="copiedPrompt === String(externalPromptForShot(shot)?.artifact_id) ? promptCopyFeedback : ''" @view-prompt="viewImagePrompt(shot)" @copy-prompt="copyImagePrompt(externalPromptForShot(shot)!)" @copy-text="copyImagePrompt(externalPromptForShot(shot)!, 'text')" @edit-prompt="editImagePrompt(externalPromptForShot(shot)!)" @upload="importExternalImage(shot, $event)" @preview="previewReference" />
+                      <ComicShotGeneration :run="null" :image-mode="imageMode" :preparing="preparingShot === shot.shot_id" :external-prompt="externalPromptForShot(shot)" :external-image-url="referenceUrls[uploadedArtifact(externalPromptForShot(shot))]" :uploading="uploadingShot === shot.shot_id" :prompt-error="shotErrors[shot.shot_id] || promptReadErrors[shot.shot_id]" :disabled="busy || hasRunning || compiling" :copying="!!copyingPrompt" :copy-feedback="copiedPrompt === String(externalPromptForShot(shot)?.artifact_id) ? promptCopyFeedback : ''" @view-prompt="viewImagePrompt(shot)" @copy-prompt="copyImagePrompt(externalPromptForShot(shot)!)" @copy-text="copyImagePrompt(externalPromptForShot(shot)!, 'text')" @copy-codex-task="copyCodexTask(externalPromptForShot(shot)!)" @edit-prompt="editImagePrompt(externalPromptForShot(shot)!)" @upload="importExternalImage(shot, $event)" @preview="previewReference" />
                     </article>
                     <div v-if="section === 'storyboard' && productionEligible && selectedShot" class="shot-footer">
                       <p>{{ selectedShotHint }}</p>
                       <button class="ui-button primary sm" :disabled="compiling || busy || hasRunning || !confirmed" @click="compilePrompt">{{ compiling ? '正在生成完整 Prompt' : '生成当前镜头完整 Image Prompt' }}</button>
+                    </div>
+                    <div v-else-if="section === 'storyboard' && selectedShot" class="shot-footer is-locked">
+                      <p><strong>暂时不能生成完整指令</strong>{{ productionLockReason }}</p>
+                      <button class="ui-button sm" disabled>生成当前镜头完整 Image Prompt</button>
+                      <button class="ui-button quiet sm" @click="openSection('plan')">先去确认导演方案</button>
                     </div>
                   </template>
                   <template v-else>
@@ -2054,7 +2235,7 @@ onBeforeUnmount(() => {
                       <div class="version-actions">
                         <button class="ui-button sm" @click="promptPreview = prompt">查看完整 Prompt 与来源</button>
                         <button class="ui-button sm" :disabled="!!copyingPrompt" @click="copyImagePrompt(prompt)">{{ imagePromptReferences(prompt).length ? '复制图文' : '复制 Prompt' }}</button>
-                        <button class="ui-button sm" @click="exportImagePrompt(prompt)">导出文字</button>
+                        <button class="ui-button sm" title="本机资料交付，待实际出图验收" :disabled="!!copyingPrompt" @click="copyCodexTask(prompt)">复制 Codex 工作任务</button><button class="ui-button sm" @click="exportImagePrompt(prompt)">导出文字</button>
                         <button v-if="Number(prompt.version) === currentPromptVersion" class="ui-button sm" :disabled="busy || hasRunning" @click="editImagePrompt(prompt)">编辑为新版本</button>
                         <button v-else class="ui-button sm" :disabled="busy || hasRunning" @click="promptRestoreChoice = Number(prompt.version)">恢复为新版本</button>
                         <button v-if="Number(prompt.version) !== currentPromptVersion" class="ui-button sm danger" :disabled="deleting || busy || hasRunning" @click="askPromptDeletion([prompt])">删除此版本</button>
@@ -2069,21 +2250,21 @@ onBeforeUnmount(() => {
                   </template>
                   <!-- 完整 Prompt 统一放到区块末尾：它由上方动作触发，紧邻操作位置，不必回滚页面。 -->
                   <section v-if="promptPreview && !promptEdit" class="prompt-preview" aria-label="完整 Image Prompt">
-                    <header><strong>完整 Image Prompt · v{{ promptPreview.version }}</strong><button class="ui-button quiet sm" @click="promptPreview = null">关闭</button></header>
+                    <header><strong>当前镜头说明 · v{{ promptPreview.version }}</strong><button class="ui-button quiet sm" @click="promptPreview = null">关闭</button></header>
                     <section v-if="imagePromptReferences(promptPreview).length" class="prompt-references" aria-label="本次生成需要的参考图">
-                      <p>本次需携带以下参考图，已从原作品关联，无需重新寻找。外部对话中应同时出现图片附件与提示词。</p>
+                      <p>本轮参考图及用途如下。复制工作任务后，在能读取作品资料夹的 Codex 本机工作模式中执行；实际出图尚待验收。</p>
                       <article v-for="reference in imagePromptReferences(promptPreview)" :key="reference.artifact_id + reference.sha256">
-                        <strong>{{ reference.filename }} · v{{ reference.version }}</strong>
+                        <strong>{{ reference.filename }} · v{{ reference.version }}</strong><p v-if="reference.target">{{ reference.target }}</p>
                         <ChatImageAttachment v-if="referenceUrls[promptReferenceKey(reference)]" :media="{ url: referenceUrls[promptReferenceKey(reference)]!, filename: reference.filename }" @open="previewReference" />
                         <p v-else-if="referenceErrors[promptReferenceKey(reference)]" role="alert">{{ referenceErrors[promptReferenceKey(reference)] }}</p>
                         <p v-else role="status">正在载入参考图…</p>
                         <div class="draft-actions"><button class="ui-button sm" :disabled="!!copyingPrompt" @click="copyImagePrompt(promptPreview, 'image', reference)">复制这张参考图</button><button class="ui-button sm" @click="downloadPromptReference(promptPreview, reference)">下载原图</button><button v-if="referenceErrors[promptReferenceKey(reference)]" class="ui-button quiet sm" @click="openPromptReference(reference)">重新读取</button></div>
                       </article>
                     </section>
-                    <pre>{{ finalImagePrompt(promptPreview) }}</pre>
-                    <div class="draft-actions"><button class="ui-button sm" :disabled="!!copyingPrompt" @click="copyImagePrompt(promptPreview)">{{ imagePromptReferences(promptPreview).length ? '复制图文' : '复制生图 Prompt' }}</button><button v-if="imagePromptReferences(promptPreview).length" class="ui-button sm" :disabled="!!copyingPrompt" @click="copyImagePrompt(promptPreview, 'text')">仅复制文字</button><button class="ui-button sm" @click="exportImagePrompt(promptPreview)">导出文字</button><button class="ui-button sm" :disabled="busy || hasRunning" @click="editImagePrompt(promptPreview)">编辑为新版本</button><button v-if="promptPreview.context_version === 'image-bibles-1'" class="ui-button sm" :disabled="busy || hasRunning || promptPreview.user_confirmed === true" @click="confirmImagePrompt(promptPreview)">{{ promptPreview.user_confirmed ? '当前 Prompt 已确认' : '确认当前 Prompt' }}</button></div>
+                    <section v-if="visualContinuityMessages(promptPreview).length" class="review-notice" role="status"><p>参考画面的设定核对</p><ul><li v-for="message in visualContinuityMessages(promptPreview)" :key="message">{{ message }}</li></ul></section><pre>{{ finalImagePrompt(promptPreview) }}</pre>
+                    <div class="draft-actions"><button class="ui-button sm" title="本机资料交付，待实际出图验收" :disabled="!!copyingPrompt" @click="copyCodexTask(promptPreview)">复制 Codex 工作任务</button><button class="ui-button sm" :disabled="!!copyingPrompt" @click="copyImagePrompt(promptPreview)">{{ imagePromptReferences(promptPreview).length ? '复制图文' : '复制生图 Prompt' }}</button><button v-if="imagePromptReferences(promptPreview).length" class="ui-button sm" :disabled="!!copyingPrompt" @click="copyImagePrompt(promptPreview, 'text')">仅复制文字</button><button class="ui-button sm" @click="exportImagePrompt(promptPreview)">导出文字</button><button class="ui-button sm" :disabled="busy || hasRunning" @click="editImagePrompt(promptPreview)">编辑为新版本</button><button v-if="promptPreview.context_version === 'image-bibles-1'" class="ui-button sm" :disabled="busy || hasRunning || promptPreview.user_confirmed === true" @click="confirmImagePrompt(promptPreview)">{{ promptPreview.user_confirmed ? '当前 Prompt 已确认' : '确认当前 Prompt' }}</button></div>
                     <p v-if="copiedPrompt === String(promptPreview.artifact_id)" role="status">{{ promptCopyFeedback }}</p>
-                    <details><summary>查看来源</summary><p>导演 v{{ promptPreview.director_spec_version }} · 镜头 v{{ promptPreview.shot_version }} · {{ promptPreview.compiler_version }}</p><pre>{{ JSON.stringify(promptPreview.context_sources, null, 2) }}</pre></details>
+                    <details><summary>查看来源</summary><p>导演 v{{ promptPreview.director_spec_version }} · 镜头 v{{ promptPreview.shot_version }} · {{ promptPreview.compiler_version }}</p><pre>{{ promptPreview.positive_prompt }}</pre><pre>{{ JSON.stringify(promptPreview.context_sources, null, 2) }}</pre></details>
                   </section>
                 </template>
                 <template v-else-if="section === 'history'">
@@ -2143,6 +2324,7 @@ onBeforeUnmount(() => {
               <button v-if="manualDirectorApproval && spec && !confirmable && !stale && !dirty" class="ui-button sm" :disabled="busy || hasRunning" @click="reviewFinal">{{ spec.review_required === false ? '重新执行内部检查与修正' : '审核当前草稿' }}</button>
               <p v-if="manualDirectorApproval && confirmed" class="pane-note">当前版本已确认并保存到后端。编辑或恢复为新版本后，需要重新审核与确认。</p>
             </section>
+              </div>
             </main>
         </div>
 
@@ -2162,7 +2344,7 @@ onBeforeUnmount(() => {
         </dialog>
 
         <template #composer>
-<div v-if="section !== 'images' || chatExpanded" class="workspace-composer">
+<div v-if="!['images', 'video'].includes(section) || chatExpanded" class="workspace-composer" :class="{ 'is-chat': chatExpanded }">
           <div class="composer-context"><button class="ui-button quiet sm" :aria-expanded="chatExpanded" @click="chatExpanded = !chatExpanded"><ArrowLeft v-if="chatExpanded" :size="15" /><MessageSquareText v-else :size="15" />{{ chatExpanded ? '返回工作区' : '打开创作对话' }}</button><small>{{ revisionVersion !== null ? `修改当前草稿 v${revisionVersion}` : '当前对话' }}</small><button v-if="revisionVersion !== null" class="ui-button quiet sm" @click="invalidate">取消修改</button><button v-else-if="spec" class="ui-button quiet sm" :disabled="busy || hasRunning || stale || dirty" @click="reviseByInstruction">修改当前方案</button></div>
           <p v-if="legacyOnly" class="pane-note">此历史任务没有作品级 Project；点击"新作品"进入作品级创作。</p>
           <div v-if="busy || hasRunning" class="execution-controls" role="status"><span>{{ executionLabel }} · 可继续输入</span><button v-if="hasRunning" class="ui-button quiet sm" :disabled="cancelling" @click="cancelExecution">{{ cancelling ? '正在取消' : '取消当前任务' }}</button></div>
@@ -2170,13 +2352,76 @@ onBeforeUnmount(() => {
           <!-- 输入框只在「对话」页出现；其他工作区页面去掉输入框，避免每个页面底部都挂一个大聊天框。 -->
           <MessageComposer v-if="chatExpanded" :key="activeConversationId" ref="composer" :disabled="loading || legacyOnly" @send="sendInput" />
           <small v-if="chatExpanded">{{ revisionVersion !== null ? '发送将保存当前方案的新修订；不会创建新创意。' : queuedInputs.length ? '补充已排队，刷新会丢失未执行补充；可在对话中撤回。' : '确认导演方案，生成完整 Prompt，复制到外部模型后上传图片。' }}</small>
-          <small v-else>需要输入时，点击上方「打开创作对话」回到对话页。</small>
         </div>
 </template>
   </WorkspaceShell>
+
+  <HistoryDrawer :open="historyDrawer" title="作品与历史对话" subtitle="WORKS" :count="historyEntries.length" @close="historyDrawer = false">
+    <div class="drawer-new-row">
+      <button type="button" class="ui-button primary sm" :disabled="busy || hasRunning || conversationBusy" @click="historyDrawer = false; newProject()">
+        <Plus :size="14" /> 新建作品
+      </button>
+      <small>新建不会删除旧作品，随时可以在这里切回去。</small>
+    </div>
+    <ConversationHistory list-only placeholder="搜索作品或对话" :conversations="historyEntries" :active-id="activeWork?.work_id ?? activeConversationId" :busy="conversationBusy" @select="historyDrawer = false; selectHistory($event)" @rename="finishConversationRename" @remove="removeConversation" />
+  </HistoryDrawer>
 </template>
 
 <style scoped>
+/* 关卡外壳沿用原型的像素语言；节点与状态仍来自真实工作流。 */
+:deep(.ws-shell-top) { background:#1f1f1f; color:#fffdf5; border-bottom:4px solid #000; }
+:deep(.ws-shell-top .toolbar-task), :deep(.ws-shell-top .toolbar-status) { color:#d0d7e7; }
+:deep(.ws-shell-top .ui-button) { border:2px solid #111; border-radius:0; background:#fffdf5; color:#141414; }
+:deep(.ws-shell-top .ui-button:disabled) { background:#333; color:#c1c1c1; opacity:1; }
+/* 工作区的对话入口占独立空间，不能遮住正在编辑的内容。 */
+:deep(.ws-shell-body:not(.is-flow) .ws-shell-composer) { position:static; flex:none; width:auto; transform:none; }
+:deep(.ws-shell-content .stage-scroll), :deep(.ws-shell-content .workspace-messages) { padding-bottom:24px; scroll-padding-bottom:24px; mask-image:none; }
+.workspace-composer { padding:8px 24px; background:#101f43; color:#fffdf5; }
+.workspace-composer:empty { display:none; }
+.workspace-composer .composer-context { max-width:1180px; margin:0 auto; justify-content:flex-start; }
+.workspace-composer .composer-context > small { margin-right:auto; color:#cbd7ed; }
+.workspace-composer > small { display:block; max-width:1180px; margin:5px auto 0; color:#cbd7ed; }
+.workspace-composer :deep(.message-composer) { max-width:760px; margin:8px auto; }
+.workspace-composer .composer-context .ui-button { color:#fffdf5; }
+.workspace-composer .composer-context .ui-button:hover:not(:disabled) { color:#141414; background:#ffe24b; }
+.workspace-stage { background:linear-gradient(180deg,#16295e 0%,#0e1e46 60%,#08122b 100%); }
+.trackWrap { flex:none; position:relative; padding:6px 20px 0; overflow:hidden; background-image:linear-gradient(#ffffff0d 2px,transparent 2px),linear-gradient(90deg,#ffffff0d 2px,transparent 2px); background-size:34px 34px; }
+.level { display:flex; align-items:center; gap:10px; list-style:none; margin:0; padding:0 2px; overflow-x:auto; scrollbar-width:thin; }
+.level > li { flex:0 0 auto; }
+.step { display:flex; flex-direction:row; align-items:center; min-width:0; padding:0; border:0; background:transparent; text-align:left; cursor:pointer; }
+/* 精灵图现在贴在方块里（原来单独占 24px 一行，整条关卡因此高了一截）。 */
+.step .sprite { width:14px; height:17px; flex:0 0 auto; }
+.step .sprite { image-rendering:pixelated; }
+.step[data-status='current'] .sprite { animation:level-hop 1.5s steps(2,end) infinite; }
+@keyframes level-hop { 50% { transform:translateY(-2px); } }
+.step[data-status='current'] .block { animation:block-blink 1.6s steps(2,end) infinite; }
+@keyframes block-blink { 50% { background:var(--gold-light); } }
+.step .block { display:flex; align-items:center; gap:6px; height:34px; padding:0 9px; border:3px solid #000; background:#22304f; color:#d3ddf0; font:600 11.5px var(--font-ui); white-space:nowrap; transition:transform 120ms steps(2,end), background 120ms, box-shadow 120ms; }
+.step .num { font-size:9px; opacity:.8; }
+.step .coin { display:block; width:11px; height:11px; border:2px solid #000; background:#ffe24b; }
+.step[data-status='done'] .block { background:#c84c0c; color:#fff0dc; box-shadow:inset 0 4px #ffffff38,4px 4px #000; }
+.step[data-status='current'] .block { background:#f8c000; color:#141414; box-shadow:inset 0 4px #ffffff88,5px 5px #000; }
+.step[data-status='current'] .lbl { color:#ffe24b; }
+.step[data-status='todo'] .block { border-style:dashed; border-color:#52678f; background:transparent; }
+.step:hover .block { transform:translateY(-2px); }
+.step:focus-visible { outline:3px solid #ffe24b; outline-offset:4px; }
+.goal { align-self:flex-end; padding:0 8px 4px; }
+.pole { position:relative; display:block; width:5px; height:40px; border:2px solid #000; background:#dde6f5; }
+.pole::after { content:''; position:absolute; left:3px; top:2px; width:18px; height:12px; border:2px solid #000; background:#00a800; clip-path:polygon(0 0,100% 30%,0 70%); }
+.ground { height:12px; margin:0 -20px; border-block:4px solid #000; background:repeating-linear-gradient(90deg,#c84c0c 0 30px,#8a2c08 30px 32px); box-shadow:inset 0 4px #ffffff30; }
+.panelWrap { display:flex; flex:1; min-width:0; min-height:0; padding:14px 20px 12px; }
+.panelWrap > .stage-scroll, .panelWrap > .workspace-messages { min-width:0; background:#fffdf5; color:#141414; border:4px solid #141414; box-shadow:6px 6px 0 #0009; }
+.workspace-work-choice { background:#fffdf5; }
+.stage-scroll :deep(.director-node-view) { max-width:none; }
+.stage-scroll :deep(.director-node-view .plan-index) { gap:10px; }
+.stage-scroll :deep(.director-node-view .plan-entry),
+.stage-scroll :deep(.director-node-view .field-card) { padding:12px 14px; border:3px solid #141414; border-radius:0; background:#fffdf5; box-shadow:4px 4px 0 #141414; }
+.stage-scroll :deep(.director-node-view .plan-entry:hover) { background:#fff6d9; }
+.stage-scroll :deep(.director-node-view .field-card-label) { color:#8a2c08; font-weight:700; }
+.stage-scroll :deep(.director-node-view textarea) { border:2px solid #141414; border-radius:0; background:#fffdf5; }
+.stage-scroll :deep(.director-node-view .critic-finding) { border-radius:0; }
+.panelWrap :deep(.ui-button) { border-radius:0; }
+@media (max-width:600px) { .trackWrap { padding:8px 12px 0; } .ground { margin-inline:-12px; } .panelWrap { padding:10px 12px; } .step { min-width:106px; } }
 .workspace-work-choice { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-3); padding:var(--space-3) var(--space-6); border-bottom:1px solid var(--border-muted); }
 .workspace-work-choice :deep(.ui-dropdown) { max-width:min(440px,100%); }
 .workspace-work-choice small { font-size:var(--font-meta); color:var(--text-secondary); }
@@ -2225,11 +2470,13 @@ select { color:var(--text-primary); background:transparent; border:1px solid var
 .node-version { font-size: var(--font-kicker); color:var(--text-muted); }
 .workspace-content { display:flex; flex:1; min-width:0; min-height:0; }
 .workspace-stage { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; }
-.stage-scroll { flex:1; min-height:0; overflow:auto; padding:var(--space-5) max(var(--space-8), calc((100% - 780px) / 2)); font-size: var(--font-body); line-height:1.65; animation:node-enter 140ms ease-out; }
+.stage-scroll { flex:1; min-height:0; overflow:auto; padding:28px max(28px, calc((100% - 1100px) / 2)); font-size: var(--font-body); line-height:1.7; animation:node-enter 140ms ease-out; }
 .stage-scroll.image-workbench-stage { display:flex; flex-direction:column; overflow:hidden; padding:var(--space-4) var(--space-6); container: image-stage / size; }
 /* 视频阶段要看的是播放器：沿用图片工作台放宽阅读宽度的做法（780 → 1180），
    否则宽屏下 4:3 播放器只剩 460px，失去「平板预览」的意义。 */
 .stage-scroll.video-stage-scroll { padding-inline: max(var(--space-6), calc((100% - 1180px) / 2)); }
+.stage-scroll :deep(.ui-button) { transition:transform 120ms steps(2,end), box-shadow 120ms, background 120ms; }
+.stage-scroll :deep(.ui-button:active:not(:disabled)) { transform:translate(2px,2px); box-shadow:none; }
 .image-flow { display:flex; align-items:center; gap:var(--space-3); margin-bottom:var(--space-3); flex-shrink:0; }
 .image-flow .flow-steps-rail { flex:1; min-width:0; }
 .image-flow > .ui-button { flex-shrink:0; }
@@ -2260,23 +2507,15 @@ select { color:var(--text-primary); background:transparent; border:1px solid var
 @media(max-width:480px) { .image-flow-title small { display:none; } }
 @keyframes node-enter { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 @media(prefers-reduced-motion:reduce) { .stage-scroll { animation:none; } }
-/* 导演流程：把离散的步骤按钮收进一个胶囊容器，当前步用"白底滑片"表示位置感。
-   flex 换行下不做 JS 位移指示器，改用 白底 + 微阴影 + 过渡 达到同样的"滑动"观感。 */
-.director-flow { display:inline-flex; flex-wrap:wrap; gap:var(--space-1); padding:var(--space-1); margin:0 0 var(--space-6); border:1px solid var(--border-muted); border-radius:var(--radius-pill); background:var(--canvas-inset); }
-.director-flow button { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-2) var(--space-3); border:0; border-radius:var(--radius-pill); background:transparent; color:var(--text-secondary); font:inherit; font-size: var(--font-meta); text-align:left; cursor:pointer; transition: background var(--duration-med) var(--ease-out), color var(--duration-med) var(--ease-out), box-shadow var(--duration-med) var(--ease-out), transform var(--duration-fast) var(--ease-out); }
-.director-flow button:hover { background:var(--surface-subtle); }
-.director-flow button:active { transform:translateY(1px); }
-.director-flow button[aria-current] { color:var(--text-primary); background:#fff; font-weight:500; box-shadow:var(--shadow-control); }
-.director-flow small { display:block; font-size: var(--font-kicker); color:var(--text-muted); margin-top:var(--space-1); }
-.flow-marker { display:grid; place-items:center; flex-shrink:0; width:12px; height:12px; border:1px solid var(--border-strong); border-radius:50%; transition:border-color var(--duration-med) var(--ease-out); }
-.director-flow button[aria-current] .flow-marker { border-color:var(--accent); }
+/* 导演流程：关卡轨道的容器。节点本身的样式在 styles/mario.css（.pnode / .pnode__box）。 */
+.director-flow { display:flex; flex-direction:column; gap:6px; margin:0; padding:0; border:0; background:transparent; }
 .workspace-messages { flex:1; min-height:0; overflow:auto; padding:var(--space-5) max(var(--space-6), calc((100% - 780px) / 2)); }
 .creative-turn { margin-bottom:var(--space-7); }
 .conversation-welcome { color:var(--text-secondary); font-size: var(--font-body); line-height:1.8; max-width:600px; padding:var(--space-8) 0; }
 .conversation-loading { color:var(--text-muted); font-size: var(--font-control); padding:var(--space-8) 0; }
-.workspace-composer { background:transparent; }
+.workspace-composer { background:#101f43; }
 .composer-context { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); min-height:var(--control-sm); margin-bottom:var(--space-2); }
-.composer-context small, .workspace-composer > small { color:var(--text-muted); font-size: var(--font-kicker); }
+.composer-context small, .workspace-composer > small { color:#cbd7ed; font-size: var(--font-kicker); }
 .workspace-composer > small { display:block; margin-top:var(--space-2); text-align:center; }
 .execution-controls, .queued-note { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); color:var(--text-secondary); font-size: var(--font-meta); }
 .execution-controls { margin-bottom:var(--space-2); }
@@ -2446,4 +2685,95 @@ button:focus-visible, select:focus-visible, textarea:focus-visible { outline:2px
 @media(max-width:1200px) { .toolbar-policy { display:none; } .toolbar-mode :deep(.ui-dropdown-label) { display:none; } }
 @media(max-width:900px) { .toolbar-status { display:none; } .stage-scroll { padding-inline:var(--space-6); } }
 @media(max-width:600px) { .toolbar-mode :deep(.ui-dropdown-label), .toolbar-new, .composer-context > small, .node-version { display:none; } .stage-scroll, .workspace-messages { padding-inline:var(--space-4); } .director-flow { gap:var(--space-1); } .director-flow button { padding:var(--space-2); } }
+
+/* ===== 关卡舞台：深色底 + 只压一层纸卡（元件细节见 styles/mario.css） ===== */
+.stage-scroll.director-stage-scroll { padding:22px clamp(18px, 2vw, 34px) 32px; }
+
+.pipeline-caption { display:flex; align-items:center; gap:12px; margin:0 0 16px; color:#c2d3f3; font:700 12px var(--font-mono); letter-spacing:.08em; }
+.pipeline-caption::after { content:''; flex:1; height:3px; background:repeating-linear-gradient(90deg,#3d557f 0 6px,transparent 6px 12px); }
+
+/* 展开体里的字段：左标签右取值，两列铺开，像真表单而不是一排大卡片 */
+.pnode__body :deep(.field-cards) { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.pnode__body :deep(.field-card) { display:grid; grid-template-columns:96px minmax(0, 1fr); gap:2px 10px; align-items:start; margin:0; padding:6px 10px 7px; border:3px solid var(--ink); background:var(--paper); box-shadow:3px 3px 0 rgba(0,0,0,.3); }
+.pnode__body :deep(.field-card-label) { display:flex; flex-direction:column; gap:2px; min-width:0; color:var(--ink); font-size:11px; font-weight:800; line-height:1.3; }
+.pnode__body :deep(.field-card-content) { margin:0; color:var(--text-primary); font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.pnode__body :deep(.field-card textarea) { grid-column:2; width:100%; border:3px solid var(--ink); background:var(--paper); box-shadow:inset 0 -3px 0 var(--paper-3); }
+.pnode__body :deep(.located-field) { border-color:var(--danger); background:var(--danger-soft); box-shadow:3px 3px 0 rgba(142,19,19,.25); }
+.pnode__body :deep(.plan-index) { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.pnode__body :deep(.plan-entry) { display:flex; flex-direction:column; gap:4px; padding:10px 12px; border:3px solid var(--ink); background:var(--paper); box-shadow:3px 3px 0 rgba(0,0,0,.3); text-align:left; }
+.pnode__body :deep(.critic-finding) { margin:0 0 8px; padding:10px 12px; border:3px solid var(--danger); background:var(--danger-soft); }
+.pnode__body :deep(.critic-finding p) { margin:4px 0; }
+
+/* 节点内的收尾操作行：一条虚线把"改这一段"和正文分开 */
+.pnode__acts { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-top:2px; padding-top:8px; border-top:3px dashed var(--paper-3); }
+.pnode__acts small { margin-left:auto; color:var(--text-muted); font:400 10px/1.4 var(--font-mono); letter-spacing:.06em; }
+
+.audit-note { margin:10px 0 0; padding-top:8px; border-top:2px dashed var(--paper-3); color:var(--text-muted); font:400 10.5px/1.6 var(--font-mono); letter-spacing:.04em; }
+
+@media(max-width:900px) { .pnode__body :deep(.field-cards) { grid-template-columns:1fr; } .pnode__body :deep(.plan-index) { grid-template-columns:1fr; } }
+
+/* 历史版本提示：纸卡内的一条横幅，靠左侧色带区分，不再层层加框 */
+.stale-plan, .current-plan { margin:0; padding:14px 16px; border:3px solid var(--ink); border-left:10px solid var(--brick); background:var(--warning-soft); color:var(--ink); }
+.current-plan { border-left-color:var(--blue); background:var(--info-soft); }
+.stale-plan-head { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+.stale-plan-head strong { display:block; font-size:15px; }
+.stale-plan-head small { display:block; margin-top:4px; color:var(--text-muted); font-size:12px; }
+.stale-plan p, .current-plan p { margin:10px 0 0; color:var(--text-secondary); font-size:13px; line-height:1.7; }
+
+.review-notice { margin:0; padding:10px 14px; border:2px solid var(--ink); border-left:8px solid var(--gold); background:var(--accent-soft); color:var(--text-secondary); font-size:13px; line-height:1.65; }
+
+/* 最终确认条：整行贯通，主操作只有一颗金砖 */
+.final-approval { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin:0; padding:14px 16px; border:4px solid var(--ink); background:var(--paper-2); color:var(--ink); box-shadow:4px 4px 0 rgba(0,0,0,.45); }
+.final-approval p { flex:1 1 260px; margin:0; color:var(--text-secondary); font-size:13px; line-height:1.6; }
+.final-approval .draft-actions { display:flex; flex-wrap:wrap; gap:8px; margin:0; }
+
+/* 后续阶段（生图 / 图片 / 故事 / 视频）沿用同一套：纸卡 + 墨线 + 硬投影 */
+.production-stage-heading { display:flex; justify-content:space-between; align-items:end; flex-wrap:wrap; gap:12px; margin-bottom:20px; padding:18px 20px; border:4px solid var(--ink); background:var(--ink-2); color:var(--paper); box-shadow:5px 5px 0 rgba(0,0,0,.55); }
+.production-stage-heading span { color:var(--gold-light); font:700 11px var(--font-mono); letter-spacing:.14em; }
+.production-stage-heading h2 { margin:6px 0; font-size:23px; }
+.production-stage-heading p { margin:0; color:#d9e5f9; font-size:13px; line-height:1.6; }
+.production-stage-heading .production-stage-count { align-self:center; padding:6px 10px 5px; border:2px solid var(--gold); color:var(--gold-light); font:700 11px var(--font-mono); letter-spacing:.1em; }
+
+.prompt-stage-scroll .board-bar { margin:0 0 18px; padding:12px 16px; border:3px solid var(--ink); background:var(--paper-2); }
+.prompt-stage-scroll .shot-card { margin:0 0 20px; padding:0; overflow:hidden; border:4px solid var(--ink); background:var(--paper); box-shadow:5px 5px 0 rgba(0,0,0,.55); }
+.prompt-stage-scroll .shot-card.is-selected { box-shadow:5px 5px 0 var(--gold); }
+.prompt-stage-scroll .shot-head { padding:12px 18px; background:var(--ink-2); color:var(--paper); }
+.prompt-stage-scroll .shot-head :is(.shot-index,.shot-subject,.shot-meta) { color:inherit; }
+.prompt-stage-scroll .shot-brief { padding:18px 20px; margin:0; }
+.prompt-stage-scroll .shot-generation { margin:0 18px 18px; padding:16px; border:3px solid var(--ink); background:var(--paper-2); }
+.prompt-stage-scroll .shot-footer { padding:16px 18px; border:4px solid var(--ink); background:var(--paper); box-shadow:5px 5px 0 rgba(0,0,0,.55); }
+.prompt-stage-scroll > .pane-note, .prompt-stage-scroll > .review-notice { padding:14px 16px; border:3px solid var(--ink); background:var(--paper); color:var(--text-primary); }
+.stage-scroll :deep(.shot-card) { margin:0 0 20px; padding:20px; border:4px solid var(--ink); background:var(--paper); box-shadow:5px 5px 0 var(--paper-3); }
+.stage-scroll :deep(.shot-card.is-selected) { box-shadow:5px 5px 0 var(--gold); }
+.stage-scroll :deep(.shot-generation) { margin-top:16px; padding:16px; border:3px solid var(--ink); background:var(--paper-2); }
+.stage-scroll :deep(.shot-generation .draft-actions) { display:flex; flex-wrap:wrap; gap:8px; }
+.stage-scroll :deep(.shot-brief dd) { overflow-wrap:anywhere; line-height:1.75; }
+
+.image-workbench-stage { background:#0f1f3d !important; color:var(--paper) !important; }
+.video-stage-scroll { color:var(--paper) !important; }
+
+/* 对话回合：用户是金砖，导演是纸卡 */
+.workspace-messages :deep(.chat-row.user) { justify-content:flex-end; }
+.workspace-messages :deep(.user-bubble) { max-width:min(88%, 660px); padding:14px 16px; border:3px solid var(--ink); border-radius:0; background:var(--gold-light); color:var(--ink); box-shadow:4px 4px 0 var(--ink); }
+.workspace-messages :deep(.chat-row.assistant) { align-items:flex-start; }
+.workspace-messages :deep(.assistant-copy) { width:min(100%, 720px); max-width:100%; padding:18px 20px; border:3px solid var(--ink); background:var(--paper); color:var(--ink); box-shadow:4px 4px 0 var(--ink); }
+.workspace-messages .creative-turn { margin-bottom:22px; }
+
+@media(max-width:900px) {
+  .dir-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media(max-width:600px) {
+  .panelWrap > .stage-scroll.director-stage-scroll, .panelWrap > .stage-scroll.prompt-stage-scroll, .panelWrap > .stage-scroll.flow-stage-scroll, .panelWrap > .stage-scroll.video-stage-scroll { padding:12px; }
+  .workspace-composer { padding:8px 12px; }
+  .workspace-composer .composer-context { flex-wrap:wrap; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .step .block, .stage-scroll :deep(.ui-button) { transition:none; }
+  .step:hover .block { transform:none; }
+  .step[data-status='current'] .sprite { animation:none; }
+}
+
+
+/* 节点级折叠：收起即完全移除该节点面板，只留「导演流程」导航；标题旁给一条恢复提示。 */
+.pipeline-caption-hint { padding:2px 8px; border:2px solid var(--gold); background:rgba(0,0,0,.28); color:var(--gold-light); font-size:11px; letter-spacing:.04em; }
 </style>
