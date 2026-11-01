@@ -17,6 +17,19 @@
 
 **技术栈：** Python 3.11–3.12、FastAPI、SQLite、Vue 3、TypeScript、Vite、pytest。
 
+## 界面预览
+
+**对话首页**：用自然语言描述创作需求。
+
+![Kantoku 对话首页](docs/images/home.png)
+
+**图片工作台**：查看导入的镜头画面，选择版本并记录修改需求。
+
+![Kantoku 图片工作台中的示例镜头](docs/images/workbench.png)
+
+截图取自独立本机演示环境。示例镜头由外部图像生成工具制作后导入工作台，
+用于展示图片管理界面；它不代表项目内部生图的实测结果。[查看示例原图](assets/demo/rainy-bridge.png)。
+
 ## 现在能做什么
 
 | 环节 | 能力 |
