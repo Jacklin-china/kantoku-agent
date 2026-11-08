@@ -42,7 +42,9 @@ def test_director_live_eval_rejects_unpriced_model_before_app_or_network(
     ["--allow-paid", "--suite", "story-export", "--budget-id",
      "comic-backend-three-modules-20261012", "--max-cny", "4.01", "--additional-cny", "2"],
     ["--allow-paid", "--suite", "story-export", "--budget-id",
-     "comic-backend-three-modules-20261012", "--additional-cny", "2.01"],
+     "comic-backend-three-modules-20261012", "--additional-cny", "3.01"],
+    ["--allow-paid", "--suite", "story-export", "--budget-id",
+     "comic-backend-three-modules-20261012", "--max-cny", "5.01", "--additional-cny", "3"],
     ["--allow-paid", "--additional-cny", "NaN"],
     ["--allow-paid", "--max-cny", "NaN"],
 ])
@@ -57,7 +59,7 @@ def test_paid_story_additional_allowance_is_not_a_general_budget_bypass(monkeypa
     assert error.value.code == 2
 
 
-@pytest.mark.parametrize("maximum,additional", [("3", "1"), ("4", "2")])
+@pytest.mark.parametrize("maximum,additional", [("3", "1"), ("4", "2"), ("5", "3")])
 def test_paid_story_explicit_extra_allowance_keeps_the_original_identity(
     monkeypatch, maximum, additional,
 ):

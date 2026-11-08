@@ -370,7 +370,7 @@ def _run(persistent_manager, cleanup) -> int:
     parser.add_argument("--allow-paid", action="store_true")
     parser.add_argument("--max-cny", type=Decimal, default=Decimal("2"))
     parser.add_argument("--additional-cny", type=Decimal, default=Decimal("0"),
-                        help="明确授权的原故事预算累计追加额度，不重置累计费用，最多 2 元")
+                        help="明确授权的原故事预算累计追加额度，不重置累计费用，最多 3 元")
     parser.add_argument("--story-snapshot", type=Path,
                         help="隔离验收的原故事、固定图片哈希和来源快照")
     parser.add_argument("--suite",
@@ -392,13 +392,13 @@ def _run(persistent_manager, cleanup) -> int:
     if (args.suite == "story-export"
             and args.budget_id != "comic-backend-three-modules-20261012"):
         parser.error("故事模块实测必须复用原三模块累计预算身份")
-    if (not args.additional_cny.is_finite() or not Decimal("0") <= args.additional_cny <= 2
+    if (not args.additional_cny.is_finite() or not Decimal("0") <= args.additional_cny <= 3
         or (args.additional_cny and (args.suite != "story-export"
             or args.budget_id != "comic-backend-three-modules-20261012"))):
-        parser.error("追加额度仅用于原故事预算身份，且须在 [0, 2] 元内")
+        parser.error("追加额度仅用于原故事预算身份，且须在 [0, 3] 元内")
     if (not args.allow_paid or not args.max_cny.is_finite()
             or not Decimal("0") < args.max_cny <= 2 + args.additional_cny):
-        parser.error("必须显式允许付费，且额度在 (0, 2] 元内")
+        parser.error("必须显式允许付费，且额度不超过原额度与已授权追加之和")
     settings = get_settings()
     price = settings.llm.pricing_cny_per_million_by_model.get(settings.llm.model_chat)
     if price is None:
