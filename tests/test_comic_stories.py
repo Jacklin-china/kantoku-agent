@@ -1215,6 +1215,22 @@ def test_export_is_one_portable_video_prompt_with_timeline_and_cross_shot_handof
     assert text.count(view["manifest"]["shots"][0]["filename"]) >= 2
 
 
+def test_export_reference_list_matches_deduplicated_files_in_first_shot_order(story_app):
+    app = story_app
+    pid, cid, first = _setup(app)
+    duplicate = _upload(app, pid, cid, content=_png())
+    other = _upload(app, pid, cid, content=_png(90))
+    for image in (duplicate, other):
+        _select(app, cid, image)
+    view = _save(app, pid, cid, _draft(first, duplicate, other))
+    shots = view["manifest"]["shots"]
+    assert shots[0]["filename"] == shots[1]["filename"]
+    references = view["export_text"].split("参考图对应（按分镜首次使用顺序上传）\n")[1]
+    references = references.split("\n\n连续分镜时间轴")[0].splitlines()
+    assert references == [f'参考图 1：{shots[0]["filename"]}',
+                          f'参考图 2：{shots[2]["filename"]}']
+
+
 def test_manual_review_resolves_current_field_reference_without_copying_long_quotes(
     story_app, monkeypatch,
 ):
