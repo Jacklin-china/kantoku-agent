@@ -646,9 +646,9 @@ class ComicStoryService:
         ]
         references = {}
         for shot in shots:
-            references.setdefault((shot["image_id"], shot["image_version"]), shot["filename"])
+            references.setdefault(shot["filename"], None)
         lines.extend(f"参考图 {index}：{filename}"
-                     for index, filename in enumerate(references.values(), 1))
+                     for index, filename in enumerate(references, 1))
         lines += ["", "连续分镜时间轴"]
         elapsed = 0.0
         for shot in shots:
