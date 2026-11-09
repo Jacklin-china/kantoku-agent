@@ -2812,6 +2812,37 @@ def test_review_corrects_bad_public_structure_once_and_preserves_verified_errors
         app.comic_story_operation(cid, "confirm", _request(app, pid, cid, "blocked"))
 
 
+def test_review_correction_does_not_turn_field_reference_diagnostics_into_story_findings(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, image = _setup(app)
+    _save(app, pid, cid, _draft(image))
+    calls = []
+
+    def review(messages):
+        calls.append(messages)
+        if len(calls) == 1:
+            return json.dumps({"status": "needs_revision", "findings": [{
+                "severity": "error", "shot_id": "story-shot-1", "field": "action",
+                "code": "continuity", "message": "A real handoff issue.",
+                "evidence_id": "not-the-current-action", "evidence": "",
+            }]})
+        content = messages[-1]["content"]
+        correction = json.loads(content[content.index("{"):])
+        issue = correction["issues"][0]
+        assert issue["reason"] == "invalid_field_reference"
+        assert issue["expected_field_reference"].startswith("shot.1.action:")
+        assert "message" not in issue
+        return json.dumps({"status": "pass", "findings": []})
+
+    monkeypatch.setattr(app, "_comic_constraint_model", review)
+    result = app.comic_story_operation(cid, "review", _request(app, pid, cid, "repair-reference"))
+    assert len(calls) == 2
+    assert result["review"]["status"] == "pass"
+    assert result["review"]["findings"] == []
+
+
 @pytest.mark.parametrize("malformed", ["timing_type", "private_extra", "invalid_status"])
 def test_review_keeps_valid_errors_when_another_part_has_a_schema_error(
     story_app, monkeypatch, malformed,
