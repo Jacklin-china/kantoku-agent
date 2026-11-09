@@ -1391,8 +1391,12 @@ class ComicStoryService:
                     "选择evidence_id，finding.evidence留空；timing_plan[].evidence仍必须逐字引用"
                     "本镜当前action/transition，覆盖required_phases，修正quote_mismatch_beats；"
                     "有expected_field_reference时使用该字段编号。"
+                    "issues只描述上次返回结构的技术错误，不是故事内容问题，"
+                    "不得将其改写为finding；对现稿仍须独立判断实际问题。"
                     "error预算总数须大于minimum_error_budget_exclusive，不能重复计算并行动作。"
-                    + json.dumps({"issues": issues, "verified_findings": [
+                    + json.dumps({"issues": [{key: value for key, value in issue.items()
+                                             if key != "message"} for issue in issues],
+                        "verified_findings": [
                         item.model_dump(mode="json") for item in verified.values()]},
                         ensure_ascii=False))}]
             # 仅成功返回后的契约错误可纠正；传输失败或结果未知直接退出，不重发模型请求。
