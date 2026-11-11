@@ -138,6 +138,8 @@ class ComicVideoWorkspace:
                 images.append({"artifact_id": artifact.id, "run_id": artifact.run_id,
                                "sha256": source["sha256"], "image_id": source["image_id"],
                                "version": str(source["version"])})
+            if len(images) > 8:
+                raise ToolError("视频生成单次最多使用 8 张参考图，请选择单镜头试片")
             snapshot = {"story_id": story["story_id"], "version": story["version"],
                         "content_sha256": story["content_sha256"], "title": story["title"],
                         "shots": shots, "images": images}

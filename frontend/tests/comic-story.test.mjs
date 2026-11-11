@@ -265,6 +265,25 @@ test('generation rejects more than eight combined images before any submit inste
   } finally { await f.controller.dispose() }
 })
 
+test('manual stories allow twenty image versions and reject a twenty-first without losing shots', async () => {
+  const f = fixture(); await f.controller.load('chat')
+  try {
+    for (let i = 0; i < 20; i++) {
+      const next = { ...clone(second), image_id: `manual-${i}`, artifact_id: `manual-${i}` }
+      f.controller.state.images.push(next); f.controller.addImage(next)
+    }
+    assert.equal(f.controller.state.draft.shots.length, 20)
+    assert.match(f.controller.state.notice, /最多使用 20/)
+    f.controller.addImage(image)
+    assert.equal(f.controller.state.draft.shots.length, 21)
+    const extra = f.controller.state.images.at(-1)
+    f.controller.replaceImage(0, storyImageKey(extra))
+    assert.equal(f.controller.state.draft.shots[0].image.image_id, image.image_id)
+    await f.controller.save()
+    assert.equal(f.calls.find(call => call[0] === 'save')[1].draft.shots.length, 21)
+  } finally { await f.controller.dispose() }
+})
+
 test('validation findings name the shot, field, error type and fix', async () => {
   const review = { status: 'needs_revision', validation_requested: true, content_sha256: 'content-v1', findings: [
     { severity: 'error', shot_id: shot.shot_id, field: 'action', message: '镜头 1 缺少动作。',

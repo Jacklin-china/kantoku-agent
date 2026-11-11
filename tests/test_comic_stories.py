@@ -166,6 +166,35 @@ def _confirm(app, pid, cid, monkeypatch, *, key="confirm"):
     return app.comic_story_operation(cid, "confirm", _request(app, pid, cid, key))
 
 
+def test_manual_story_keeps_more_than_eight_original_images_through_export(
+    story_app, monkeypatch,
+):
+    app = story_app
+    pid, cid, first = _setup(app)
+    images = [first]
+    for color in range(1, 9):
+        image = _upload(app, pid, cid, content=_png(color))
+        _select(app, cid, image)
+        images.append(image)
+    saved = _save(app, pid, cid, _draft(*images))
+    assert len(saved["story"]["fixed_images"]) == 9
+    assert app.get_comic_story(cid)["story"] == saved["story"]
+    _confirm(app, pid, cid, monkeypatch)
+    exported = app.comic_story_operation(cid, "exports", _request(app, pid, cid, "export-nine"))
+    artifact = app.runtime_store.get_artifact(exported["export_artifact_id"])
+    by_id = {image["image_id"]: _png(index) for index, image in enumerate(images)}
+    with ZipFile(artifact.location) as bundle:
+        for image in exported["manifest"]["images"]:
+            assert bundle.read(image["filename"]) == by_id[image["image_id"]]
+
+
+def test_manual_story_rejects_more_than_twenty_distinct_image_versions():
+    images = [{"image_id": f"image-{index}", "version": 1} for index in range(21)]
+    assert len(ComicStoryDraft.model_validate(_draft(*images[:20])).shots) == 20
+    with pytest.raises(ValidationError, match="最多固定 20"):
+        ComicStoryDraft.model_validate(_draft(*images))
+
+
 def test_fixed_versions_across_projects_survive_reselection_and_reload(story_app):
     app = story_app
     pid, cid, first = _setup(app)
