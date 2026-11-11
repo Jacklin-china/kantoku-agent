@@ -350,6 +350,25 @@ def test_full_story_reference_images_follow_first_shot_use_not_storage_identity(
         "submitted_prompt"] == submitted.prompt
 
 
+def test_large_story_video_stops_before_provider_or_budget_claim(story_app, monkeypatch, tmp_path):
+    app = story_app
+    pid, cid, provider, request = prepared(app, monkeypatch, tmp_path)
+    images = [app.get_comic_story(cid)["story"]["fixed_images"][0]]
+    for color in range(1, 9):
+        image = _upload(app, pid, cid, content=_png(color))
+        _select(app, cid, image)
+        images.append(image)
+    _save(app, pid, cid, _draft(*images), "save-nine-video")
+    _confirm(app, pid, cid, monkeypatch, key="confirm-nine-video")
+    story = app.get_comic_story(cid)["story"]
+    request.update(_request(app, pid, cid, "nine-image-video"), scope="story", shot_id=None,
+                   content_sha256=story["content_sha256"])
+    with pytest.raises(ToolError, match="最多使用 8"):
+        app.comic_story_operation(cid, "video", request)
+    assert not provider.submissions
+    assert budget.get_reservation(request["request_id"]) is None
+
+
 @pytest.mark.parametrize("addition", ["", "Use music that follows the story."])
 def test_default_video_scope_generates_one_whole_story_and_deduplicates_exact_export(
     story_app, monkeypatch, tmp_path, addition,

@@ -155,6 +155,8 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
   function addImage(image: ComicImageRef): void {
     if (state.images.find(item => storyImageKey(item) === storyImageKey(image))?.available === false) return
     if (state.draft.shots.length >= 100) { state.notice = '一个故事最多 100 个镜头。'; return }
+    const keys = new Set(state.draft.shots.map(shot => storyImageKey(shot.image)))
+    if (!keys.has(storyImageKey(image)) && keys.size >= 20) { state.notice = '一个故事最多使用 20 个图片版本。'; return }
     state.draft.shots.push({ shot_id: crypto.randomUUID(), image: { image_id: image.image_id, version: image.version }, action: '', camera: '', duration_seconds: null, transition: '' }); changed()
   }
   function moveShot(index: number, target: number): void {
@@ -165,7 +167,11 @@ export function createStoryWorkbench(anchor: () => { project_id: string; current
   function removeShot(index: number): void { state.draft.shots.splice(index, 1); changed() }
   function replaceImage(index: number, key: string): void {
     const image = state.images.find(item => storyImageKey(item) === key), shot = state.draft.shots[index]
-    if (image && image.available !== false && shot) { shot.image = { image_id: image.image_id, version: image.version }; changed() }
+    if (image && image.available !== false && shot) {
+      const keys = new Set(state.draft.shots.filter((_, i) => i !== index).map(item => storyImageKey(item.image)))
+      if (!keys.has(key) && keys.size >= 20) { state.notice = '一个故事最多使用 20 个图片版本。'; return }
+      shot.image = { image_id: image.image_id, version: image.version }; changed()
+    }
   }
   function imageReplacement(shot: core.ComicStoryShot): ComicImageView | undefined {
     if (!state.view?.missing_images.some(item => item.shot_id === shot.shot_id)) return

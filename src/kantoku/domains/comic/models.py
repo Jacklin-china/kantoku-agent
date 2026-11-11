@@ -1608,8 +1608,8 @@ class ComicStoryDraft(BaseModel):
     def unique_shots(self) -> ComicStoryDraft:
         if len({shot.shot_id for shot in self.shots}) != len(self.shots):
             raise ValueError("故事镜头 ID 不能重复")
-        if len({(shot.image.image_id, shot.image.version) for shot in self.shots}) > 8:
-            raise ValueError("一个故事最多固定 8 个图片版本")
+        if len({(shot.image.image_id, shot.image.version) for shot in self.shots}) > 20:
+            raise ValueError("一个故事最多固定 20 个图片版本")
         return self
 
 
