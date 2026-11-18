@@ -202,7 +202,8 @@ python scripts/context_cumulative_benchmark.py --turns 80 --output docs/evals/co
 | [docs/engineering/runtime-policy.md](docs/engineering/runtime-policy.md) | 运行文件、临时目录与台账规范 | 改存储/清理逻辑前 |
 | [docs/architecture/](docs/architecture/) | 逐模块设计、上下文锁与[架构例外清单](docs/architecture/exceptions.md) | 改动涉及历史边界时 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 启动方式、日志查询、交付门禁 | 开发与验收时 |
-| [docs/01](docs/01-开发规范.md)–[04](docs/04-功能开发引导.md) | 早期 10 周计划的开发规范与引导 | **仅作历史参考**，不反映当前实现 |
+| [docs/README.md](docs/README.md) | 文档索引：按目的查找架构、工程、评测与历史材料 | 不确定该看哪份文档时 |
+| [docs/archive/](docs/archive/README.md) | 早期 10 周计划的开发规范与引导 | **仅作历史参考**，不反映当前实现 |
 
 ## 当前边界
 

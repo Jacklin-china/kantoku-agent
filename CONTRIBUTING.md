@@ -1,6 +1,6 @@
 # Kantoku 开发入口与验收
 
-先读 `AGENTS.md`、`ARCHITECTURE.md` 与 `docs/03-项目开发流程.md`。确认现有调用链后，在原实现上做最小改动；不创建平行 service、manager、`*_new` 文件。
+先读 `AGENTS.md`、[docs/engineering/README.md](docs/engineering/README.md) 与 [docs/README.md](docs/README.md)（文档索引）。确认现有调用链后，在原实现上做最小改动；不创建平行 service、manager、`*_new` 文件。
 
 ## 两个独立进程
 
@@ -16,4 +16,4 @@
 
 ## 交付门禁
 
-在仓库根目录运行 `uv run python scripts/check_structure.py`、`uv run ruff check .`、`uv run pytest`。前端在 `frontend/` 运行 `npm run build`（先做 `vue-tsc --noEmit` 再打包）。IDE GUI 的绿色 Run/Task 需在用户机器上点一次确认，静态配置检查不冒充 GUI 验收。新依赖先在 `docs/02-技术选型与配置约束.md` 登记；修改前先记录基线，失败需说明是既存还是本次引入。
+在仓库根目录运行 `uv run python scripts/check_structure.py`、`uv run ruff check .`、`uv run pytest`。前端在 `frontend/` 运行 `npm run build`（先做 `vue-tsc --noEmit` 再打包）。IDE GUI 的绿色 Run/Task 需在用户机器上点一次确认，静态配置检查不冒充 GUI 验收。新依赖先在 PR 说明中给出必要性，并对照 [历史技术约束](docs/archive/tech-stack-constraints.md) 检查是否已有等价能力；修改前先记录基线，失败需说明是既存还是本次引入。
