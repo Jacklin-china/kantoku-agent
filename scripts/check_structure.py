@@ -24,6 +24,14 @@ FORBIDDEN_IMPORTS = {
     "core": {"adapters", "domains", "shells"},
     "domains": {"adapters", "shells"},
 }
+# Standalone crash-injection harnesses keep raw connections on purpose: the child
+# process is killed with os._exit, and DatabaseManager's anchors, WAL setup and
+# path allow-list would change the behaviour being measured. Their numbers live in
+# docs/evals/*.json and must stay reproducible by the script that produced them.
+RAW_SQLITE_HARNESSES = {
+    "scripts/recovery_cost_benchmark.py",
+    "scripts/reliability_benchmark.py",
+}
 
 
 def _imports(tree: ast.AST) -> set[str]:
@@ -57,6 +65,7 @@ def violations() -> list[str]:
         tree = ast.parse(content, filename=str(path))
         database_factory = relative.as_posix() == "src/kantoku/core/database.py"
         storage_factory = relative.as_posix() == "src/kantoku/config/runtime_paths.py"
+        raw_sqlite_harness = relative.as_posix() in RAW_SQLITE_HARNESSES
         application_source = relative.parts[0] == "src"
         sqlite_aliases = {"sqlite3"}
         direct_factories = set()
@@ -76,7 +85,7 @@ def violations() -> list[str]:
                 and isinstance(function.value, ast.Name)
                 and function.value.id in sqlite_aliases
             ) or (isinstance(function, ast.Name) and function.id in direct_factories)
-            if direct_sqlite and not database_factory:
+            if direct_sqlite and not database_factory and not raw_sqlite_harness:
                 problems.append(f"SQLite must use DatabaseManager: {relative}:{node.lineno}")
             if (isinstance(function, ast.Attribute)
                 and function.attr in {"mkdir", "write_bytes", "write_text"}
