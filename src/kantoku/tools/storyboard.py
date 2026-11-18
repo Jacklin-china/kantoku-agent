@@ -142,6 +142,20 @@ def load_storyboard(episode: str) -> Storyboard | None:
             connection.close()
 
 
+def parse_storyboard_response(content: str | None) -> Storyboard:
+    """Validate model output before any database write; no implicit repair or coercion."""
+    if not content:
+        raise SchemaError("分镜模型未返回 JSON")
+    storyboard = parse_storyboard(content)
+    if len(storyboard.shots) != SHOT_COUNT:
+        raise SchemaError(
+            "分镜数量不符合要求",
+            detail=f"expected={SHOT_COUNT}；actual={len(storyboard.shots)}",
+            raw=content,
+        )
+    return storyboard
+
+
 @register(
     "generate_storyboard",
     description="把完整剧本拆成恰好 20 个连续、可供后续生图的分镜并保存",
@@ -162,15 +176,6 @@ def generate_storyboard(script: str) -> Storyboard:
         temperature=settings.llm.structured_temperature,
         response_format={"type": "json_object"},
     )
-    if not message.content:
-        raise SchemaError("分镜模型未返回 JSON")
-
-    storyboard = parse_storyboard(message.content)
-    if len(storyboard.shots) != SHOT_COUNT:
-        raise SchemaError(
-            "分镜数量不符合要求",
-            detail=f"expected={SHOT_COUNT}；actual={len(storyboard.shots)}",
-            raw=message.content,
-        )
+    storyboard = parse_storyboard_response(message.content)
     save_storyboard(storyboard)
     return storyboard
