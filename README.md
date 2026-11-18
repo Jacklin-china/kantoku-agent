@@ -65,6 +65,7 @@ Kantoku 是面向漫剧创作者的**本地优先 AI 工作台**。用户通过�
 - **上下文和结构化输出：** 按预算整理会话上下文，使用结构化模型校验导演方案与相关字段；模型推断和用户明确要求分开标识。
 - **图片审阅与版本：** 支持分析建议和区域选择；审阅报告与图片内容指纹绑定，减少版本切换时引用错误结果。
 - **预算与可验证边界：** 图片请求复用预算台账，未知账单保留待对账状态；离线测试、模拟结果和真实模型验收分别说明。
+- **可靠性证据：** 分镜结构化输出在写库前严格校验；提供真实子进程恢复、离线质量门禁和上下文 A/B 脚本，实测范围与未验收项见[可靠性验证记录](docs/enterprise-validation.md)。
 
 ## 架构
 
@@ -175,6 +176,20 @@ npx vue-tsc --noEmit                       # 类型检查
 评测材料和限制见 [evals/README.md](evals/README.md)。例如，图片工作台对照材料尚未
 完成采集和人工确认，不能据此宣称画面质量或首次改对率已经提升。真实模型验收需要
 单独确认预算与凭据，结果不由离线替身推断。
+
+可靠性补强提供以下独立、无付费模型调用的复现入口：
+
+```bash
+python scripts/reliability_benchmark.py --runs 20 --output docs/evals/process-recovery-20.json
+python scripts/offline_quality_gate.py --output docs/evals/offline-quality.json
+python scripts/context_ab_benchmark.py --output docs/evals/context-ab.json
+python scripts/structured_stress_benchmark.py --output docs/evals/structured-stress-120.json
+python scripts/recovery_cost_benchmark.py --repeats 5 --output docs/evals/recovery-cost-30.json
+python scripts/context_cumulative_benchmark.py --turns 80 --direct --output docs/evals/context-cumulative-direct-80.json
+python scripts/context_cumulative_benchmark.py --turns 80 --output docs/evals/context-cumulative-80.json
+```
+
+新增实测为 120/120 结构化写库边界、30/30 同崩溃点恢复 A/B 和两种 80 轮累计上下文实验；恢复副作用节点平均调用减少 41.67%，显式快速路径总模型输入减少 14.22%，完整理解路径总输入反而增加 111.97%。这些结果不等于真实模型/图片质量验收或总成本固定降幅。详细口径见[可靠性验证记录](docs/enterprise-validation.md)。
 
 ## 文档导航
 
