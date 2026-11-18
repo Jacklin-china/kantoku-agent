@@ -1,0 +1,794 @@
+{
+  "contract": "kantoku-subprocess-recovery-v1",
+  "recorded_at_utc": "2026-11-17T11:19:05.223942+00:00",
+  "environment": {
+    "python": "3.11.13",
+    "platform": "Linux-6.6.95.bck.4-rc5-amd64-x86_64-with-glibc2.35"
+  },
+  "implementation_sha256": {
+    "scripts/reliability_benchmark.py": "bc5d9213744fcf0e05b2a5e4e2c34e3c7287a1d3c49ff7abbd26a95d06e4d2fd",
+    "src/kantoku/core/runtime/graph.py": "bc61ed7b4d162283912d9ccbfe79d597a3b40a692659c23d72daf8c72a2fc43c",
+    "src/kantoku/core/runtime/store.py": "60d9512f2a4c0634deea750074af59fcabe89a118abd34c89852c9eaa463b14b"
+  },
+  "summary": {
+    "passed": 20,
+    "total": 20
+  },
+  "by_crash_point": {
+    "after_prepare_checkpoint": {
+      "passed": 3,
+      "total": 3
+    },
+    "before_external": {
+      "passed": 3,
+      "total": 3
+    },
+    "after_external_commit": {
+      "passed": 3,
+      "total": 3
+    },
+    "after_external_checkpoint": {
+      "passed": 3,
+      "total": 3
+    },
+    "before_archive": {
+      "passed": 3,
+      "total": 3
+    },
+    "after_archive_commit": {
+      "passed": 3,
+      "total": 3
+    },
+    "after_archive_checkpoint": {
+      "passed": 2,
+      "total": 2
+    }
+  },
+  "cases": [
+    {
+      "case": 1,
+      "crash_point": "after_prepare_checkpoint",
+      "crash_exit_code": 73,
+      "run_id": "run-1c33edcacc7f4062b0cb5fe857b6e4fe",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 8,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 2,
+      "crash_point": "before_external",
+      "crash_exit_code": 73,
+      "run_id": "run-4d51187aefcd4feb87d77fdf8761b018",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 2,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 3,
+      "crash_point": "after_external_commit",
+      "crash_exit_code": 73,
+      "run_id": "run-8a4b7468eb2740f7ad05212f5daef8aa",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 2,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 4,
+      "crash_point": "after_external_checkpoint",
+      "crash_exit_code": 73,
+      "run_id": "run-3140a37f8d964db080712b0734cef668",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 8,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 5,
+      "crash_point": "before_archive",
+      "crash_exit_code": 73,
+      "run_id": "run-89fbacbb8e0b4b44a37d444bbd280634",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 2,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 6,
+      "crash_point": "after_archive_commit",
+      "crash_exit_code": 73,
+      "run_id": "run-4dffc9197b62450da54f31eb8ef83edc",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 2,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 7,
+      "crash_point": "after_archive_checkpoint",
+      "crash_exit_code": 73,
+      "run_id": "run-e2da21867bac4f95854733e8f3f884cc",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 7,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 8,
+      "crash_point": "after_prepare_checkpoint",
+      "crash_exit_code": 73,
+      "run_id": "run-72234e465a6046ee91a471d61b2e3aa4",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 8,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 9,
+      "crash_point": "before_external",
+      "crash_exit_code": 73,
+      "run_id": "run-d8c2c3409bee4e72a9b72c8b51d32d04",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 2,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 10,
+      "crash_point": "after_external_commit",
+      "crash_exit_code": 73,
+      "run_id": "run-07414c85c29245f4a630231e917c60f6",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 2,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 11,
+      "crash_point": "after_external_checkpoint",
+      "crash_exit_code": 73,
+      "run_id": "run-9068e3d8526c492da582627d4f8500bf",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 8,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 12,
+      "crash_point": "before_archive",
+      "crash_exit_code": 73,
+      "run_id": "run-39f473f6a11a42f0bbfa0cc6dd15e3a2",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 2,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 13,
+      "crash_point": "after_archive_commit",
+      "crash_exit_code": 73,
+      "run_id": "run-0805073ef7c146f39f304d9a6f88d082",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 2,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 14,
+      "crash_point": "after_archive_checkpoint",
+      "crash_exit_code": 73,
+      "run_id": "run-bcd21b349e6341618e96bd9451728cdc",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 7,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 15,
+      "crash_point": "after_prepare_checkpoint",
+      "crash_exit_code": 73,
+      "run_id": "run-9f311c89cdbc457eba769c2d2867d317",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 8,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 16,
+      "crash_point": "before_external",
+      "crash_exit_code": 73,
+      "run_id": "run-41c8a11d1b234a019932ae4686539f44",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 2,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 17,
+      "crash_point": "after_external_commit",
+      "crash_exit_code": 73,
+      "run_id": "run-242e4f0bd58d418b9cdfe2f091302d3a",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 2,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 18,
+      "crash_point": "after_external_checkpoint",
+      "crash_exit_code": 73,
+      "run_id": "run-4d0dbc2e00654cc39b2e85026fec4cf6",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 8,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 19,
+      "crash_point": "before_archive",
+      "crash_exit_code": 73,
+      "run_id": "run-e0461372a7d6403db8c1e9f7b34dd131",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 2,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    },
+    {
+      "case": 20,
+      "crash_point": "after_archive_commit",
+      "crash_exit_code": 73,
+      "run_id": "run-a683b5cc28f94f9eb35d4395f12b4c21",
+      "status": "completed",
+      "state": {
+        "value": 10,
+        "archived": true
+      },
+      "completed_nodes": [
+        "prepare",
+        "external",
+        "archive"
+      ],
+      "ledger": {
+        "prepare": {
+          "node": "prepare",
+          "attempts": 1,
+          "effect_count": 0
+        },
+        "external": {
+          "node": "external",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "archive": {
+          "node": "archive",
+          "attempts": 2,
+          "effect_count": 1
+        }
+      },
+      "checkpoint_count": 3,
+      "event_count": 9,
+      "passed": true,
+      "resume_exit_code": 0
+    }
+  ],
+  "limitations": [
+    "Synthetic three-node workflow with real os._exit subprocess interruption and a fresh GraphRuntime process",
+    "External side effect is a SQLite idempotency simulation, not a paid provider or exactly-once network guarantee",
+    "Does not represent host power loss, multi-node deployment or real model/image quality"
+  ]
+}

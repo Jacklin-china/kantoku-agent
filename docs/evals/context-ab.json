@@ -1,0 +1,125 @@
+{
+  "contract": "kantoku-deterministic-context-ab-v1",
+  "recorded_at_utc": "2026-11-17T11:17:15.054253+00:00",
+  "environment": {
+    "python": "3.11.13",
+    "platform": "Linux-6.6.95.bck.4-rc5-amd64-x86_64-with-glibc2.35",
+    "model": "deterministic schema-valid test double; no external model"
+  },
+  "summary": {
+    "passed": 5,
+    "total": 5,
+    "full_history_tokens": 57992,
+    "managed_final_turn_tokens": 22059,
+    "final_turn_reduction_percent": 61.96,
+    "total_managed_model_input_tokens": 120412
+  },
+  "cases": [
+    {
+      "id": "early_fact",
+      "messages": 120,
+      "expected_source_found": true,
+      "full_history_probe_passed": true,
+      "managed_probe_passed": true,
+      "selected_source_ids": [
+        "message-f313e910966e4f9db359d2f0c80e4d23"
+      ],
+      "full_history_tokens": 9646,
+      "managed_final_turn_tokens": 4434,
+      "understanding_input_tokens": 7398,
+      "final_turn_reduction_percent": 54.03,
+      "summary_input_tokens": 10797,
+      "total_managed_model_input_tokens": 25504,
+      "model_calls": 4,
+      "summary_id": "artifact-4dd81a857f5c4ed39b496028dd9f1606",
+      "degraded": [],
+      "passed": true
+    },
+    {
+      "id": "latest_correction",
+      "messages": 120,
+      "expected_source_found": true,
+      "full_history_probe_passed": true,
+      "managed_probe_passed": true,
+      "selected_source_ids": [
+        "message-9c6988a384514fada32e718f7ead9c04"
+      ],
+      "full_history_tokens": 9618,
+      "managed_final_turn_tokens": 4466,
+      "understanding_input_tokens": 7415,
+      "final_turn_reduction_percent": 53.57,
+      "summary_input_tokens": 10688,
+      "total_managed_model_input_tokens": 18103,
+      "model_calls": 3,
+      "summary_id": "artifact-5e27e660de1846be8526ae315b1cf430",
+      "degraded": [],
+      "passed": true
+    },
+    {
+      "id": "no_matching_fact",
+      "messages": 120,
+      "expected_source_found": true,
+      "full_history_probe_passed": true,
+      "managed_probe_passed": true,
+      "selected_source_ids": [],
+      "full_history_tokens": 9680,
+      "managed_final_turn_tokens": 4350,
+      "understanding_input_tokens": 7317,
+      "final_turn_reduction_percent": 55.06,
+      "summary_input_tokens": 10828,
+      "total_managed_model_input_tokens": 18145,
+      "model_calls": 3,
+      "summary_id": "artifact-3c6586f94acb4ebbb5486604b166fab4",
+      "degraded": [
+        "source_not_found"
+      ],
+      "passed": true
+    },
+    {
+      "id": "cross_conversation_isolation",
+      "messages": 120,
+      "expected_source_found": true,
+      "full_history_probe_passed": true,
+      "managed_probe_passed": true,
+      "selected_source_ids": [],
+      "full_history_tokens": 9680,
+      "managed_final_turn_tokens": 4350,
+      "understanding_input_tokens": 7317,
+      "final_turn_reduction_percent": 55.06,
+      "summary_input_tokens": 10828,
+      "total_managed_model_input_tokens": 18145,
+      "model_calls": 3,
+      "summary_id": "artifact-1a2bd363ebfd4058b9b36cc5c303cdf0",
+      "degraded": [
+        "source_not_found"
+      ],
+      "passed": true
+    },
+    {
+      "id": "long_history",
+      "messages": 240,
+      "expected_source_found": true,
+      "full_history_probe_passed": true,
+      "managed_probe_passed": true,
+      "selected_source_ids": [
+        "message-208fcffd95764c8b99a6b55abe01b5f7"
+      ],
+      "full_history_tokens": 19368,
+      "managed_final_turn_tokens": 4459,
+      "understanding_input_tokens": 7420,
+      "final_turn_reduction_percent": 76.98,
+      "summary_input_tokens": 25766,
+      "total_managed_model_input_tokens": 40515,
+      "model_calls": 6,
+      "summary_id": "artifact-74f7c66c3350415888e52405b0767584",
+      "degraded": [],
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "Synthetic functional probes verify bounded context, source reads and isolation; not semantic model recall quality",
+    "Token values use the project's character-based token_size estimator; not provider billing usage",
+    "Final-turn reduction excludes compaction work; total managed model input is reported separately"
+  ],
+  "implementation_sha256": "35ff951462e213b8508e9b294f2b7b88d8b7763e45793ff60efc259b4e28b799"
+}

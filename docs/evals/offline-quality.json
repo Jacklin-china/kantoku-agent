@@ -1,0 +1,542 @@
+{
+  "contract": "kantoku-offline-quality-gate-v1",
+  "recorded_at_utc": "2026-11-17T11:16:45.154565+00:00",
+  "environment": {
+    "python": "3.11.13",
+    "platform": "Linux-6.6.95.bck.4-rc5-amd64-x86_64-with-glibc2.35",
+    "model_calls": 0
+  },
+  "implementation_sha256": {
+    "evals/consistency.jsonl": "e3168cbabd30f17a0ef2a53f56a5b5f25511846a63191a77cf896a5dde4ac1a7",
+    "evals/storyboard.jsonl": "e83edb059e720291aa2f78a80996eed92838ea44d31ebbf1306171b51706cb1f",
+    "evals/director.jsonl": "19fa3e805f561fa049ff5e234ba14f946d068462d80f1a143b372d9988963d0d",
+    "evals/image-workbench.json": "fbb2b8e5ad82925e9083e0b8acc1ad346e99e24df31d822a4cd5a7bbb5646376",
+    "src/kantoku/evaluation.py": "14b378ddf54e42d93c62ce9e1de77647026edbef77c08085cc6b77a560f4c387",
+    "src/kantoku/structured_evaluation.py": "246b60d91f68cd6fb0422c1e2b91ee74a3a5086f3ed2ad0630f511dce9914e50",
+    "src/kantoku/tools/storyboard.py": "de3797013699dbc141936c20a2f84d2338c0de7b50402281bd61fc9a4b360ead"
+  },
+  "suites": {
+    "consistency": {
+      "status": "passed",
+      "passed": 20,
+      "total": 20
+    },
+    "structured_output": {
+      "status": "passed",
+      "passed": 25,
+      "total": 25,
+      "cases": [
+        {
+          "id": "valid_board",
+          "expected": "valid",
+          "passed": true,
+          "error": null
+        },
+        {
+          "id": "null_content",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜模型未返回 JSON"
+        },
+        {
+          "id": "empty_content",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜模型未返回 JSON"
+        },
+        {
+          "id": "malformed_json",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "markdown_fence",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "top_level_list",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "missing_episode",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "blank_episode",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "missing_shots",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "shots_object",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "null_shots",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "nineteen_shots",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜数量不符合要求"
+        },
+        {
+          "id": "twenty_one_shots",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜数量不符合要求"
+        },
+        {
+          "id": "duplicate_shot_no",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "missing_shot_no",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "blank_description",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "missing_camera",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "zero_duration",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "float_duration",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "string_duration",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "characters_string",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "blank_character",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "non_string_dialogue",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "extra_top_level",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        },
+        {
+          "id": "extra_shot_field",
+          "expected": "rejected",
+          "passed": true,
+          "error": "SchemaError: 分镜 JSON 校验失败"
+        }
+      ]
+    },
+    "storyboard_generation": {
+      "status": "not_run",
+      "cases": 10,
+      "reason": "Requires an explicitly authorized real model run; no paid call was made"
+    },
+    "director_generation": {
+      "status": "not_run",
+      "cases": 4,
+      "reason": "Requires real model outputs and human review; not inferred from offline fixtures"
+    },
+    "image_workbench": {
+      "status": "pending",
+      "quality_improvement_verified": false,
+      "eligible_counts": {
+        "images": 0,
+        "manual_requests": 0,
+        "edit_pairs": 0
+      },
+      "pending": [
+        {
+          "kind": "images",
+          "id": "image-01",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-02",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-03",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-04",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-05",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-06",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-07",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-08",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-09",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-10",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-11",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-12",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-13",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-14",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-15",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-16",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-17",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-18",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-19",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-20",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-21",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-22",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-23",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "images",
+          "id": "image-24",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-1",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-2",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-3",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-4",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-5",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-6",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-7",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-8",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-9",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-10",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-11",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-12",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-13",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-14",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-15",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-16",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-17",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-18",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-19",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "clear-20",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-1",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-2",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-3",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-4",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-5",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-6",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-7",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-8",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-9",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "manual_requests",
+          "id": "ambiguous-10",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-1",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-2",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-3",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-4",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-5",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-6",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-7",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-8",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-9",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-10",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-11",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        },
+        {
+          "kind": "edit_pairs",
+          "id": "external-edit-12",
+          "reason": "缺少独立真实素材、人工标注或同输入同模型的真实对照结果"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "executed_passed": 45,
+    "executed_total": 45,
+    "quality_release_ready": false
+  },
+  "limitations": [
+    "Offline checks cover deterministic prompt anchors and schema rejection; not real model/image quality",
+    "not_run and pending suites are excluded from the offline pass count and block quality-release claims"
+  ]
+}

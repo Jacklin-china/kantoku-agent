@@ -1,0 +1,1580 @@
+{
+  "contract": "kantoku-recovery-cost-ab-v1",
+  "recorded_at_utc": "2026-11-17T13:33:41.313650+00:00",
+  "environment": {
+    "python": "3.11.13",
+    "platform": "Linux-6.6.95.bck.4-rc5-amd64-x86_64-with-glibc2.35"
+  },
+  "implementation_sha256": {
+    "scripts/recovery_cost_benchmark.py": "f2c82825edc6e55fdacf46e278d125dbda7f610ed77b9eae78d829e2f0057d3a",
+    "src/kantoku/core/runtime/graph.py": "bc61ed7b4d162283912d9ccbfe79d597a3b40a692659c23d72daf8c72a2fc43c",
+    "src/kantoku/core/runtime/store.py": "60d9512f2a4c0634deea750074af59fcabe89a118abd34c89852c9eaa463b14b"
+  },
+  "summary": {
+    "passed": 30,
+    "total": 30,
+    "crash_positions": 6,
+    "provider_nodes_per_run": 6,
+    "resume_recovery_calls_average": 3.5,
+    "restart_recovery_calls_average": 6.0,
+    "recovery_call_reduction_percent": 41.67,
+    "resume_total_calls_average": 7.0,
+    "restart_total_calls_average": 9.5,
+    "total_call_reduction_percent": 26.32,
+    "duplicate_external_effects": 0
+  },
+  "cases": [
+    {
+      "case": 1,
+      "crash_node": "model_1",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 2,
+      "crash_node": "model_2",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 5,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 8,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 3,
+      "crash_node": "model_3",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 4,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 9,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 4,
+      "crash_node": "model_4",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 3,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 10,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 5,
+      "crash_node": "model_5",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 2,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 11,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 6,
+      "crash_node": "model_6",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_6": {
+          "node": "model_6",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 1,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 12,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 7,
+      "crash_node": "model_1",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 8,
+      "crash_node": "model_2",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 5,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 8,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 9,
+      "crash_node": "model_3",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 4,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 9,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 10,
+      "crash_node": "model_4",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 3,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 10,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 11,
+      "crash_node": "model_5",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 2,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 11,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 12,
+      "crash_node": "model_6",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_6": {
+          "node": "model_6",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 1,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 12,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 13,
+      "crash_node": "model_1",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 14,
+      "crash_node": "model_2",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 5,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 8,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 15,
+      "crash_node": "model_3",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 4,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 9,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 16,
+      "crash_node": "model_4",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 3,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 10,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 17,
+      "crash_node": "model_5",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 2,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 11,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 18,
+      "crash_node": "model_6",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_6": {
+          "node": "model_6",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 1,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 12,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 19,
+      "crash_node": "model_1",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 20,
+      "crash_node": "model_2",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 5,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 8,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 21,
+      "crash_node": "model_3",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 4,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 9,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 22,
+      "crash_node": "model_4",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 3,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 10,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 23,
+      "crash_node": "model_5",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 2,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 11,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 24,
+      "crash_node": "model_6",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_6": {
+          "node": "model_6",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 1,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 12,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 25,
+      "crash_node": "model_1",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 26,
+      "crash_node": "model_2",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 5,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 8,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 27,
+      "crash_node": "model_3",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 4,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 9,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 28,
+      "crash_node": "model_4",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 3,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 10,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 29,
+      "crash_node": "model_5",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 2,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 11,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    },
+    {
+      "case": 30,
+      "crash_node": "model_6",
+      "crash_exit_code": 73,
+      "before_crash": {
+        "model_1": {
+          "node": "model_1",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_2": {
+          "node": "model_2",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_3": {
+          "node": "model_3",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_4": {
+          "node": "model_4",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_5": {
+          "node": "model_5",
+          "attempts": 1,
+          "effect_count": 1
+        },
+        "model_6": {
+          "node": "model_6",
+          "attempts": 1,
+          "effect_count": 1
+        }
+      },
+      "resume": {
+        "completed": true,
+        "recovery_provider_calls": 1,
+        "total_provider_calls_including_crashed_attempt": 7,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "restart": {
+        "completed": true,
+        "recovery_provider_calls": 6,
+        "total_provider_calls_including_crashed_attempt": 12,
+        "effect_counts": {
+          "model_1": 1,
+          "model_2": 1,
+          "model_3": 1,
+          "model_4": 1,
+          "model_5": 1,
+          "model_6": 1
+        }
+      },
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "Six deterministic provider test doubles count real invocations; no paid model was called",
+    "Crash occurs after each simulated provider commit and before its runtime checkpoint",
+    "Resume and restart start from byte-identical copies of the same crashed SQLite database",
+    "Effect idempotency is simulated by a SQLite ledger, not a real provider guarantee",
+    "Call reduction is not a currency cost or production availability measurement"
+  ]
+}

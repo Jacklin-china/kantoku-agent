@@ -1,0 +1,949 @@
+{
+  "contract": "kantoku-structured-stress-v1",
+  "recorded_at_utc": "2026-11-17T12:54:38.536150+00:00",
+  "environment": {
+    "python": "3.11.13",
+    "platform": "Linux-6.6.95.bck.4-rc5-amd64-x86_64-with-glibc2.35",
+    "model": "deterministic outputs injected at the existing chat boundary"
+  },
+  "implementation_sha256": {
+    "scripts/structured_stress_benchmark.py": "bbd38093b6c8cb3deafc77972a6e9ee261ec463435ed64298e0f7c87ce3738ee",
+    "src/kantoku/tools/storyboard.py": "de3797013699dbc141936c20a2f84d2338c0de7b50402281bd61fc9a4b360ead",
+    "src/kantoku/schemas/storyboard.py": "d649d8ad1c48529ae17155c1472d62b9e5a398b934da65df5e1dca8b35b836cb"
+  },
+  "summary": {
+    "passed": 120,
+    "total": 120,
+    "valid_persisted": 20,
+    "valid_total": 20,
+    "invalid_rejected_before_database_creation": 100,
+    "invalid_total": 100
+  },
+  "cases": [
+    {
+      "id": "valid-00",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-01",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-02",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-03",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-04",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-05",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-06",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-07",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-08",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-09",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-10",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-11",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-12",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-13",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-14",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-15",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-16",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-17",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-18",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "valid-19",
+      "expected": "persisted",
+      "passed": true,
+      "error": null
+    },
+    {
+      "id": "missing_episode-00",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "missing_episode-01",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "missing_episode-02",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "missing_episode-03",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "missing_episode-04",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "missing_episode-05",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "missing_episode-06",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "missing_episode-07",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "missing_episode-08",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "missing_episode-09",
+      "mutation": "missing_episode",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "nineteen_shots-00",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "nineteen_shots-01",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "nineteen_shots-02",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "nineteen_shots-03",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "nineteen_shots-04",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "nineteen_shots-05",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "nineteen_shots-06",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "nineteen_shots-07",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "nineteen_shots-08",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "nineteen_shots-09",
+      "mutation": "nineteen_shots",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜数量不符合要求"
+    },
+    {
+      "id": "duplicate_shot_no-00",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "duplicate_shot_no-01",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "duplicate_shot_no-02",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "duplicate_shot_no-03",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "duplicate_shot_no-04",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "duplicate_shot_no-05",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "duplicate_shot_no-06",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "duplicate_shot_no-07",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "duplicate_shot_no-08",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "duplicate_shot_no-09",
+      "mutation": "duplicate_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-00",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-01",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-02",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-03",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-04",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-05",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-06",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-07",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-08",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "blank_description-09",
+      "mutation": "blank_description",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-00",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-01",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-02",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-03",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-04",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-05",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-06",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-07",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-08",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "zero_duration-09",
+      "mutation": "zero_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-00",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-01",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-02",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-03",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-04",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-05",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-06",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-07",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-08",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "float_duration-09",
+      "mutation": "float_duration",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-00",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-01",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-02",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-03",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-04",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-05",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-06",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-07",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-08",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "characters_string-09",
+      "mutation": "characters_string",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-00",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-01",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-02",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-03",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-04",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-05",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-06",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-07",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-08",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_top_level-09",
+      "mutation": "extra_top_level",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-00",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-01",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-02",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-03",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-04",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-05",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-06",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-07",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-08",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "extra_shot_field-09",
+      "mutation": "extra_shot_field",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-00",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-01",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-02",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-03",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-04",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-05",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-06",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-07",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-08",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    },
+    {
+      "id": "noncontiguous_shot_no-09",
+      "mutation": "noncontiguous_shot_no",
+      "expected": "rejected_before_database_creation",
+      "database_created": false,
+      "passed": true,
+      "error": "SchemaError: 分镜 JSON 校验失败"
+    }
+  ],
+  "limitations": [
+    "Synthetic mutations test schema and persistence fail-closed behavior, not model violation frequency",
+    "Every invalid case uses the real generate_storyboard tool and an isolated SQLite path",
+    "No real model generation, semantic constraint quality or image quality is inferred"
+  ]
+}
