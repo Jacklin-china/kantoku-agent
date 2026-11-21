@@ -1,0 +1,2042 @@
+{
+  "contract": "kantoku-cumulative-context-ab-v1",
+  "recorded_at_utc": "2026-11-19T12:21:28.578466+00:00",
+  "environment": {
+    "python": "3.12.14",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "model": "deterministic schema-valid test double; no external model",
+    "path": "full_understanding",
+    "turns": 200,
+    "messages_per_turn": 2
+  },
+  "summary": {
+    "functional_probe_passed": 200,
+    "functional_probe_total": 200,
+    "full_history_model_calls": 200,
+    "managed_total_model_calls": 580,
+    "managed_understanding_calls": 200,
+    "managed_summary_calls": 180,
+    "managed_final_answer_calls": 200,
+    "full_history_total_input_tokens": 2721602,
+    "managed_final_answer_input_tokens": 828971,
+    "managed_internal_input_tokens": 1646179,
+    "managed_summary_input_tokens": 213697,
+    "managed_understanding_input_tokens": 1432482,
+    "managed_total_input_tokens": 2475150,
+    "total_input_reduction_percent": 9.06,
+    "final_answer_input_reduction_percent": 69.54
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "history_messages_before_request": 0,
+      "full_history_input_tokens": 66,
+      "managed_final_answer_input_tokens": 302,
+      "managed_internal_input_tokens_so_far": 2342,
+      "managed_internal_calls_so_far": 1,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 2,
+      "history_messages_before_request": 2,
+      "full_history_input_tokens": 200,
+      "managed_final_answer_input_tokens": 529,
+      "managed_internal_input_tokens_so_far": 4965,
+      "managed_internal_calls_so_far": 2,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 3,
+      "history_messages_before_request": 4,
+      "full_history_input_tokens": 335,
+      "managed_final_answer_input_tokens": 812,
+      "managed_internal_input_tokens_so_far": 7925,
+      "managed_internal_calls_so_far": 3,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 4,
+      "history_messages_before_request": 6,
+      "full_history_input_tokens": 470,
+      "managed_final_answer_input_tokens": 1016,
+      "managed_internal_input_tokens_so_far": 11143,
+      "managed_internal_calls_so_far": 4,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 5,
+      "history_messages_before_request": 8,
+      "full_history_input_tokens": 605,
+      "managed_final_answer_input_tokens": 1220,
+      "managed_internal_input_tokens_so_far": 14619,
+      "managed_internal_calls_so_far": 5,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 6,
+      "history_messages_before_request": 10,
+      "full_history_input_tokens": 739,
+      "managed_final_answer_input_tokens": 1424,
+      "managed_internal_input_tokens_so_far": 18353,
+      "managed_internal_calls_so_far": 6,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 7,
+      "history_messages_before_request": 12,
+      "full_history_input_tokens": 874,
+      "managed_final_answer_input_tokens": 1627,
+      "managed_internal_input_tokens_so_far": 22345,
+      "managed_internal_calls_so_far": 7,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 8,
+      "history_messages_before_request": 14,
+      "full_history_input_tokens": 1009,
+      "managed_final_answer_input_tokens": 1831,
+      "managed_internal_input_tokens_so_far": 26595,
+      "managed_internal_calls_so_far": 8,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 9,
+      "history_messages_before_request": 16,
+      "full_history_input_tokens": 1143,
+      "managed_final_answer_input_tokens": 2035,
+      "managed_internal_input_tokens_so_far": 31103,
+      "managed_internal_calls_so_far": 9,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 10,
+      "history_messages_before_request": 18,
+      "full_history_input_tokens": 1278,
+      "managed_final_answer_input_tokens": 2239,
+      "managed_internal_input_tokens_so_far": 35870,
+      "managed_internal_calls_so_far": 10,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 11,
+      "history_messages_before_request": 20,
+      "full_history_input_tokens": 1414,
+      "managed_final_answer_input_tokens": 2444,
+      "managed_internal_input_tokens_so_far": 40896,
+      "managed_internal_calls_so_far": 11,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 12,
+      "history_messages_before_request": 22,
+      "full_history_input_tokens": 1550,
+      "managed_final_answer_input_tokens": 2649,
+      "managed_internal_input_tokens_so_far": 46181,
+      "managed_internal_calls_so_far": 12,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 13,
+      "history_messages_before_request": 24,
+      "full_history_input_tokens": 1686,
+      "managed_final_answer_input_tokens": 2854,
+      "managed_internal_input_tokens_so_far": 51725,
+      "managed_internal_calls_so_far": 13,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 14,
+      "history_messages_before_request": 26,
+      "full_history_input_tokens": 1822,
+      "managed_final_answer_input_tokens": 3059,
+      "managed_internal_input_tokens_so_far": 57528,
+      "managed_internal_calls_so_far": 14,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 15,
+      "history_messages_before_request": 28,
+      "full_history_input_tokens": 1958,
+      "managed_final_answer_input_tokens": 3264,
+      "managed_internal_input_tokens_so_far": 63590,
+      "managed_internal_calls_so_far": 15,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 16,
+      "history_messages_before_request": 30,
+      "full_history_input_tokens": 2094,
+      "managed_final_answer_input_tokens": 3469,
+      "managed_internal_input_tokens_so_far": 69911,
+      "managed_internal_calls_so_far": 16,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 17,
+      "history_messages_before_request": 32,
+      "full_history_input_tokens": 2230,
+      "managed_final_answer_input_tokens": 3674,
+      "managed_internal_input_tokens_so_far": 76492,
+      "managed_internal_calls_so_far": 17,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 18,
+      "history_messages_before_request": 34,
+      "full_history_input_tokens": 2366,
+      "managed_final_answer_input_tokens": 3879,
+      "managed_internal_input_tokens_so_far": 83332,
+      "managed_internal_calls_so_far": 18,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 19,
+      "history_messages_before_request": 36,
+      "full_history_input_tokens": 2501,
+      "managed_final_answer_input_tokens": 4084,
+      "managed_internal_input_tokens_so_far": 90431,
+      "managed_internal_calls_so_far": 19,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 20,
+      "history_messages_before_request": 38,
+      "full_history_input_tokens": 2637,
+      "managed_final_answer_input_tokens": 4289,
+      "managed_internal_input_tokens_so_far": 97789,
+      "managed_internal_calls_so_far": 20,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 21,
+      "history_messages_before_request": 40,
+      "full_history_input_tokens": 2773,
+      "managed_final_answer_input_tokens": 4324,
+      "managed_internal_input_tokens_so_far": 106333,
+      "managed_internal_calls_so_far": 22,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 22,
+      "history_messages_before_request": 42,
+      "full_history_input_tokens": 2909,
+      "managed_final_answer_input_tokens": 4325,
+      "managed_internal_input_tokens_so_far": 114914,
+      "managed_internal_calls_so_far": 24,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 23,
+      "history_messages_before_request": 44,
+      "full_history_input_tokens": 3045,
+      "managed_final_answer_input_tokens": 4327,
+      "managed_internal_input_tokens_so_far": 123496,
+      "managed_internal_calls_so_far": 26,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 24,
+      "history_messages_before_request": 46,
+      "full_history_input_tokens": 3181,
+      "managed_final_answer_input_tokens": 4328,
+      "managed_internal_input_tokens_so_far": 132079,
+      "managed_internal_calls_so_far": 28,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 25,
+      "history_messages_before_request": 48,
+      "full_history_input_tokens": 3317,
+      "managed_final_answer_input_tokens": 4329,
+      "managed_internal_input_tokens_so_far": 140663,
+      "managed_internal_calls_so_far": 30,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 26,
+      "history_messages_before_request": 50,
+      "full_history_input_tokens": 3453,
+      "managed_final_answer_input_tokens": 4330,
+      "managed_internal_input_tokens_so_far": 149248,
+      "managed_internal_calls_so_far": 32,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 27,
+      "history_messages_before_request": 52,
+      "full_history_input_tokens": 3589,
+      "managed_final_answer_input_tokens": 4331,
+      "managed_internal_input_tokens_so_far": 157835,
+      "managed_internal_calls_so_far": 34,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 28,
+      "history_messages_before_request": 54,
+      "full_history_input_tokens": 3725,
+      "managed_final_answer_input_tokens": 4333,
+      "managed_internal_input_tokens_so_far": 166423,
+      "managed_internal_calls_so_far": 36,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 29,
+      "history_messages_before_request": 56,
+      "full_history_input_tokens": 3860,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 175012,
+      "managed_internal_calls_so_far": 38,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 30,
+      "history_messages_before_request": 58,
+      "full_history_input_tokens": 3996,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 183602,
+      "managed_internal_calls_so_far": 40,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 31,
+      "history_messages_before_request": 60,
+      "full_history_input_tokens": 4132,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 192192,
+      "managed_internal_calls_so_far": 42,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 32,
+      "history_messages_before_request": 62,
+      "full_history_input_tokens": 4268,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 200782,
+      "managed_internal_calls_so_far": 44,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 33,
+      "history_messages_before_request": 64,
+      "full_history_input_tokens": 4404,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 209372,
+      "managed_internal_calls_so_far": 46,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 34,
+      "history_messages_before_request": 66,
+      "full_history_input_tokens": 4540,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 217962,
+      "managed_internal_calls_so_far": 48,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 35,
+      "history_messages_before_request": 68,
+      "full_history_input_tokens": 4676,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 226552,
+      "managed_internal_calls_so_far": 50,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 36,
+      "history_messages_before_request": 70,
+      "full_history_input_tokens": 4812,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 235142,
+      "managed_internal_calls_so_far": 52,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 37,
+      "history_messages_before_request": 72,
+      "full_history_input_tokens": 4948,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 243732,
+      "managed_internal_calls_so_far": 54,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 38,
+      "history_messages_before_request": 74,
+      "full_history_input_tokens": 5084,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 252322,
+      "managed_internal_calls_so_far": 56,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 39,
+      "history_messages_before_request": 76,
+      "full_history_input_tokens": 5219,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 260912,
+      "managed_internal_calls_so_far": 58,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 40,
+      "history_messages_before_request": 78,
+      "full_history_input_tokens": 5355,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 269502,
+      "managed_internal_calls_so_far": 60,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 41,
+      "history_messages_before_request": 80,
+      "full_history_input_tokens": 5491,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 278092,
+      "managed_internal_calls_so_far": 62,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 42,
+      "history_messages_before_request": 82,
+      "full_history_input_tokens": 5627,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 286682,
+      "managed_internal_calls_so_far": 64,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 43,
+      "history_messages_before_request": 84,
+      "full_history_input_tokens": 5763,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 295272,
+      "managed_internal_calls_so_far": 66,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 44,
+      "history_messages_before_request": 86,
+      "full_history_input_tokens": 5899,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 303862,
+      "managed_internal_calls_so_far": 68,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 45,
+      "history_messages_before_request": 88,
+      "full_history_input_tokens": 6035,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 312452,
+      "managed_internal_calls_so_far": 70,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 46,
+      "history_messages_before_request": 90,
+      "full_history_input_tokens": 6171,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 321042,
+      "managed_internal_calls_so_far": 72,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 47,
+      "history_messages_before_request": 92,
+      "full_history_input_tokens": 6307,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 329632,
+      "managed_internal_calls_so_far": 74,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 48,
+      "history_messages_before_request": 94,
+      "full_history_input_tokens": 6443,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 338222,
+      "managed_internal_calls_so_far": 76,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 49,
+      "history_messages_before_request": 96,
+      "full_history_input_tokens": 6578,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 346812,
+      "managed_internal_calls_so_far": 78,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 50,
+      "history_messages_before_request": 98,
+      "full_history_input_tokens": 6714,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 355402,
+      "managed_internal_calls_so_far": 80,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 51,
+      "history_messages_before_request": 100,
+      "full_history_input_tokens": 6850,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 363992,
+      "managed_internal_calls_so_far": 82,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 52,
+      "history_messages_before_request": 102,
+      "full_history_input_tokens": 6986,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 372582,
+      "managed_internal_calls_so_far": 84,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 53,
+      "history_messages_before_request": 104,
+      "full_history_input_tokens": 7122,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 381172,
+      "managed_internal_calls_so_far": 86,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 54,
+      "history_messages_before_request": 106,
+      "full_history_input_tokens": 7258,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 389762,
+      "managed_internal_calls_so_far": 88,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 55,
+      "history_messages_before_request": 108,
+      "full_history_input_tokens": 7394,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 398352,
+      "managed_internal_calls_so_far": 90,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 56,
+      "history_messages_before_request": 110,
+      "full_history_input_tokens": 7530,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 406942,
+      "managed_internal_calls_so_far": 92,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 57,
+      "history_messages_before_request": 112,
+      "full_history_input_tokens": 7666,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 415532,
+      "managed_internal_calls_so_far": 94,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 58,
+      "history_messages_before_request": 114,
+      "full_history_input_tokens": 7802,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 424122,
+      "managed_internal_calls_so_far": 96,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 59,
+      "history_messages_before_request": 116,
+      "full_history_input_tokens": 7937,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 432712,
+      "managed_internal_calls_so_far": 98,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 60,
+      "history_messages_before_request": 118,
+      "full_history_input_tokens": 8073,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 441302,
+      "managed_internal_calls_so_far": 100,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 61,
+      "history_messages_before_request": 120,
+      "full_history_input_tokens": 8209,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 449892,
+      "managed_internal_calls_so_far": 102,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 62,
+      "history_messages_before_request": 122,
+      "full_history_input_tokens": 8345,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 458482,
+      "managed_internal_calls_so_far": 104,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 63,
+      "history_messages_before_request": 124,
+      "full_history_input_tokens": 8481,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 467072,
+      "managed_internal_calls_so_far": 106,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 64,
+      "history_messages_before_request": 126,
+      "full_history_input_tokens": 8617,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 475662,
+      "managed_internal_calls_so_far": 108,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 65,
+      "history_messages_before_request": 128,
+      "full_history_input_tokens": 8753,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 484252,
+      "managed_internal_calls_so_far": 110,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 66,
+      "history_messages_before_request": 130,
+      "full_history_input_tokens": 8889,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 492842,
+      "managed_internal_calls_so_far": 112,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 67,
+      "history_messages_before_request": 132,
+      "full_history_input_tokens": 9025,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 501432,
+      "managed_internal_calls_so_far": 114,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 68,
+      "history_messages_before_request": 134,
+      "full_history_input_tokens": 9161,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 510022,
+      "managed_internal_calls_so_far": 116,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 69,
+      "history_messages_before_request": 136,
+      "full_history_input_tokens": 9296,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 518612,
+      "managed_internal_calls_so_far": 118,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 70,
+      "history_messages_before_request": 138,
+      "full_history_input_tokens": 9432,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 527202,
+      "managed_internal_calls_so_far": 120,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 71,
+      "history_messages_before_request": 140,
+      "full_history_input_tokens": 9568,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 535792,
+      "managed_internal_calls_so_far": 122,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 72,
+      "history_messages_before_request": 142,
+      "full_history_input_tokens": 9704,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 544382,
+      "managed_internal_calls_so_far": 124,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 73,
+      "history_messages_before_request": 144,
+      "full_history_input_tokens": 9840,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 552972,
+      "managed_internal_calls_so_far": 126,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 74,
+      "history_messages_before_request": 146,
+      "full_history_input_tokens": 9976,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 561562,
+      "managed_internal_calls_so_far": 128,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 75,
+      "history_messages_before_request": 148,
+      "full_history_input_tokens": 10112,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 570152,
+      "managed_internal_calls_so_far": 130,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 76,
+      "history_messages_before_request": 150,
+      "full_history_input_tokens": 10248,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 578742,
+      "managed_internal_calls_so_far": 132,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 77,
+      "history_messages_before_request": 152,
+      "full_history_input_tokens": 10384,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 587332,
+      "managed_internal_calls_so_far": 134,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 78,
+      "history_messages_before_request": 154,
+      "full_history_input_tokens": 10520,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 595922,
+      "managed_internal_calls_so_far": 136,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 79,
+      "history_messages_before_request": 156,
+      "full_history_input_tokens": 10655,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 604512,
+      "managed_internal_calls_so_far": 138,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 80,
+      "history_messages_before_request": 158,
+      "full_history_input_tokens": 10791,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 613102,
+      "managed_internal_calls_so_far": 140,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 81,
+      "history_messages_before_request": 160,
+      "full_history_input_tokens": 10927,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 621692,
+      "managed_internal_calls_so_far": 142,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 82,
+      "history_messages_before_request": 162,
+      "full_history_input_tokens": 11063,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 630282,
+      "managed_internal_calls_so_far": 144,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 83,
+      "history_messages_before_request": 164,
+      "full_history_input_tokens": 11199,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 638872,
+      "managed_internal_calls_so_far": 146,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 84,
+      "history_messages_before_request": 166,
+      "full_history_input_tokens": 11335,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 647462,
+      "managed_internal_calls_so_far": 148,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 85,
+      "history_messages_before_request": 168,
+      "full_history_input_tokens": 11471,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 656052,
+      "managed_internal_calls_so_far": 150,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 86,
+      "history_messages_before_request": 170,
+      "full_history_input_tokens": 11607,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 664642,
+      "managed_internal_calls_so_far": 152,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 87,
+      "history_messages_before_request": 172,
+      "full_history_input_tokens": 11743,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 673232,
+      "managed_internal_calls_so_far": 154,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 88,
+      "history_messages_before_request": 174,
+      "full_history_input_tokens": 11879,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 681822,
+      "managed_internal_calls_so_far": 156,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 89,
+      "history_messages_before_request": 176,
+      "full_history_input_tokens": 12014,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 690412,
+      "managed_internal_calls_so_far": 158,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 90,
+      "history_messages_before_request": 178,
+      "full_history_input_tokens": 12150,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 699002,
+      "managed_internal_calls_so_far": 160,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 91,
+      "history_messages_before_request": 180,
+      "full_history_input_tokens": 12286,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 707592,
+      "managed_internal_calls_so_far": 162,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 92,
+      "history_messages_before_request": 182,
+      "full_history_input_tokens": 12422,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 716182,
+      "managed_internal_calls_so_far": 164,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 93,
+      "history_messages_before_request": 184,
+      "full_history_input_tokens": 12558,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 724772,
+      "managed_internal_calls_so_far": 166,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 94,
+      "history_messages_before_request": 186,
+      "full_history_input_tokens": 12694,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 733362,
+      "managed_internal_calls_so_far": 168,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 95,
+      "history_messages_before_request": 188,
+      "full_history_input_tokens": 12830,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 741952,
+      "managed_internal_calls_so_far": 170,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 96,
+      "history_messages_before_request": 190,
+      "full_history_input_tokens": 12966,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 750542,
+      "managed_internal_calls_so_far": 172,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 97,
+      "history_messages_before_request": 192,
+      "full_history_input_tokens": 13102,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 759132,
+      "managed_internal_calls_so_far": 174,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 98,
+      "history_messages_before_request": 194,
+      "full_history_input_tokens": 13238,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 767722,
+      "managed_internal_calls_so_far": 176,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 99,
+      "history_messages_before_request": 196,
+      "full_history_input_tokens": 13373,
+      "managed_final_answer_input_tokens": 4334,
+      "managed_internal_input_tokens_so_far": 776312,
+      "managed_internal_calls_so_far": 178,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 100,
+      "history_messages_before_request": 198,
+      "full_history_input_tokens": 13510,
+      "managed_final_answer_input_tokens": 4335,
+      "managed_internal_input_tokens_so_far": 784903,
+      "managed_internal_calls_so_far": 180,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 101,
+      "history_messages_before_request": 200,
+      "full_history_input_tokens": 13647,
+      "managed_final_answer_input_tokens": 4336,
+      "managed_internal_input_tokens_so_far": 793495,
+      "managed_internal_calls_so_far": 182,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 102,
+      "history_messages_before_request": 202,
+      "full_history_input_tokens": 13784,
+      "managed_final_answer_input_tokens": 4338,
+      "managed_internal_input_tokens_so_far": 802089,
+      "managed_internal_calls_so_far": 184,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 103,
+      "history_messages_before_request": 204,
+      "full_history_input_tokens": 13921,
+      "managed_final_answer_input_tokens": 4339,
+      "managed_internal_input_tokens_so_far": 810684,
+      "managed_internal_calls_so_far": 186,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 104,
+      "history_messages_before_request": 206,
+      "full_history_input_tokens": 14058,
+      "managed_final_answer_input_tokens": 4340,
+      "managed_internal_input_tokens_so_far": 819280,
+      "managed_internal_calls_so_far": 188,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 105,
+      "history_messages_before_request": 208,
+      "full_history_input_tokens": 14195,
+      "managed_final_answer_input_tokens": 4341,
+      "managed_internal_input_tokens_so_far": 827877,
+      "managed_internal_calls_so_far": 190,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 106,
+      "history_messages_before_request": 210,
+      "full_history_input_tokens": 14332,
+      "managed_final_answer_input_tokens": 4342,
+      "managed_internal_input_tokens_so_far": 836475,
+      "managed_internal_calls_so_far": 192,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 107,
+      "history_messages_before_request": 212,
+      "full_history_input_tokens": 14469,
+      "managed_final_answer_input_tokens": 4344,
+      "managed_internal_input_tokens_so_far": 845075,
+      "managed_internal_calls_so_far": 194,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 108,
+      "history_messages_before_request": 214,
+      "full_history_input_tokens": 14606,
+      "managed_final_answer_input_tokens": 4345,
+      "managed_internal_input_tokens_so_far": 853676,
+      "managed_internal_calls_so_far": 196,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 109,
+      "history_messages_before_request": 216,
+      "full_history_input_tokens": 14744,
+      "managed_final_answer_input_tokens": 4346,
+      "managed_internal_input_tokens_so_far": 862278,
+      "managed_internal_calls_so_far": 198,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 110,
+      "history_messages_before_request": 218,
+      "full_history_input_tokens": 14881,
+      "managed_final_answer_input_tokens": 4347,
+      "managed_internal_input_tokens_so_far": 870881,
+      "managed_internal_calls_so_far": 200,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 111,
+      "history_messages_before_request": 220,
+      "full_history_input_tokens": 15018,
+      "managed_final_answer_input_tokens": 4348,
+      "managed_internal_input_tokens_so_far": 879485,
+      "managed_internal_calls_so_far": 202,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 112,
+      "history_messages_before_request": 222,
+      "full_history_input_tokens": 15155,
+      "managed_final_answer_input_tokens": 4350,
+      "managed_internal_input_tokens_so_far": 888091,
+      "managed_internal_calls_so_far": 204,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 113,
+      "history_messages_before_request": 224,
+      "full_history_input_tokens": 15292,
+      "managed_final_answer_input_tokens": 4351,
+      "managed_internal_input_tokens_so_far": 896698,
+      "managed_internal_calls_so_far": 206,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 114,
+      "history_messages_before_request": 226,
+      "full_history_input_tokens": 15429,
+      "managed_final_answer_input_tokens": 4352,
+      "managed_internal_input_tokens_so_far": 905306,
+      "managed_internal_calls_so_far": 208,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 115,
+      "history_messages_before_request": 228,
+      "full_history_input_tokens": 15566,
+      "managed_final_answer_input_tokens": 4353,
+      "managed_internal_input_tokens_so_far": 913915,
+      "managed_internal_calls_so_far": 210,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 116,
+      "history_messages_before_request": 230,
+      "full_history_input_tokens": 15703,
+      "managed_final_answer_input_tokens": 4354,
+      "managed_internal_input_tokens_so_far": 922525,
+      "managed_internal_calls_so_far": 212,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 117,
+      "history_messages_before_request": 232,
+      "full_history_input_tokens": 15840,
+      "managed_final_answer_input_tokens": 4356,
+      "managed_internal_input_tokens_so_far": 931137,
+      "managed_internal_calls_so_far": 214,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 118,
+      "history_messages_before_request": 234,
+      "full_history_input_tokens": 15977,
+      "managed_final_answer_input_tokens": 4357,
+      "managed_internal_input_tokens_so_far": 939750,
+      "managed_internal_calls_so_far": 216,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 119,
+      "history_messages_before_request": 236,
+      "full_history_input_tokens": 16115,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 948364,
+      "managed_internal_calls_so_far": 218,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 120,
+      "history_messages_before_request": 238,
+      "full_history_input_tokens": 16252,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 956979,
+      "managed_internal_calls_so_far": 220,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 121,
+      "history_messages_before_request": 240,
+      "full_history_input_tokens": 16389,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 965594,
+      "managed_internal_calls_so_far": 222,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 122,
+      "history_messages_before_request": 242,
+      "full_history_input_tokens": 16526,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 974209,
+      "managed_internal_calls_so_far": 224,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 123,
+      "history_messages_before_request": 244,
+      "full_history_input_tokens": 16663,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 982824,
+      "managed_internal_calls_so_far": 226,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 124,
+      "history_messages_before_request": 246,
+      "full_history_input_tokens": 16800,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 991439,
+      "managed_internal_calls_so_far": 228,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 125,
+      "history_messages_before_request": 248,
+      "full_history_input_tokens": 16937,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1000054,
+      "managed_internal_calls_so_far": 230,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 126,
+      "history_messages_before_request": 250,
+      "full_history_input_tokens": 17074,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1008669,
+      "managed_internal_calls_so_far": 232,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 127,
+      "history_messages_before_request": 252,
+      "full_history_input_tokens": 17211,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1017284,
+      "managed_internal_calls_so_far": 234,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 128,
+      "history_messages_before_request": 254,
+      "full_history_input_tokens": 17348,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1025899,
+      "managed_internal_calls_so_far": 236,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 129,
+      "history_messages_before_request": 256,
+      "full_history_input_tokens": 17486,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1034514,
+      "managed_internal_calls_so_far": 238,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 130,
+      "history_messages_before_request": 258,
+      "full_history_input_tokens": 17623,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1043129,
+      "managed_internal_calls_so_far": 240,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 131,
+      "history_messages_before_request": 260,
+      "full_history_input_tokens": 17760,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1051744,
+      "managed_internal_calls_so_far": 242,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 132,
+      "history_messages_before_request": 262,
+      "full_history_input_tokens": 17897,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1060359,
+      "managed_internal_calls_so_far": 244,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 133,
+      "history_messages_before_request": 264,
+      "full_history_input_tokens": 18034,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1068974,
+      "managed_internal_calls_so_far": 246,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 134,
+      "history_messages_before_request": 266,
+      "full_history_input_tokens": 18171,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1077589,
+      "managed_internal_calls_so_far": 248,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 135,
+      "history_messages_before_request": 268,
+      "full_history_input_tokens": 18308,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1086204,
+      "managed_internal_calls_so_far": 250,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 136,
+      "history_messages_before_request": 270,
+      "full_history_input_tokens": 18445,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1094819,
+      "managed_internal_calls_so_far": 252,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 137,
+      "history_messages_before_request": 272,
+      "full_history_input_tokens": 18582,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1103434,
+      "managed_internal_calls_so_far": 254,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 138,
+      "history_messages_before_request": 274,
+      "full_history_input_tokens": 18719,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1112049,
+      "managed_internal_calls_so_far": 256,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 139,
+      "history_messages_before_request": 276,
+      "full_history_input_tokens": 18857,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1120664,
+      "managed_internal_calls_so_far": 258,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 140,
+      "history_messages_before_request": 278,
+      "full_history_input_tokens": 18994,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1129279,
+      "managed_internal_calls_so_far": 260,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 141,
+      "history_messages_before_request": 280,
+      "full_history_input_tokens": 19131,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1137894,
+      "managed_internal_calls_so_far": 262,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 142,
+      "history_messages_before_request": 282,
+      "full_history_input_tokens": 19268,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1146509,
+      "managed_internal_calls_so_far": 264,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 143,
+      "history_messages_before_request": 284,
+      "full_history_input_tokens": 19405,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1155124,
+      "managed_internal_calls_so_far": 266,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 144,
+      "history_messages_before_request": 286,
+      "full_history_input_tokens": 19542,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1163739,
+      "managed_internal_calls_so_far": 268,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 145,
+      "history_messages_before_request": 288,
+      "full_history_input_tokens": 19679,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1172354,
+      "managed_internal_calls_so_far": 270,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 146,
+      "history_messages_before_request": 290,
+      "full_history_input_tokens": 19816,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1180969,
+      "managed_internal_calls_so_far": 272,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 147,
+      "history_messages_before_request": 292,
+      "full_history_input_tokens": 19953,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1189584,
+      "managed_internal_calls_so_far": 274,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 148,
+      "history_messages_before_request": 294,
+      "full_history_input_tokens": 20090,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1198199,
+      "managed_internal_calls_so_far": 276,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 149,
+      "history_messages_before_request": 296,
+      "full_history_input_tokens": 20228,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1206814,
+      "managed_internal_calls_so_far": 278,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 150,
+      "history_messages_before_request": 298,
+      "full_history_input_tokens": 20365,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1215429,
+      "managed_internal_calls_so_far": 280,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 151,
+      "history_messages_before_request": 300,
+      "full_history_input_tokens": 20502,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1224044,
+      "managed_internal_calls_so_far": 282,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 152,
+      "history_messages_before_request": 302,
+      "full_history_input_tokens": 20639,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1232659,
+      "managed_internal_calls_so_far": 284,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 153,
+      "history_messages_before_request": 304,
+      "full_history_input_tokens": 20776,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1241274,
+      "managed_internal_calls_so_far": 286,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 154,
+      "history_messages_before_request": 306,
+      "full_history_input_tokens": 20913,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1249889,
+      "managed_internal_calls_so_far": 288,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 155,
+      "history_messages_before_request": 308,
+      "full_history_input_tokens": 21050,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1258504,
+      "managed_internal_calls_so_far": 290,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 156,
+      "history_messages_before_request": 310,
+      "full_history_input_tokens": 21187,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1267119,
+      "managed_internal_calls_so_far": 292,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 157,
+      "history_messages_before_request": 312,
+      "full_history_input_tokens": 21324,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1275734,
+      "managed_internal_calls_so_far": 294,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 158,
+      "history_messages_before_request": 314,
+      "full_history_input_tokens": 21461,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1284349,
+      "managed_internal_calls_so_far": 296,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 159,
+      "history_messages_before_request": 316,
+      "full_history_input_tokens": 21599,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1292964,
+      "managed_internal_calls_so_far": 298,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 160,
+      "history_messages_before_request": 318,
+      "full_history_input_tokens": 21736,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1301579,
+      "managed_internal_calls_so_far": 300,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 161,
+      "history_messages_before_request": 320,
+      "full_history_input_tokens": 21873,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1310194,
+      "managed_internal_calls_so_far": 302,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 162,
+      "history_messages_before_request": 322,
+      "full_history_input_tokens": 22010,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1318809,
+      "managed_internal_calls_so_far": 304,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 163,
+      "history_messages_before_request": 324,
+      "full_history_input_tokens": 22147,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1327424,
+      "managed_internal_calls_so_far": 306,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 164,
+      "history_messages_before_request": 326,
+      "full_history_input_tokens": 22284,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1336039,
+      "managed_internal_calls_so_far": 308,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 165,
+      "history_messages_before_request": 328,
+      "full_history_input_tokens": 22421,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1344654,
+      "managed_internal_calls_so_far": 310,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 166,
+      "history_messages_before_request": 330,
+      "full_history_input_tokens": 22558,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1353269,
+      "managed_internal_calls_so_far": 312,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 167,
+      "history_messages_before_request": 332,
+      "full_history_input_tokens": 22695,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1361884,
+      "managed_internal_calls_so_far": 314,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 168,
+      "history_messages_before_request": 334,
+      "full_history_input_tokens": 22832,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1370499,
+      "managed_internal_calls_so_far": 316,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 169,
+      "history_messages_before_request": 336,
+      "full_history_input_tokens": 22970,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1379114,
+      "managed_internal_calls_so_far": 318,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 170,
+      "history_messages_before_request": 338,
+      "full_history_input_tokens": 23107,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1387729,
+      "managed_internal_calls_so_far": 320,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 171,
+      "history_messages_before_request": 340,
+      "full_history_input_tokens": 23244,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1396344,
+      "managed_internal_calls_so_far": 322,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 172,
+      "history_messages_before_request": 342,
+      "full_history_input_tokens": 23381,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1404959,
+      "managed_internal_calls_so_far": 324,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 173,
+      "history_messages_before_request": 344,
+      "full_history_input_tokens": 23518,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1413574,
+      "managed_internal_calls_so_far": 326,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 174,
+      "history_messages_before_request": 346,
+      "full_history_input_tokens": 23655,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1422189,
+      "managed_internal_calls_so_far": 328,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 175,
+      "history_messages_before_request": 348,
+      "full_history_input_tokens": 23792,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1430804,
+      "managed_internal_calls_so_far": 330,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 176,
+      "history_messages_before_request": 350,
+      "full_history_input_tokens": 23929,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1439419,
+      "managed_internal_calls_so_far": 332,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 177,
+      "history_messages_before_request": 352,
+      "full_history_input_tokens": 24066,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1448034,
+      "managed_internal_calls_so_far": 334,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 178,
+      "history_messages_before_request": 354,
+      "full_history_input_tokens": 24203,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1456649,
+      "managed_internal_calls_so_far": 336,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 179,
+      "history_messages_before_request": 356,
+      "full_history_input_tokens": 24341,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1465264,
+      "managed_internal_calls_so_far": 338,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 180,
+      "history_messages_before_request": 358,
+      "full_history_input_tokens": 24478,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1473879,
+      "managed_internal_calls_so_far": 340,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 181,
+      "history_messages_before_request": 360,
+      "full_history_input_tokens": 24615,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1482494,
+      "managed_internal_calls_so_far": 342,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 182,
+      "history_messages_before_request": 362,
+      "full_history_input_tokens": 24752,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1491109,
+      "managed_internal_calls_so_far": 344,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 183,
+      "history_messages_before_request": 364,
+      "full_history_input_tokens": 24889,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1499724,
+      "managed_internal_calls_so_far": 346,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 184,
+      "history_messages_before_request": 366,
+      "full_history_input_tokens": 25026,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1508339,
+      "managed_internal_calls_so_far": 348,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 185,
+      "history_messages_before_request": 368,
+      "full_history_input_tokens": 25163,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1516954,
+      "managed_internal_calls_so_far": 350,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 186,
+      "history_messages_before_request": 370,
+      "full_history_input_tokens": 25300,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1525569,
+      "managed_internal_calls_so_far": 352,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 187,
+      "history_messages_before_request": 372,
+      "full_history_input_tokens": 25437,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1534184,
+      "managed_internal_calls_so_far": 354,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 188,
+      "history_messages_before_request": 374,
+      "full_history_input_tokens": 25574,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1542799,
+      "managed_internal_calls_so_far": 356,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 189,
+      "history_messages_before_request": 376,
+      "full_history_input_tokens": 25712,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1551414,
+      "managed_internal_calls_so_far": 358,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 190,
+      "history_messages_before_request": 378,
+      "full_history_input_tokens": 25849,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1560029,
+      "managed_internal_calls_so_far": 360,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 191,
+      "history_messages_before_request": 380,
+      "full_history_input_tokens": 25986,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1568644,
+      "managed_internal_calls_so_far": 362,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 192,
+      "history_messages_before_request": 382,
+      "full_history_input_tokens": 26123,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1577259,
+      "managed_internal_calls_so_far": 364,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 193,
+      "history_messages_before_request": 384,
+      "full_history_input_tokens": 26260,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1585874,
+      "managed_internal_calls_so_far": 366,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 194,
+      "history_messages_before_request": 386,
+      "full_history_input_tokens": 26397,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1594489,
+      "managed_internal_calls_so_far": 368,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 195,
+      "history_messages_before_request": 388,
+      "full_history_input_tokens": 26534,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1603104,
+      "managed_internal_calls_so_far": 370,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 196,
+      "history_messages_before_request": 390,
+      "full_history_input_tokens": 26671,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1611719,
+      "managed_internal_calls_so_far": 372,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 197,
+      "history_messages_before_request": 392,
+      "full_history_input_tokens": 26808,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1620334,
+      "managed_internal_calls_so_far": 374,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 198,
+      "history_messages_before_request": 394,
+      "full_history_input_tokens": 26945,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1628949,
+      "managed_internal_calls_so_far": 376,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 199,
+      "history_messages_before_request": 396,
+      "full_history_input_tokens": 27083,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1637564,
+      "managed_internal_calls_so_far": 378,
+      "functional_probe_passed": true,
+      "degraded": []
+    },
+    {
+      "turn": 200,
+      "history_messages_before_request": 398,
+      "full_history_input_tokens": 27220,
+      "managed_final_answer_input_tokens": 4358,
+      "managed_internal_input_tokens_so_far": 1646179,
+      "managed_internal_calls_so_far": 380,
+      "functional_probe_passed": true,
+      "degraded": []
+    }
+  ],
+  "limitations": [
+    "Eighty-turn synthetic conversation measures the real context-selection and persistence algorithm",
+    "Baseline sends the accumulated history to one answer call per turn; managed mode includes understanding, summary and final-answer input",
+    "Token values use the project's character-based estimator, not provider billing usage",
+    "Schema-valid test doubles do not measure semantic recall or answer quality; call counts are reported separately from tokens",
+    "Direct mode is measured separately for explicit requests and is not a substitute for semantic understanding of dependent requests"
+  ],
+  "implementation_sha256": {
+    "src/kantoku/core/conversation_context.py": "35ff951462e213b8508e9b294f2b7b88d8b7763e45793ff60efc259b4e28b799",
+    "scripts/context_cumulative_benchmark.py": "1550e158b71c2b57497ac4c568088453abbd0c19cc97312b950b51581b3d9816"
+  }
+}
