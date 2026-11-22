@@ -11,13 +11,13 @@ from pathlib import Path
 
 from kantoku.agent.context import build_context, estimate_tokens
 from kantoku.agent.loop import run as run_agent
+from kantoku.capabilities.storyboard import load_storyboard
 from kantoku.config import KantokuError, ToolError
 from kantoku.config.logging_setup import setup_logging
 from kantoku.core.budget import list_ledger
 from kantoku.core.tracing import init_trace_table, recent_traces
 from kantoku.memory import list_personas, parse_persona, save_persona
 from kantoku.schemas.storyboard import parse_storyboard
-from kantoku.tools.storyboard import load_storyboard
 
 
 def _print_traces(limit: int) -> None:

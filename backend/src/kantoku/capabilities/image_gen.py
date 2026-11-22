@@ -6,10 +6,8 @@ import base64
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Protocol
 
 from loguru import logger
 from pydantic import ValidationError
@@ -30,59 +28,16 @@ from kantoku.core.budget import (
     save_generation_result,
     settle,
 )
+from kantoku.providers.contracts import (
+    ImageProvider,
+    ProviderAccessResult,
+    RequestIdentityValue,
+)
 from kantoku.schemas.media import ImageGenerationResult
 
 _ONE_PIXEL_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
-RequestIdentityValue = str | int | bool
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderAccessResult:
-    """不创建任务的供应商接入诊断结果。"""
-
-    authenticated: bool | None
-    service_ready: bool
-    code: str | int | None
-    message: str | None
-    request_id: str | None
-
-
-class ImageProvider(Protocol):
-    """真实与本地假供应商共同遵守的最小异步接口。"""
-
-    model_id: str
-
-    def generation_identity(self) -> Mapping[str, RequestIdentityValue]:
-        """返回会改变生成结果或账单归属的非敏感配置。"""
-
-    def check_access(self) -> ProviderAccessResult:
-        """验证供应商鉴权；不得创建任务或产生生成费用。"""
-
-    def validate_request(
-        self,
-        *,
-        prompt: str,
-        shot_no: int,
-        reference_urls: Sequence[str],
-        seed: int | None,
-    ) -> None:
-        """在预算预占和网络请求之前拒绝确定无效的参数。"""
-
-    def submit(
-        self,
-        *,
-        prompt: str,
-        shot_no: int,
-        client_request_id: str,
-        reference_urls: Sequence[str],
-        seed: int | None,
-    ) -> str:
-        """提交一次付费任务并返回供应商任务 ID。"""
-
-    def query(self, provider_job_id: str) -> ImageGenerationResult:
-        """查询已提交任务；查询可以重试，但不得重新提交。"""
 
 
 class LocalFakeImageProvider:

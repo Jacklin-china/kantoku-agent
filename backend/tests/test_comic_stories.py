@@ -16,13 +16,13 @@ from zipfile import ZipFile
 import pytest
 from pydantic import ValidationError
 
+from kantoku.capabilities.image_gen import LocalFakeImageProvider
 from kantoku.config import LLMError, ToolError, get_settings
 from kantoku.config.runtime_paths import atomic_write_bytes
 from kantoku.core import llm
 from kantoku.core.runtime.models import ArtifactLifecycle
 from kantoku.domains.comic.models import ComicStoryDraft
 from kantoku.shells import web_studio
-from kantoku.tools.image_gen import LocalFakeImageProvider
 
 
 def _png(color=0):

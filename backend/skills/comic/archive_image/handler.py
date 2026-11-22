@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from kantoku.tools.archive import archive_reviewed_image
+from kantoku.capabilities.archive import archive_reviewed_image
 
 
 def execute(inputs: Mapping[str, Any], _context: Mapping[str, Any]) -> Mapping[str, Any]:

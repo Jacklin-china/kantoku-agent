@@ -16,13 +16,13 @@ import pytest
 from PIL import Image, ImageOps
 from pydantic import ValidationError
 
+from kantoku.capabilities.image_gen import LocalFakeImageProvider
 from kantoku.config import LLMError, ToolError, get_settings
 from kantoku.core import llm
 from kantoku.core.runtime.models import ArtifactLifecycle, ArtifactType
 from kantoku.domains.comic.director_provenance import value_hash
 from kantoku.domains.comic.models import ImageEditScope, ImageVersionRef
 from kantoku.shells import web_studio
-from kantoku.tools.image_gen import LocalFakeImageProvider
 
 
 def png(color=0):

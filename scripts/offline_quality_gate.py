@@ -55,7 +55,7 @@ def run() -> dict:
                 ROOT / "backend" / "evals/image-workbench.json",
                 ROOT / "backend" / "src" / "kantoku/evaluation/__init__.py",
                 ROOT / "backend" / "src" / "kantoku/evaluation/structured.py",
-                ROOT / "backend" / "src" / "kantoku/tools/storyboard.py",
+                ROOT / "backend" / "src" / "kantoku/capabilities/storyboard.py",
             ]
         ),
         "suites": {

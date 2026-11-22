@@ -9,10 +9,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from kantoku.capabilities import storyboard as storyboard_tool
 from kantoku.config import SchemaError, ToolError
 from kantoku.core.database import database_manager
 from kantoku.schemas.storyboard import Shot, Storyboard
-from kantoku.tools import storyboard as storyboard_tool
 
 
 def _board(*, episode: str = "雨夜重逢", desc_prefix: str = "镜头") -> Storyboard:

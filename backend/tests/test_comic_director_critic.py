@@ -569,7 +569,7 @@ def test_compiler_rejects_unreviewed_or_changed_v2_before_model_call(tmp_path: P
 
 
 def test_no_image_provider_is_called_during_review(monkeypatch: pytest.MonkeyPatch) -> None:
-    from kantoku.tools import image_gen
+    from kantoku.capabilities import image_gen
 
     monkeypatch.setattr(image_gen, "gen_image", lambda *args, **kwargs: pytest.fail(
         "导演审核不得调用图片 Provider",

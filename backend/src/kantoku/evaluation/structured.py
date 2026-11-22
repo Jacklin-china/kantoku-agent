@@ -5,9 +5,9 @@ from __future__ import annotations
 import copy
 import json
 
+from kantoku.capabilities.storyboard import parse_storyboard_response
 from kantoku.config import SchemaError
 from kantoku.schemas.storyboard import Shot, Storyboard
-from kantoku.tools.storyboard import parse_storyboard_response
 
 
 def structured_output_contract() -> list[dict]:

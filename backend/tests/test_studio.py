@@ -6,10 +6,10 @@ from types import SimpleNamespace
 import pytest
 from test_image_gen import _settings
 
+from kantoku.capabilities import studio
+from kantoku.capabilities.image_gen import LocalFakeImageProvider
 from kantoku.config import BudgetError, ToolError
 from kantoku.core import budget
-from kantoku.tools import studio
-from kantoku.tools.image_gen import LocalFakeImageProvider
 
 
 @pytest.fixture

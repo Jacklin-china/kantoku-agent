@@ -12,7 +12,7 @@ import pytest
 from kantoku.config import ConfigError, ToolError
 from kantoku.config.settings import ImageSettings
 from kantoku.core.tracing import Trace
-from kantoku.tools.jimeng import VolcengineJimengProvider
+from kantoku.providers.jimeng import VolcengineJimengProvider
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nmock-image"
 

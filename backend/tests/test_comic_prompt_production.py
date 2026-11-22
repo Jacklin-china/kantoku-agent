@@ -1351,7 +1351,7 @@ def test_external_upload_registers_core_artifact_without_provider_budget_or_work
     for target in (
         "kantoku.core.budget.reserve",
         "kantoku.core.budget.settle",
-        "kantoku.tools.image_gen.gen_image",
+        "kantoku.capabilities.image_gen.gen_image",
         "kantoku.domains.comic.services.create_task",
     ):
         monkeypatch.setattr(target, forbidden)

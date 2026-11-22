@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from kantoku.capabilities import archive
 from kantoku.config import ToolError
 from kantoku.schemas.media import ImageGenerationResult
 from kantoku.schemas.qc import HumanQcLabel, QcResult
-from kantoku.tools import archive
 
 
 def _label(path: Path, *, approved: bool = True) -> HumanQcLabel:

@@ -9,6 +9,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from kantoku.capabilities.storyboard import load_storyboard
 from kantoku.capabilities.vision.review import load_human_review
 from kantoku.config import ToolError, get_settings
 from kantoku.config.runtime_paths import (
@@ -18,7 +19,6 @@ from kantoku.config.runtime_paths import (
 from kantoku.config.settings import BACKEND
 from kantoku.core.budget import get_reservation, load_generation_result
 from kantoku.core.database import database_manager
-from kantoku.tools.storyboard import load_storyboard
 
 _SUPPORTED_SUFFIXES = {".jpeg", ".jpg", ".png", ".webp"}
 SCHEMA_PATH = BACKEND / "db" / "schema.sql"

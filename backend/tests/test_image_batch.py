@@ -10,13 +10,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from kantoku.capabilities import image_batch, prompt_factory
+from kantoku.capabilities.image_batch import build_recipe_batch, generate_batch, parse_image_batch
+from kantoku.capabilities.image_gen import LocalFakeImageProvider, reconcile_image
+from kantoku.capabilities.prompt_factory import PromptRecipe
 from kantoku.config import BudgetError, SchemaError
 from kantoku.core import budget
 from kantoku.shells import image_cli
-from kantoku.tools import image_batch, prompt_factory
-from kantoku.tools.image_batch import build_recipe_batch, generate_batch, parse_image_batch
-from kantoku.tools.image_gen import LocalFakeImageProvider, reconcile_image
-from kantoku.tools.prompt_factory import PromptRecipe
 
 
 @pytest.fixture

@@ -8,6 +8,12 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from kantoku.capabilities.archive import archive_reviewed_image, search_archived_images
+from kantoku.capabilities.prompt_factory import (
+    create_rework_recipe,
+    load_recipe,
+    save_recipe,
+)
 from kantoku.capabilities.vision.qc import (
     evaluate_qc_baseline,
     load_qc_labels,
@@ -30,12 +36,6 @@ from kantoku.config.runtime_paths import (
 )
 from kantoku.core.budget import get_reservation, load_generation_result
 from kantoku.schemas.qc import HumanQcLabel, QcBaseline, QcFailureReason, QcResult
-from kantoku.tools.archive import archive_reviewed_image, search_archived_images
-from kantoku.tools.prompt_factory import (
-    create_rework_recipe,
-    load_recipe,
-    save_recipe,
-)
 
 _FAILURE_REASONS: tuple[QcFailureReason, ...] = (
     "broken_hands",

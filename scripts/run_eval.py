@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
+from kantoku.capabilities.storyboard import generate_storyboard
 from kantoku.config import KantokuError, ToolError, get_settings
 from kantoku.config.settings import ROOT
 from kantoku.evaluation import (
@@ -20,7 +21,6 @@ from kantoku.evaluation import (
     run_suite,
     write_report,
 )
-from kantoku.tools.storyboard import generate_storyboard
 
 
 def run(argv: Sequence[str] | None = None) -> int:

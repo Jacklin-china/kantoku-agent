@@ -20,6 +20,7 @@ from uuid import NAMESPACE_URL, uuid5
 from loguru import logger
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from kantoku.capabilities.image_gen import ImageProvider, gen_image
 from kantoku.config import ToolError
 from kantoku.config.runtime_paths import validate_runtime_path
 from kantoku.core import budget
@@ -30,7 +31,6 @@ from kantoku.core.conversations import (
 )
 from kantoku.core.runtime.models import ArtifactLifecycle, ArtifactRecord, ArtifactType, utc_now
 from kantoku.core.runtime.store import RuntimeStore
-from kantoku.tools.image_gen import ImageProvider, gen_image
 
 
 @dataclass(frozen=True)

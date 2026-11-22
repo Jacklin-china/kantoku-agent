@@ -10,15 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from kantoku.capabilities.vision.qc import qc_image
-from kantoku.config import KantokuError, get_settings
-from kantoku.config.runtime_paths import atomic_write_bytes, get_runtime_paths
-from kantoku.config.settings import ROOT
-from kantoku.core import budget
-from kantoku.schemas.media import ImageGenerationResult
-from kantoku.schemas.qc import QcResult
-from kantoku.shells.image_cli import _money_fen, _provider
-from kantoku.tools.studio import (
+from kantoku.capabilities.studio import (
     StudioTask,
     compose_prompt,
     create_task,
@@ -28,6 +20,14 @@ from kantoku.tools.studio import (
     refine_prompt,
     task_directory,
 )
+from kantoku.capabilities.vision.qc import qc_image
+from kantoku.config import KantokuError, get_settings
+from kantoku.config.runtime_paths import atomic_write_bytes, get_runtime_paths
+from kantoku.config.settings import ROOT
+from kantoku.core import budget
+from kantoku.schemas.media import ImageGenerationResult
+from kantoku.schemas.qc import QcResult
+from kantoku.shells.image_cli import _money_fen, _provider
 
 
 class Studio:

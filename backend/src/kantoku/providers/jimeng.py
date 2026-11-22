@@ -20,8 +20,8 @@ from kantoku.config import ConfigError, ToolError, TracingError, get_settings
 from kantoku.config.runtime_paths import atomic_write_bytes, resolve_runtime_path
 from kantoku.config.settings import ImageSettings
 from kantoku.core.tracing import Trace, write_trace
+from kantoku.providers.contracts import ProviderAccessResult, RequestIdentityValue
 from kantoku.schemas.media import ImageGenerationResult
-from kantoku.tools.image_gen import ProviderAccessResult, RequestIdentityValue
 
 _SUCCESS_CODE = 10000
 _PENDING_STATUSES = {"in_queue", "generating"}

@@ -11,13 +11,13 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from kantoku.capabilities.prompt_factory import PROMPT_VERSION, build_prompt
 from kantoku.config import KantokuError, ToolError
 from kantoku.config.runtime_paths import (
     atomic_write_text,
 )
 from kantoku.memory import Persona
 from kantoku.schemas.storyboard import Shot, Storyboard
-from kantoku.tools.prompt_factory import PROMPT_VERSION, build_prompt
 
 
 def image_workbench_quality_metrics(images, manual, pairs):

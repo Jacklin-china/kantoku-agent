@@ -9,6 +9,9 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
+from kantoku.capabilities.archive import archive_reviewed_image
+from kantoku.capabilities.image_gen import ImageProvider
+from kantoku.capabilities.studio import create_task, execute_task, list_tasks
 from kantoku.capabilities.vision.qc import qc_image
 from kantoku.capabilities.vision.review import (
     build_rework_plan,
@@ -20,11 +23,8 @@ from kantoku.capabilities.vision.review import (
 )
 from kantoku.config import ExternalJobPending, ToolError
 from kantoku.core import budget
+from kantoku.providers.openai_image import OpenAIImageProvider
 from kantoku.schemas.qc import HumanQcLabel, QcResult
-from kantoku.tools.archive import archive_reviewed_image
-from kantoku.tools.image_gen import ImageProvider
-from kantoku.tools.openai_image import OpenAIImageProvider
-from kantoku.tools.studio import create_task, execute_task, list_tasks
 
 from .models import ComicState
 

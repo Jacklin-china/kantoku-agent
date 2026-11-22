@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from kantoku.capabilities.archive import archive_reviewed_image
+from kantoku.capabilities.studio import compose_prompt
 from kantoku.core.skills import Skill, SkillMetadata
-from kantoku.tools.archive import archive_reviewed_image
-from kantoku.tools.studio import compose_prompt
 
 
 def _compose(inputs: Mapping[str, Any], _context: Mapping[str, Any]) -> Mapping[str, Any]:

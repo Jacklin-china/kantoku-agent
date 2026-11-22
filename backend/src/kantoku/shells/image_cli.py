@@ -10,19 +10,19 @@ from collections.abc import Sequence
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from kantoku.capabilities.vision.review import get_rework_item
-from kantoku.config import BudgetError, ConfigError, KantokuError, ToolError, get_settings
-from kantoku.core import budget
-from kantoku.schemas.media import ImageGenerationResult
-from kantoku.tools.image_batch import (
+from kantoku.capabilities.image_batch import (
     ImageBatch,
     build_recipe_batch,
     generate_batch,
     parse_image_batch,
 )
-from kantoku.tools.image_gen import ImageProvider, gen_image, reconcile_image
-from kantoku.tools.jimeng import VolcengineJimengProvider
-from kantoku.tools.openai_image import AlibabaQwenImageProvider, OpenAIImageProvider
+from kantoku.capabilities.image_gen import ImageProvider, gen_image, reconcile_image
+from kantoku.capabilities.vision.review import get_rework_item
+from kantoku.config import BudgetError, ConfigError, KantokuError, ToolError, get_settings
+from kantoku.core import budget
+from kantoku.providers.jimeng import VolcengineJimengProvider
+from kantoku.providers.openai_image import AlibabaQwenImageProvider, OpenAIImageProvider
+from kantoku.schemas.media import ImageGenerationResult
 
 
 def _positive_int(text: str) -> int:

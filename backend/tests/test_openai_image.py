@@ -15,7 +15,7 @@ from openai import OpenAI
 from kantoku.config import ConfigError, ToolError
 from kantoku.config import settings as settings_module
 from kantoku.config.settings import ImageSettings
-from kantoku.tools.openai_image import AlibabaQwenImageProvider, OpenAIImageProvider
+from kantoku.providers.openai_image import AlibabaQwenImageProvider, OpenAIImageProvider
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -412,7 +412,7 @@ def test_real_qwen_client_uses_configured_model_key_and_disables_retries(
 ) -> None:
     monkeypatch.setenv("CUSTOM_IMAGE_KEY", "offline-configured-key")
     factory = MagicMock(return_value=_client())
-    monkeypatch.setattr("kantoku.tools.openai_image.OpenAI", factory)
+    monkeypatch.setattr("kantoku.providers.openai_image.OpenAI", factory)
     provider = AlibabaQwenImageProvider(settings=_settings(
         tmp_path, provider="alibaba-qwen-image", protocol="dashscope-multimodal",
         model="qwen-image-2.0-pro", base_url=_DASHSCOPE_BASE_URL,
@@ -485,10 +485,10 @@ def test_qwen_http_failure_has_traceback_diagnostics_and_stable_error_id(
     from loguru import logger
     from test_image_gen import _settings as budget_settings
 
+    from kantoku.capabilities.image_gen import gen_image
     from kantoku.config import logging_setup
     from kantoku.config.observability import request_trace, run_trace
     from kantoku.core import budget
-    from kantoku.tools.image_gen import gen_image
 
     requests = []
 

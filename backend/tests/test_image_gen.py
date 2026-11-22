@@ -11,18 +11,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from kantoku.config import BudgetError, ToolError, logging_setup
-from kantoku.config.observability import request_trace, run_trace
-from kantoku.core import budget
-from kantoku.schemas.media import ImageGenerationResult
-from kantoku.tools import image_gen
-from kantoku.tools.image_gen import (
+from kantoku.capabilities import image_gen
+from kantoku.capabilities.image_gen import (
     LocalFakeImageProvider,
     gen_image,
     prepare_image_reservation,
     reconcile_image,
     release_failed_image,
 )
+from kantoku.config import BudgetError, ToolError, logging_setup
+from kantoku.config.observability import request_trace, run_trace
+from kantoku.core import budget
+from kantoku.schemas.media import ImageGenerationResult
 
 
 def _settings(path: Path, *, shot_limit: Decimal = Decimal("1.00")) -> SimpleNamespace:

@@ -9,12 +9,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
+from kantoku.capabilities.image_gen import ImageProvider, gen_image, reconcile_image
 from kantoku.config import BudgetError, ToolError, get_settings
 from kantoku.config.runtime_paths import exclusive_write_text, resolve_runtime_path
 from kantoku.core import budget
 from kantoku.core.llm import chat
 from kantoku.schemas.media import ImageGenerationResult
-from kantoku.tools.image_gen import ImageProvider, gen_image, reconcile_image
 
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 

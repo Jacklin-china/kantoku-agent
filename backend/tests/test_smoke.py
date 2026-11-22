@@ -21,13 +21,13 @@ def test_kantoku_package_importable():
 
 
 def test_subpackages_importable():
-    """目录骨架齐备：config / core / agent / tools / capabilities.vision / memory /
-    shells / schemas。"""
+    """目录骨架齐备：config / core / agent / capabilities(+vision) / providers /
+    domains / memory / shells / schemas / evaluation。"""
     import importlib
 
     for name in (
-        "config", "core", "agent", "tools", "capabilities.vision",
-        "memory", "shells", "schemas",
+        "config", "core", "agent", "capabilities", "capabilities.vision",
+        "providers", "domains", "memory", "shells", "schemas", "evaluation",
     ):
         module = importlib.import_module(f"kantoku.{name}")
         assert module is not None, f"kantoku.{name} 无法导入"

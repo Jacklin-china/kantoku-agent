@@ -13,10 +13,10 @@ from openai.types.chat import ChatCompletionMessage, ChatCompletionMessageParam
 from pydantic import BaseModel
 
 from kantoku.agent import tools_registry
+from kantoku.capabilities.storyboard import generate_storyboard as _generate_storyboard
 from kantoku.config import KantokuError, LLMError, ToolError
 from kantoku.core.llm import chat
 from kantoku.core.tracing import Trace, write_trace
-from kantoku.tools import generate_storyboard as _generate_storyboard
 
 SYSTEM = """你是监督酱，协助用户低成本完成 AI 图片、海报、宣传片、视频和漫剧制作。
 用户需求模糊时，先澄清用途、受众、平台、核心信息、第一眼视觉重点、风格、预算与验收标准；

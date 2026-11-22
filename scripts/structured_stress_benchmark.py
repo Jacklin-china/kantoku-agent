@@ -10,11 +10,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from kantoku.capabilities import storyboard as storyboard_tool
 from kantoku.config import SchemaError
 from kantoku.config.runtime_paths import isolated_runtime
 from kantoku.config.settings import ROOT
 from kantoku.schemas.storyboard import Shot, Storyboard
-from kantoku.tools import storyboard as storyboard_tool
 
 
 def _board(identifier: int) -> dict:
@@ -123,7 +123,7 @@ def main(argv=None) -> int:
     }
     paths = [
         Path(__file__),
-        ROOT / "src/kantoku/tools/storyboard.py",
+        ROOT / "backend" / "src/kantoku/capabilities/storyboard.py",
         ROOT / "src/kantoku/schemas/storyboard.py",
     ]
     report = {

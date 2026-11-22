@@ -316,7 +316,7 @@ def test_external_workspace_stops_at_real_prompt_without_any_image_side_effects(
         pytest.fail("external workspace must never enter image execution or image billing")
 
     for target in (
-        "kantoku.tools.image_gen.gen_image", "kantoku.tools.studio.gen_image",
+        "kantoku.capabilities.image_gen.gen_image", "kantoku.capabilities.studio.gen_image",
         "kantoku.domains.comic.services.create_task",
         "kantoku.domains.comic.services.execute_task",
         "kantoku.domains.comic.services.qc_image",

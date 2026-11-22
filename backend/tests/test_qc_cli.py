@@ -7,10 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from kantoku.capabilities.prompt_factory import PromptRecipe
 from kantoku.schemas.media import ImageGenerationResult
 from kantoku.schemas.qc import HumanQcLabel, ReworkItem
 from kantoku.shells import qc_cli
-from kantoku.tools.prompt_factory import PromptRecipe
 
 
 def _review_args() -> list[str]:

@@ -17,7 +17,8 @@ import pytest
 from loguru import logger
 from test_image_gen import _settings
 
-from kantoku.capabilities import creative
+from kantoku.capabilities import archive, creative, studio
+from kantoku.capabilities.image_gen import LocalFakeImageProvider
 from kantoku.capabilities.vision import report, review
 from kantoku.config import ToolError, logging_setup
 from kantoku.core import budget
@@ -34,8 +35,6 @@ from kantoku.domains.comic import services as comic_services
 from kantoku.schemas.media import ImageGenerationResult
 from kantoku.schemas.qc import QcResult
 from kantoku.shells import web_studio
-from kantoku.tools import archive, studio
-from kantoku.tools.image_gen import LocalFakeImageProvider
 
 
 def _legacy_commerce(app: web_studio.StudioApplication, **state):

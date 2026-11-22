@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from kantoku.tools.studio import compose_prompt
+from kantoku.capabilities.studio import compose_prompt
 
 
 def execute(inputs: Mapping[str, Any], _context: Mapping[str, Any]) -> Mapping[str, Any]:

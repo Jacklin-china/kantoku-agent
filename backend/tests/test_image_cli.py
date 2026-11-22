@@ -9,11 +9,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from kantoku.capabilities.image_batch import parse_image_batch
+from kantoku.capabilities.image_gen import LocalFakeImageProvider, ProviderAccessResult
 from kantoku.core import budget
 from kantoku.schemas.media import ImageGenerationResult
 from kantoku.shells import image_cli
-from kantoku.tools.image_batch import parse_image_batch
-from kantoku.tools.image_gen import LocalFakeImageProvider, ProviderAccessResult
 
 
 def test_qwen_provider_factory_uses_alibaba_adapter(monkeypatch: pytest.MonkeyPatch) -> None:

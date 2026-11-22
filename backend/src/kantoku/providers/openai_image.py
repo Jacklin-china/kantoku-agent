@@ -28,8 +28,8 @@ from kantoku.config.runtime_paths import (
 )
 from kantoku.config.settings import ImageSettings
 from kantoku.core.tracing import Trace, write_trace
+from kantoku.providers.contracts import ProviderAccessResult, RequestIdentityValue
 from kantoku.schemas.media import ImageGenerationResult
-from kantoku.tools.image_gen import ProviderAccessResult, RequestIdentityValue
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _MIN_PIXELS = 655_360

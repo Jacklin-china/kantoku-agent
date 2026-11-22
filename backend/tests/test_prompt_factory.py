@@ -9,12 +9,12 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from kantoku.capabilities import prompt_factory
 from kantoku.config import ToolError
 from kantoku.core.database import database_manager
 from kantoku.memory import Persona
 from kantoku.schemas.qc import ReworkPlan
 from kantoku.schemas.storyboard import Shot
-from kantoku.tools import prompt_factory
 
 
 def _persona(name: str = "小雨") -> Persona:
