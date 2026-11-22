@@ -25,9 +25,9 @@ jobs:
       - name: Run selected offline backend checks
         run: >-
           uv run --locked python -B -m pytest
-          tests/test_core_runtime.py tests/test_comic_image_review.py
-          tests/test_comic_prompt_production.py tests/test_evaluation.py
-          tests/test_enterprise_reliability.py
+          backend/tests/test_core_runtime.py backend/tests/test_comic_image_review.py
+          backend/tests/test_comic_prompt_production.py backend/tests/test_evaluation.py
+          backend/tests/test_enterprise_reliability.py
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15

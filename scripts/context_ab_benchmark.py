@@ -209,7 +209,7 @@ def run_benchmark(root: Path) -> dict:
             "total managed model input is reported separately",
         ],
         "implementation_sha256": hashlib.sha256(
-            (ROOT / "src/kantoku/core/conversation_context.py").read_bytes()
+            (ROOT / "backend" / "src" / "kantoku/core/conversation_context.py").read_bytes()
         ).hexdigest(),
     }
 

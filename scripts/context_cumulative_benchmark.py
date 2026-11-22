@@ -149,8 +149,8 @@ def run(root: Path, turns: int, *, interpret: bool) -> dict:
             "Direct mode is measured separately for explicit requests and is not a substitute for semantic understanding of dependent requests",
         ],
         "implementation_sha256": {
-            "src/kantoku/core/conversation_context.py": hashlib.sha256(
-                (ROOT / "src/kantoku/core/conversation_context.py").read_bytes()
+            "backend/src/kantoku/core/conversation_context.py": hashlib.sha256(
+                (ROOT / "backend" / "src" / "kantoku/core/conversation_context.py").read_bytes()
             ).hexdigest(),
             "scripts/context_cumulative_benchmark.py": hashlib.sha256(
                 Path(__file__).read_bytes()

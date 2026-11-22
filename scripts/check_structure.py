@@ -9,9 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_TOP_LEVEL = {
     ".git", ".github", ".idea", ".pytest_cache", ".ruff_cache", ".run", ".uv-cache",
-    ".venv", ".vscode", ".workbuddy", "assets", "config", "data", "db", "docs",
+    ".venv", ".vscode", ".workbuddy", "assets", "data", "docs",
     "logs", "cache", "artifacts", "tmp",
-    "evals", "frontend", "scripts", "skills", "src", "tests",
+    "backend", "frontend", "scripts",
 }
 PARALLEL_NAME = re.compile(r"_(?:v2|new|fixed|backup)$", re.IGNORECASE)
 SENSITIVE_LOG = re.compile(
@@ -20,9 +20,9 @@ SENSITIVE_LOG = re.compile(
     re.IGNORECASE,
 )
 FORBIDDEN_IMPORTS = {
-    "config": {"core", "capabilities", "adapters", "domains", "shells", "tools"},
-    "core": {"adapters", "domains", "shells"},
-    "domains": {"adapters", "shells"},
+    "config": {"core", "capabilities", "providers", "domains", "shells", "tools"},
+    "core": {"providers", "domains", "shells"},
+    "domains": {"providers", "shells"},
 }
 # Standalone crash-injection harnesses keep raw connections on purpose: the child
 # process is killed with os._exit, and DatabaseManager's anchors, WAL setup and
@@ -31,6 +31,12 @@ FORBIDDEN_IMPORTS = {
 RAW_SQLITE_HARNESSES = {
     "scripts/recovery_cost_benchmark.py",
     "scripts/reliability_benchmark.py",
+    # 只读导出 SQLite 全表到 MySQL 镜像库：必须整表读取并保留原始类型，
+    # 走 DatabaseManager 会引入连接登记与 WAL checkpoint，反而干扰导出时的一致性。
+    "scripts/export_to_mysql.py",
+    # 只读 SQLite 的 PRAGMA 元数据以生成 MySQL 镜像库 DDL，不写业务数据，
+    # 也不需要 WAL/anchors；走 DatabaseManager 反而会引入无意义的连接登记。
+    "scripts/gen_mysql_schema.py",
 }
 
 
@@ -50,8 +56,8 @@ def violations() -> list[str]:
         f"unauthorized top-level directory: {path.name}"
         for path in ROOT.iterdir() if path.is_dir() and path.name not in ALLOWED_TOP_LEVEL
     ]
-    sources = [*((ROOT / "src" / "kantoku").rglob("*.py")),
-               *((ROOT / "tests").rglob("*.py")),
+    sources = [*((ROOT / "backend" / "src" / "kantoku").rglob("*.py")),
+               *((ROOT / "backend" / "tests").rglob("*.py")),
                *((ROOT / "scripts").glob("*.py")),
                *((ROOT / "frontend" / "src").rglob("*.ts")),
                *((ROOT / "frontend" / "src").rglob("*.vue"))]
@@ -63,10 +69,10 @@ def violations() -> list[str]:
             continue
         content = path.read_text(encoding="utf-8")
         tree = ast.parse(content, filename=str(path))
-        database_factory = relative.as_posix() == "src/kantoku/core/database.py"
-        storage_factory = relative.as_posix() == "src/kantoku/config/runtime_paths.py"
+        database_factory = relative.as_posix() == "backend/src/kantoku/core/database.py"
+        storage_factory = relative.as_posix() == "backend/src/kantoku/config/runtime_paths.py"
         raw_sqlite_harness = relative.as_posix() in RAW_SQLITE_HARNESSES
-        application_source = relative.parts[0] == "src"
+        application_source = relative.parts[:2] == ("backend", "src")
         sqlite_aliases = {"sqlite3"}
         direct_factories = set()
         for node in ast.walk(tree):

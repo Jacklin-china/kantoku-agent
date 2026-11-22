@@ -6,17 +6,11 @@
 *.pem
 *.key
 config/settings.yaml
+/backend/config/settings.yaml
 
-# 根目录个人求职资料（不影响项目文档和素材）
-/resume*.html
-/resume*.md
-/photo.png
-/*-Agent应用开发-*.pdf
-/证件照*.png
-/*简历*
-/*证件照*
-/*resume*
-/docs/interview/
+# 个人资料（与项目无关，已归档，不提交）
+# 归档位置见 docs/engineering/project-layout.md §4
+/docs/archive/personal/
 
 # python
 __pycache__/
@@ -49,10 +43,10 @@ node_modules/
 *.sqlite3
 
 # 大体积演示视频（>10MB 不进 git，README 放链接）
-assets/demo/*.mp4
+/assets/demo/*.mp4
 
 # 生成用参考素材（人像/风格/场景样例，代码不引用）
-assets/reference/
+/assets/reference/
 
 # os
 .DS_Store

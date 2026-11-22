@@ -16,7 +16,7 @@ from kantoku.evaluation import (
     load_suite,
     run_consistency_suite,
 )
-from kantoku.structured_evaluation import structured_output_contract
+from kantoku.evaluation.structured import structured_output_contract
 
 
 def _count_jsonl(path: Path) -> int:
@@ -30,11 +30,11 @@ def _hashes(paths: list[Path]) -> dict[str, str]:
 
 
 def run() -> dict:
-    consistency_cases = load_consistency_suite(ROOT / "evals/consistency.jsonl")
+    consistency_cases = load_consistency_suite(ROOT / "backend" / "evals/consistency.jsonl")
     consistency_results = run_consistency_suite(consistency_cases)
     structured = structured_output_contract()
-    storyboard_count = len(load_suite(ROOT / "evals/storyboard.jsonl"))
-    image = audit_image_workbench_suite(ROOT / "evals/image-workbench.json")
+    storyboard_count = len(load_suite(ROOT / "backend" / "evals/storyboard.jsonl"))
+    image = audit_image_workbench_suite(ROOT / "backend" / "evals/image-workbench.json")
     consistency_passed = sum(result.passed for result in consistency_results)
     structured_passed = sum(result["passed"] for result in structured)
     executed_total = len(consistency_results) + len(structured)
@@ -49,13 +49,13 @@ def run() -> dict:
         },
         "implementation_sha256": _hashes(
             [
-                ROOT / "evals/consistency.jsonl",
-                ROOT / "evals/storyboard.jsonl",
-                ROOT / "evals/director.jsonl",
-                ROOT / "evals/image-workbench.json",
-                ROOT / "src/kantoku/evaluation.py",
-                ROOT / "src/kantoku/structured_evaluation.py",
-                ROOT / "src/kantoku/tools/storyboard.py",
+                ROOT / "backend" / "evals/consistency.jsonl",
+                ROOT / "backend" / "evals/storyboard.jsonl",
+                ROOT / "backend" / "evals/director.jsonl",
+                ROOT / "backend" / "evals/image-workbench.json",
+                ROOT / "backend" / "src" / "kantoku/evaluation/__init__.py",
+                ROOT / "backend" / "src" / "kantoku/evaluation/structured.py",
+                ROOT / "backend" / "src" / "kantoku/tools/storyboard.py",
             ]
         ),
         "suites": {
@@ -77,7 +77,7 @@ def run() -> dict:
             },
             "director_generation": {
                 "status": "not_run",
-                "cases": _count_jsonl(ROOT / "evals/director.jsonl"),
+                "cases": _count_jsonl(ROOT / "backend" / "evals/director.jsonl"),
                 "reason": (
                     "Requires real model outputs and human review; "
                     "not inferred from offline fixtures"
