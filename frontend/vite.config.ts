@@ -20,7 +20,7 @@ export default defineConfig({
     port: 5173,
   },
   build: {
-    outDir: '../src/kantoku/shells/web',
+    outDir: '../backend/src/kantoku/shells/web',
     emptyOutDir: true,
     sourcemap: false,
   },
