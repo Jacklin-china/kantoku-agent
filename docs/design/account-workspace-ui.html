@@ -1,0 +1,2044 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kantoku · 账号与工作台界面原型</title>
+<style>
+/* ==========================================================================
+   Kantoku 账号体系界面原型
+   设计语言直接继承 frontend/src/styles/tokens.css：
+   浅色画布 / 冷调灰边框 / 单一强调色 #425cc7 / 8-16-22 三级圆角 / 极淡投影
+   ========================================================================== */
+:root{
+  --canvas:#f6f7f8; --canvas-inset:#eef0f2; --surface:#fff; --surface-subtle:#f8f9fa;
+  --surface-stage:#e7e9ec;
+  --sidebar-bg:#f2f2f2; --sidebar-hover:#e6e6e6; --sidebar-selected:#e6e6e6;
+  --ink:#171a1e; --ink-2:#5a626b; --ink-3:#656d78;
+  --border:#dcdee3; --border-muted:#e8eaed; --border-strong:#c9cdd4; --border-soft:#e6e6e6;
+  --accent:#425cc7; --accent-hover:#374cae; --accent-soft:#eceffb; --accent-ring:rgba(66,92,199,.16);
+  --success:#27845c; --success-soft:#e8f3ee; --success-border:#c6e0d3;
+  --warning:#a86c18; --warning-soft:#faf1e0; --warning-border:#ecd9b4;
+  --danger:#c64444; --danger-soft:#faecec; --danger-border:#ecc8c8;
+  --info:#35679b; --info-soft:#e9f1f8; --info-border:#c6d9ea;
+  --font:"PingFang SC","HarmonyOS Sans SC","MiSans","Source Han Sans SC","Noto Sans SC","Microsoft YaHei",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --r-ctl:8px; --r-panel:16px; --r-composer:22px;
+  --sh-card:0 2px 8px rgba(20,24,31,.05),0 1px 2px rgba(20,24,31,.04);
+  --sh-pop:0 6px 20px rgba(20,24,31,.1);
+  --sh-dialog:0 16px 48px rgba(20,24,31,.18);
+  --sidebar-w:220px;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--canvas); color:var(--ink); font-family:var(--font); font-size:14px;
+  line-height:1.5; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  display:flex; flex-direction:column; overflow:hidden;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:0;background:none;padding:0}
+h1,h2,h3,h4,p,dl,dd{margin:0}
+ul{margin:0;padding:0;list-style:none}
+a{color:var(--accent);text-decoration:none;cursor:pointer}
+a:hover{text-decoration:underline}
+input::placeholder{color:#9aa1ab}
+:focus-visible{outline:2px solid var(--accent-ring);outline-offset:2px}
+.num,.mono{font-variant-numeric:tabular-nums}
+
+/* ---------- 图标 ---------- */
+.ico{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.ico.sm{width:14px;height:14px}
+.ico.lg{width:20px;height:20px}
+
+/* ==========================================================================
+   原型工具条（仅演示用，不属于产品界面）
+   ========================================================================== */
+.proto{
+  height:46px;flex:none;display:flex;align-items:center;gap:20px;padding:0 16px;
+  background:#14171b;color:#e8eaed;font-size:12px;z-index:60;
+}
+.proto-brand{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.proto-brand .mk{width:20px;height:20px;border-radius:6px;background:var(--accent);display:grid;place-items:center;flex:none}
+.proto-brand .mk svg{width:13px;height:13px}
+.proto-brand strong{font-size:12.5px;font-weight:600;letter-spacing:.01em}
+.proto-brand em{font-style:normal;color:#8b929c;padding-left:8px;border-left:1px solid #2c3138}
+.proto-tabs{display:flex;gap:2px;background:#1c2026;padding:3px;border-radius:8px;margin:0 auto}
+.proto-tabs button{height:26px;padding:0 11px;border-radius:6px;color:#a7aeb8;font-size:12px;transition:background .12s,color .12s}
+.proto-tabs button:hover{color:#e8eaed;background:#252a31}
+.proto-tabs button.on{background:#3a4250;color:#fff}
+.proto-tools{display:flex;align-items:center;gap:10px;white-space:nowrap}
+.proto-states{display:flex;gap:2px;background:#1c2026;padding:3px;border-radius:8px}
+.proto-states button{height:24px;padding:0 9px;border-radius:5px;color:#8b929c;font-size:11.5px}
+.proto-states button:hover{color:#dfe3e8}
+.proto-states button.on{background:#2f353d;color:#fff}
+.proto-states button[hidden]{display:none}
+.proto-mobile{height:26px;padding:0 10px;border:1px solid #333a43;border-radius:6px;color:#c3c9d1;font-size:11.5px}
+.proto-mobile:hover{border-color:#4a535f;color:#fff}
+.proto-mobile.on{background:#3a4250;border-color:#4a535f;color:#fff}
+
+/* ==========================================================================
+   应用外壳
+   ========================================================================== */
+.app{
+  flex:1;min-height:0;display:flex;position:relative;background:var(--canvas);
+  container-type:inline-size;container-name:app;
+}
+body.preview{background:#20242a;padding:24px 24px 28px}
+body.preview .app{
+  flex:1;width:390px;min-height:0;margin:0 auto;max-height:780px;border-radius:20px;overflow:hidden;
+  box-shadow:0 24px 70px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.06);
+}
+
+/* ---------- 侧栏 ---------- */
+.sidebar{
+  width:var(--sidebar-w);flex:none;display:flex;flex-direction:column;
+  background:var(--sidebar-bg);border-right:1px solid var(--border-soft);
+}
+.brand{display:flex;align-items:center;gap:9px;height:48px;padding:0 16px;flex:none}
+.brand .mk{width:24px;height:24px;border-radius:7px;background:var(--accent);display:grid;place-items:center;flex:none}
+.brand .mk svg{width:15px;height:15px}
+.brand span{font-size:14px;font-weight:600;letter-spacing:.01em}
+.nav{flex:1;overflow-y:auto;padding:4px 8px 12px}
+.nav-group{font-size:10.5px;font-weight:600;color:#8a9099;letter-spacing:.06em;padding:14px 8px 6px;text-transform:uppercase}
+.nav-item{
+  display:flex;align-items:center;gap:9px;height:32px;padding:0 8px;border-radius:7px;
+  color:#4a4f57;font-size:13px;cursor:pointer;transition:background .12s,color .12s;
+}
+.nav-item:hover{background:var(--sidebar-hover);color:var(--ink)}
+.nav-item.on{background:var(--sidebar-selected);color:var(--ink);font-weight:500}
+.nav-item .ico{color:#6b7280}
+.nav-item.on .ico{color:var(--ink)}
+.nav-item .tail{margin-left:auto;font-size:11px;color:#fff;background:var(--accent);border-radius:999px;min-width:18px;height:18px;padding:0 5px;display:grid;place-items:center}
+.sidebar-foot{border-top:1px solid var(--border-soft);padding:8px}
+.user-block{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:8px;cursor:pointer;width:100%;text-align:left}
+.user-block:hover{background:var(--sidebar-hover)}
+.user-block .meta{min-width:0;flex:1}
+.user-block strong{display:block;font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-block small{display:block;font-size:11px;color:#8a9099;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- 主区 / 顶栏 ---------- */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;background:var(--canvas)}
+.topbar{
+  height:48px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;
+  background:#f2f2f2;position:relative;z-index:20;
+}
+.tb-left{display:flex;align-items:center;gap:8px;min-width:0}
+.crumb{font-size:12.5px;color:#8a9099}
+.tb-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.icon-btn{
+  width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:#5a626b;
+  transition:background .12s,color .12s;position:relative;
+}
+.icon-btn:hover{background:#e6e6e6;color:var(--ink)}
+.icon-btn .dot{position:absolute;top:6px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 2px #f2f2f2}
+.tb-quota{
+  display:flex;align-items:center;gap:7px;height:28px;padding:0 10px;border-radius:999px;
+  background:#fff;border:1px solid var(--border-soft);font-size:12px;color:var(--ink-2);
+}
+.tb-quota:hover{border-color:var(--border-strong)}
+.tb-quota b{color:var(--ink);font-weight:600}
+.tb-quota .ico{color:var(--accent)}
+
+/* ---------- 页面容器 ---------- */
+.page-area{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+.page:not(.active){display:none}
+.page.active{display:block}
+.page-inner{max-width:1180px;margin:0 auto;padding:0 28px 44px}
+.page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:22px 0 16px}
+.page-header h1{font-size:21px;font-weight:600;letter-spacing:-.01em;line-height:1.3}
+.page-header p{font-size:12.5px;color:var(--ink-3);margin-top:5px;max-width:74ch}
+.ph-actions{display:flex;gap:8px;flex:none;padding-top:2px}
+
+/* ==========================================================================
+   通用组件
+   ========================================================================== */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;
+  border-radius:var(--r-ctl);border:1px solid transparent;font-size:13px;font-weight:500;
+  white-space:nowrap;transition:background .12s,border-color .12s,box-shadow .12s,transform .08s;
+}
+.btn:active{transform:translateY(.5px)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-hover)}
+.btn-ghost{background:var(--surface);border-color:var(--border);color:var(--ink)}
+.btn-ghost:hover{background:var(--surface-subtle);border-color:var(--border-strong)}
+.btn-quiet{background:transparent;color:var(--ink-2)}
+.btn-quiet:hover{background:var(--canvas-inset);color:var(--ink)}
+.btn-danger{background:var(--surface);border-color:var(--danger-border);color:var(--danger)}
+.btn-danger:hover{background:var(--danger-soft)}
+.btn-sm{height:28px;padding:0 10px;font-size:12px;border-radius:6px}
+.btn-sm .ico{width:13px;height:13px}
+.btn-lg{height:42px;font-size:14px;border-radius:var(--r-ctl)}
+.btn-block{width:100%}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+
+.card{background:var(--surface);border:1px solid var(--border-muted);border-radius:var(--r-panel);box-shadow:var(--sh-card)}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px 12px}
+.card-head h3{font-size:14px;font-weight:600}
+.card-head p{font-size:12px;color:var(--ink-3);margin-top:3px}
+
+.chip{
+  display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:999px;
+  font-size:10.5px;font-weight:500;border:1px solid transparent;white-space:nowrap;letter-spacing:.01em;
+}
+.chip .ico{width:11px;height:11px}
+.chip-xs{height:17px;font-size:10px;padding:0 5px}
+.chip-accent{background:var(--accent-soft);color:var(--accent);border-color:#dbe2f8}
+.chip-success{background:var(--success-soft);color:var(--success);border-color:var(--success-border)}
+.chip-warn{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-border)}
+.chip-danger{background:var(--danger-soft);color:var(--danger);border-color:var(--danger-border)}
+.chip-info{background:var(--info-soft);color:var(--info);border-color:var(--info-border)}
+.chip-muted{background:var(--surface-subtle);color:var(--ink-3);border-color:var(--border-muted)}
+.chip-dark{background:rgba(255,255,255,.92);color:#1f2329;border-color:rgba(255,255,255,.55);backdrop-filter:blur(6px)}
+
+.seg{display:inline-flex;background:var(--canvas-inset);border-radius:9px;padding:3px;gap:2px}
+.seg button{
+  height:28px;padding:0 12px;border-radius:7px;font-size:12.5px;color:var(--ink-2);
+  display:inline-flex;align-items:center;gap:5px;transition:background .12s,color .12s,box-shadow .12s;
+}
+.seg button:hover{color:var(--ink)}
+.seg button.on{background:var(--surface);color:var(--ink);font-weight:500;box-shadow:0 1px 2px rgba(20,24,31,.08)}
+.seg.sm button{height:24px;padding:0 9px;font-size:11.5px}
+.seg-block{display:flex;width:100%}
+.seg-block button{flex:1;justify-content:center}
+
+.field{display:block;margin-bottom:14px}
+.label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.input-wrap{
+  display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r-ctl);transition:border-color .12s,box-shadow .12s;
+}
+.input-wrap:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring)}
+.input-wrap input{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;font-size:13.5px}
+.input-wrap .ico{color:#8a9099}
+.input-wrap .prefix{font-size:13px;color:var(--ink-2);padding-right:8px;border-right:1px solid var(--border-muted)}
+.input-wrap .suffix-btn{
+  font-size:12px;color:var(--accent);font-weight:500;padding:0 2px;white-space:nowrap;
+  border-left:1px solid var(--border-muted);padding-left:10px;height:18px;line-height:18px;
+}
+.input-wrap .suffix-btn:hover{color:var(--accent-hover)}
+.input-wrap .suffix-btn[disabled]{color:#9aa1ab;cursor:not-allowed}
+.hint{display:block;font-size:11.5px;color:var(--ink-3);margin-top:5px}
+.hint.danger{color:var(--danger)}
+.hint.ok{color:var(--success);display:flex;align-items:center;gap:4px}
+.input-wrap.invalid{border-color:var(--danger);box-shadow:0 0 0 3px rgba(198,68,68,.12)}
+
+.check{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--ink-2);line-height:1.55;cursor:pointer;margin:14px 0 16px}
+.check input{appearance:none;width:15px;height:15px;border:1px solid var(--border-strong);border-radius:4px;flex:none;margin-top:1px;background:#fff;transition:.12s;cursor:pointer}
+.check input:checked{background:var(--accent);border-color:var(--accent);background-image:url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
+.check a{color:var(--accent)}
+
+.avatar{
+  border-radius:50%;display:grid;place-items:center;flex:none;color:#fff;font-weight:500;
+  background:linear-gradient(140deg,#41539c,#6f86dd);overflow:hidden;
+}
+.avatar.xs{width:22px;height:22px;font-size:10px}
+.avatar.sm{width:26px;height:26px;font-size:11px}
+.avatar.md{width:40px;height:40px;font-size:14px}
+.avatar.xl{width:72px;height:72px;font-size:26px;border-radius:20px}
+.avatar.more{background:var(--canvas-inset);color:var(--ink-3);font-size:10px}
+.stack-avatars{display:flex}
+.stack-avatars .avatar{border:2px solid var(--surface);margin-left:-7px}
+.stack-avatars .avatar:first-child{margin-left:0}
+
+.alert{display:flex;align-items:flex-start;gap:8px;padding:9px 11px;border-radius:8px;font-size:12px;line-height:1.5;border:1px solid transparent}
+.alert .ico{margin-top:1px}
+.alert-danger{background:var(--danger-soft);border-color:var(--danger-border);color:#8f3232}
+.alert-warn{background:var(--warning-soft);border-color:var(--warning-border);color:#7d5313}
+.alert-info{background:var(--info-soft);border-color:var(--info-border);color:#2b5478}
+.spinner{
+  width:13px;height:13px;border:1.8px solid currentColor;border-right-color:transparent;border-radius:50%;
+  animation:spin .7s linear infinite;display:inline-block;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 骨架屏 */
+.skel{background:linear-gradient(90deg,#eceef1 25%,#f4f5f7 37%,#eceef1 63%);background-size:400% 100%;animation:shimmer 1.4s ease infinite;border-radius:6px}
+@keyframes shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+
+/* 整页三态：仅工作台页面使用 */
+.s-default,.s-loading,.s-empty,.s-error{display:none}
+.page[data-state="default"] .s-default{display:var(--d,block)}
+.page[data-state="loading"] .s-loading,
+.page[data-state="empty"] .s-empty,
+.page[data-state="error"] .s-error{display:block}
+.page:not([data-state="default"]) .s-default{display:none}
+.state-panel{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  padding:64px 24px;border:1px dashed var(--border);border-radius:var(--r-panel);background:var(--surface-subtle);
+}
+.state-panel .art{width:96px;height:96px;margin-bottom:16px;color:#b6bcc6}
+.state-panel h3{font-size:15px;font-weight:600;margin-bottom:6px}
+.state-panel p{font-size:12.5px;color:var(--ink-3);max-width:42ch;line-height:1.6}
+.state-panel .acts{display:flex;gap:8px;margin-top:18px}
+.state-panel.err{border-style:solid;border-color:var(--danger-border);background:#fffdfd}
+.state-panel.err .art{color:#dba6a6}
+.code-tag{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--ink-3);background:var(--canvas-inset);padding:2px 6px;border-radius:4px;margin-top:10px}
+
+/* ==========================================================================
+   一、登录页
+   ========================================================================== */
+.auth-page{min-height:100%}
+.auth-grid{display:grid;grid-template-columns:1.02fr .98fr;min-height:100%;}
+.auth-side{
+  position:relative;overflow:hidden;padding:36px 44px;display:flex;flex-direction:column;
+  border-right:1px solid var(--border-muted);
+  background-color:var(--canvas-inset);
+  background-image:
+    radial-gradient(620px 320px at 84% 4%,rgba(66,92,199,.13),transparent 68%),
+    radial-gradient(420px 260px at 10% 100%,rgba(66,92,199,.06),transparent 70%),
+    linear-gradient(to right,rgba(23,26,30,.038) 1px,transparent 1px),
+    linear-gradient(to bottom,rgba(23,26,30,.038) 1px,transparent 1px);
+  background-size:auto,auto,32px 32px,32px 32px;
+}
+.auth-side-top{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600}
+.auth-side-top .mk{width:24px;height:24px;border-radius:7px;background:var(--accent);display:grid;place-items:center}
+.auth-side-top .mk svg{width:15px;height:15px}
+.auth-side-body{margin-top:auto;margin-bottom:auto;padding:32px 0;max-width:430px}
+.kicker{font-size:11px;font-weight:600;letter-spacing:.1em;color:var(--accent);text-transform:uppercase;margin-bottom:14px}
+.auth-side h1{font-size:clamp(26px,2.3vw,32px);line-height:1.28;font-weight:600;letter-spacing:-.02em}
+.auth-side .lede{font-size:13.5px;line-height:1.75;color:var(--ink-2);margin-top:14px;max-width:36ch}
+.feat{margin-top:28px;display:flex;flex-direction:column;gap:2px}
+.feat li{display:flex;align-items:center;gap:10px;padding:9px 0;font-size:13px;color:var(--ink)}
+.feat li .fi{
+  width:26px;height:26px;border-radius:7px;background:#fff;border:1px solid var(--border-muted);
+  display:grid;place-items:center;color:var(--accent);flex:none;box-shadow:0 1px 2px rgba(20,24,31,.04);
+}
+.feat li small{color:var(--ink-3);font-size:11.5px;margin-left:auto;white-space:nowrap}
+.auth-side-foot{font-size:11px;color:#9aa1ab;display:flex;gap:14px}
+.auth-side-foot a{color:#8a9099}
+
+.auth-main{display:flex;align-items:center;justify-content:center;padding:32px 24px;background:var(--canvas)}
+.auth-card{width:100%;max-width:400px}
+.auth-card-head{margin-bottom:20px}
+.auth-card-head h2{font-size:20px;font-weight:600;letter-spacing:-.01em}
+.auth-card-head p{font-size:12.5px;color:var(--ink-3);margin-top:6px}
+.auth-mobile-brand{display:none;align-items:center;gap:8px;font-weight:600;margin-bottom:22px}
+.auth-mobile-brand .mk{width:24px;height:24px;border-radius:7px;background:var(--accent);display:grid;place-items:center}
+.auth-form[hidden]{display:none}
+.auth-or{display:flex;align-items:center;gap:10px;margin:18px 0 14px;font-size:11px;color:#9aa1ab}
+.auth-or::before,.auth-or::after{content:"";flex:1;height:1px;background:var(--border-muted)}
+.auth-legal{font-size:11px;color:var(--ink-3);text-align:center;margin-top:16px;line-height:1.7}
+.auth-alt{font-size:12px;color:var(--ink-3);text-align:center;margin-top:18px}
+.forgot{font-size:11.5px}
+.form-alert{margin-bottom:14px;display:none}
+.page[data-state="error"] .form-alert{display:flex}
+.page[data-state="error"] .input-wrap.js-invalid{border-color:var(--danger);box-shadow:0 0 0 3px rgba(198,68,68,.12)}
+.page[data-state="error"] .js-err-hint{display:block}
+.js-err-hint{display:none}
+.only-loading{display:none}
+.page[data-state="loading"] .only-loading{display:inline-flex;align-items:center;gap:6px}
+.page[data-state="loading"] .only-idle{display:none}
+.page[data-state="loading"] .btn-primary{pointer-events:none;opacity:.9}
+
+/* ==========================================================================
+   二、邀请注册页
+   ========================================================================== */
+.invite-page{min-height:100%;display:flex;flex-direction:column;align-items:center;padding:28px 20px 48px;
+  background-image:
+    radial-gradient(700px 340px at 50% -10%,rgba(66,92,199,.1),transparent 70%),
+    linear-gradient(to right,rgba(23,26,30,.03) 1px,transparent 1px),
+    linear-gradient(to bottom,rgba(23,26,30,.03) 1px,transparent 1px);
+  background-size:auto,32px 32px,32px 32px;
+}
+.invite-brand{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600;margin-bottom:22px}
+.invite-brand .mk{width:24px;height:24px;border-radius:7px;background:var(--accent);display:grid;place-items:center}
+.invite-card{width:100%;max-width:440px;background:var(--surface);border:1px solid var(--border-muted);
+  border-radius:var(--r-composer);box-shadow:0 10px 34px rgba(20,24,31,.07);padding:24px}
+.invite-banner{
+  display:flex;align-items:center;gap:11px;padding:12px;border-radius:12px;
+  background:var(--accent-soft);border:1px solid #dbe2f8;margin-bottom:20px;
+}
+.invite-banner .avatar{width:34px;height:34px;font-size:12px;border:2px solid #fff}
+.invite-banner .ib-body{min-width:0;flex:1}
+.invite-banner strong{display:block;font-size:12.5px;font-weight:600;color:#2b3a86}
+.invite-banner small{display:block;font-size:11px;color:#5a6aa8;margin-top:2px}
+.invite-banner .chip{background:#fff;border-color:#dbe2f8;color:var(--accent)}
+.benefit{display:flex;gap:8px;margin-top:12px}
+.benefit div{
+  flex:1;background:var(--surface-subtle);border:1px solid var(--border-muted);border-radius:8px;
+  padding:9px 10px;font-size:11px;color:var(--ink-2);line-height:1.45;
+}
+.benefit div b{display:block;font-size:13px;color:var(--ink);font-weight:600;margin-bottom:2px}
+.invite-card h2{font-size:18px;font-weight:600;margin-bottom:5px}
+.invite-card .sub{font-size:12px;color:var(--ink-3);margin-bottom:18px}
+.strength{display:flex;gap:4px;margin-top:8px}
+.strength i{flex:1;height:3px;border-radius:2px;background:var(--border);transition:background .2s}
+.strength i.on{background:var(--warning)}
+.strength i.ok{background:var(--success)}
+.pw-row{display:flex;align-items:center;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--ink-3)}
+.pw-eye{color:#8a9099;display:grid;place-items:center}
+.pw-eye:hover{color:var(--ink-2)}
+
+/* ==========================================================================
+   三、个人中心
+   ========================================================================== */
+.grid-profile{display:grid;--d:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;align-items:start}
+.profile-card{padding:20px}
+.pc-head{display:flex;align-items:center;gap:12px}
+.pc-name{min-width:0}
+.pc-name h2{font-size:16px;font-weight:600;display:flex;align-items:center;gap:6px}
+.pc-name .chip{margin-top:6px}
+.pc-bio{font-size:12px;color:var(--ink-3);margin-top:12px}
+.kv{margin-top:16px;border-top:1px solid var(--border-muted);padding-top:4px}
+.kv>div{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;font-size:12.5px}
+.kv dt{color:var(--ink-3);flex:none}
+.kv dd{color:var(--ink);display:flex;align-items:center;gap:6px;min-width:0;justify-content:flex-end}
+.kv dd .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;letter-spacing:.02em}
+.copy-btn{font-size:11px;color:var(--accent);flex:none}
+.copy-btn:hover{text-decoration:underline}
+.pc-stats{display:flex;gap:4px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border-muted)}
+.pc-stats div{flex:1;text-align:center}
+.pc-stats strong{display:block;font-size:16px;font-weight:600}
+.pc-stats small{display:block;font-size:10.5px;color:var(--ink-3);margin-top:2px}
+.stack{display:flex;flex-direction:column;gap:16px}
+.row-item{display:flex;align-items:center;gap:12px;padding:13px 18px;border-top:1px solid var(--border-muted)}
+.row-item:first-of-type{border-top:0}
+.row-ico{
+  width:32px;height:32px;border-radius:9px;background:var(--surface-subtle);border:1px solid var(--border-muted);
+  display:grid;place-items:center;color:var(--ink-2);flex:none;
+}
+.row-body{min-width:0;flex:1}
+.row-body strong{display:block;font-size:12.5px;font-weight:500}
+.row-body small{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.row-item .chip{flex:none}
+.zone-title{font-size:12.5px;color:var(--ink-3);padding:14px 18px 10px;border-top:1px solid var(--border-muted)}
+.device-name{display:flex;align-items:center;gap:6px}
+.tag-cur{font-size:10px;color:var(--success);background:var(--success-soft);border:1px solid var(--success-border);border-radius:999px;padding:1px 5px}
+
+/* ==========================================================================
+   四、我的作品
+   ========================================================================== */
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.toolbar .grow{flex:1}
+.input-wrap.search{height:32px;width:230px;border-radius:8px}
+.input-wrap.search input{font-size:12.5px}
+.view-toggle{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fff}
+.view-toggle button{width:30px;height:30px;display:grid;place-items:center;color:var(--ink-3)}
+.view-toggle button+button{border-left:1px solid var(--border-muted)}
+.view-toggle button.on{background:var(--canvas-inset);color:var(--ink)}
+.legend{
+  display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-3);
+  background:var(--surface-subtle);border:1px solid var(--border-muted);border-radius:8px;
+  padding:7px 10px;margin-bottom:16px;
+}
+.legend .ico{color:var(--info);flex:none}
+.grid-works{display:grid;--d:grid;grid-template-columns:repeat(auto-fill,minmax(252px,1fr));gap:16px}
+.work-card{
+  background:var(--surface);border:1px solid var(--border-muted);border-radius:var(--r-panel);
+  padding:9px;box-shadow:var(--sh-card);transition:box-shadow .16s,transform .16s,border-color .16s;cursor:pointer;
+}
+.work-card:hover{box-shadow:var(--sh-pop);transform:translateY(-2px);border-color:var(--border)}
+.cover{
+  position:relative;aspect-ratio:16/10;border-radius:11px;overflow:hidden;
+  background:linear-gradient(142deg,var(--c1),var(--c2));
+}
+.cover::before{
+  content:"";position:absolute;inset:0;opacity:.5;
+  background-image:radial-gradient(circle at 1px 1px,rgba(255,255,255,.28) 1px,transparent 0);
+  background-size:13px 13px;
+  -webkit-mask-image:linear-gradient(155deg,#000,transparent 72%);
+  mask-image:linear-gradient(155deg,#000,transparent 72%);
+}
+.cover::after{
+  content:"";position:absolute;left:-12%;right:-12%;bottom:-34%;height:64%;border-radius:50%;
+  border:1px solid rgba(255,255,255,.3);
+  box-shadow:0 0 0 28px rgba(255,255,255,.06),0 0 0 58px rgba(255,255,255,.035);
+}
+.cover-top{position:absolute;top:8px;left:8px;right:8px;display:flex;gap:4px;z-index:2}
+.cover-foot{position:absolute;bottom:8px;left:10px;right:10px;display:flex;align-items:center;justify-content:space-between;z-index:2}
+.cover-foot .ep{font-size:10.5px;color:rgba(255,255,255,.86);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.cover .play{
+  position:absolute;inset:0;display:grid;place-items:center;opacity:0;transition:opacity .16s;z-index:2;
+  background:rgba(20,24,31,.16);color:#fff;
+}
+.work-card:hover .play{opacity:1}
+.cover .play span{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.92);color:#1f2329;display:grid;place-items:center;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.wc-body{padding:10px 4px 4px}
+.wc-body h3{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-body p{font-size:11.5px;color:var(--ink-3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding-top:9px;border-top:1px solid var(--border-muted)}
+.owner-line{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-3)}
+.owner-line .ico{width:12px;height:12px}
+/* 列表视图 */
+.grid-works.as-list{--d:grid;grid-template-columns:1fr;gap:8px}
+.as-list .work-card{display:flex;align-items:center;gap:14px;padding:10px 14px 10px 10px}
+.as-list .cover{width:112px;flex:none;aspect-ratio:16/10;border-radius:9px}
+.as-list .wc-body{flex:1;min-width:0}
+.as-list .wc-foot{border-top:0;margin:0;padding:0;flex:none;gap:12px}
+.as-list .play{display:none}
+/* 私人空间 */
+.private-space{
+  margin-top:18px;border:1px dashed #c3cbe4;background:linear-gradient(180deg,#fbfcff,#f7f9fe);
+  border-radius:var(--r-panel);padding:16px 18px;
+}
+.ps-head{display:flex;align-items:center;gap:11px}
+.ps-ico{
+  width:34px;height:34px;border-radius:10px;background:#fff;border:1px solid #dbe2f8;
+  display:grid;place-items:center;color:var(--accent);flex:none;
+}
+.ps-head .ps-body{flex:1;min-width:0}
+.ps-head strong{display:block;font-size:13px;font-weight:600}
+.ps-head small{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.ps-thumbs{display:flex;gap:8px;margin-top:14px}
+.ps-thumb{
+  width:88px;height:56px;border-radius:8px;background:linear-gradient(140deg,var(--c1),var(--c2));
+  position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.5);
+}
+.ps-thumb::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 70% 30%,rgba(255,255,255,.24),transparent 60%)}
+.ps-add{
+  width:88px;height:56px;border-radius:8px;border:1px dashed var(--border-strong);display:grid;place-items:center;
+  color:var(--ink-3);background:rgba(255,255,255,.6);
+}
+.ps-add:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ==========================================================================
+   五、额度与用量
+   ========================================================================== */
+.grid-usage-top{display:grid;--d:grid;grid-template-columns:1.35fr 1fr 1fr;gap:16px}
+.quota-card{padding:18px}
+.quota-card>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.quota-card>header span{font-size:12.5px;color:var(--ink-2);font-weight:500}
+.quota-num{display:flex;align-items:baseline;gap:2px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.quota-num .cny{font-size:18px;font-weight:500;color:var(--ink-2);margin-right:2px}
+.quota-num .int{font-size:36px;font-weight:600;line-height:1.1}
+.quota-num .dec{font-size:19px;font-weight:600;color:var(--ink-2)}
+.bar{height:6px;border-radius:3px;background:var(--canvas-inset);overflow:hidden;margin-top:14px}
+.bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#5f78d6,#425cc7)}
+.bar.warn i{background:linear-gradient(90deg,#d8a04d,#b97a1c)}
+.quota-foot{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-3);margin-top:7px}
+.quota-note{display:flex;align-items:flex-start;gap:5px;font-size:11px;color:var(--ink-3);margin-top:12px;line-height:1.5}
+.quota-note .ico{width:12px;height:12px;margin-top:2px;color:var(--info);flex:none}
+.quota-actions{display:flex;gap:8px;margin-top:14px}
+.stat-card{padding:18px;display:flex;flex-direction:column}
+.stat-card>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.stat-card>header span{font-size:12.5px;color:var(--ink-2);font-weight:500}
+.stat-big{font-size:26px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.2}
+.stat-big small{font-size:12px;font-weight:400;color:var(--ink-3);margin-left:4px;letter-spacing:0}
+.stat-sub{font-size:11.5px;color:var(--ink-3);margin-top:5px}
+.ring-wrap{display:flex;align-items:center;gap:12px;margin-top:auto;padding-top:12px}
+.ring{width:54px;height:54px;flex:none}
+.ring-bg{fill:none;stroke:var(--canvas-inset);stroke-width:6}
+.ring-fg{fill:none;stroke:var(--success);stroke-width:6;stroke-linecap:round}
+.ring-txt{font-size:10px;color:var(--ink-3);line-height:1.5}
+.ring-txt b{display:block;font-size:14px;color:var(--ink);font-weight:600}
+.mini-bars{display:flex;align-items:flex-end;gap:5px;height:54px;margin-top:auto;padding-top:12px}
+.mini-bars i{flex:1;background:var(--accent-soft);border-radius:3px 3px 1px 1px;border:1px solid #dbe2f8;border-bottom:0;min-height:4px}
+.mini-bars i.hi{background:var(--accent);border-color:var(--accent)}
+.grid-usage-mid{display:grid;--d:grid;grid-template-columns:1.5fr 1fr;gap:16px;margin-top:16px}
+.chart-card{padding:16px 18px 12px}
+.chart{display:flex;align-items:flex-end;gap:6px;height:158px;margin-top:8px;position:relative}
+.chart::before,.chart::after{content:"";position:absolute;left:0;right:0;height:1px;background:var(--border-muted);z-index:0}
+.chart::before{top:0}
+.chart::after{bottom:22px}
+.chart .bar-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%;position:relative;z-index:1;cursor:default}
+.chart .bar-col i{
+  display:block;border-radius:4px 4px 2px 2px;background:linear-gradient(180deg,#8b9dea,#5b74d3);
+  transition:filter .14s,transform .14s;
+}
+.chart .bar-col:hover i{filter:brightness(.92);transform:scaleY(1.01)}
+.chart .bar-col.peak i{background:linear-gradient(180deg,#425cc7,#2f4198)}
+.x-axis{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink-3);margin-top:6px;font-variant-numeric:tabular-nums}
+.split-card{padding:16px 18px}
+.split-row{padding:10px 0;border-top:1px solid var(--border-muted)}
+.split-row:first-of-type{border-top:0}
+.split-row .sr-top{display:flex;align-items:baseline;justify-content:space-between;font-size:12.5px}
+.split-row .sr-top b{font-weight:500}
+.split-row .sr-top span{font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.split-row .sr-bar{height:5px;border-radius:3px;background:var(--canvas-inset);margin-top:7px;overflow:hidden}
+.split-row .sr-bar i{display:block;height:100%;border-radius:3px}
+.split-row small{display:block;font-size:11px;color:var(--ink-3);margin-top:5px}
+.rec-card{margin-top:16px;overflow:hidden}
+.rec-list{padding:0 4px 4px}
+.rec-row{
+  display:grid;grid-template-columns:104px 1.1fr 1.3fr 1.4fr 96px 84px;gap:12px;align-items:center;
+  padding:10px 14px;border-top:1px solid var(--border-muted);font-size:12px;
+}
+.rec-head{
+  display:grid;grid-template-columns:104px 1.1fr 1.3fr 1.4fr 96px 84px;gap:12px;
+  font-size:11px;color:var(--ink-3);font-weight:500;border-top:1px solid var(--border-muted);background:var(--surface-subtle);
+  border-radius:8px;padding:8px 14px;letter-spacing:.02em;
+}
+.rec-head span:last-child{text-align:right}
+.rec-row .tm{color:var(--ink-3);font-variant-numeric:tabular-nums;font-size:11.5px}
+.rec-row .mdl{display:flex;align-items:center;gap:6px;min-width:0}
+.rec-row .mdl span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rec-row .amt{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
+.rec-row .obj{color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.type-dot{width:6px;height:6px;border-radius:50%;flex:none}
+.t-img{background:#5f78d6}.t-vid{background:#a86c18}.t-txt{background:#27845c}
+
+/* ==========================================================================
+   模态
+   ========================================================================== */
+.modal{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:20px}
+.modal[hidden]{display:none}
+.modal-mask{position:absolute;inset:0;background:rgba(23,26,30,.42);backdrop-filter:blur(2px)}
+.modal-card{
+  position:relative;width:100%;max-width:420px;background:var(--surface);border-radius:14px;
+  box-shadow:var(--sh-dialog);padding:20px;animation:pop .18s ease;
+}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+.modal-card>header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px}
+.modal-card h3{font-size:15px;font-weight:600}
+.modal-card header p{font-size:11.5px;color:var(--ink-3);margin-top:4px}
+.modal-card footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border-muted)}
+
+/* 轻提示 */
+.toast{
+  position:fixed;left:50%;bottom:28px;transform:translate(-50%,12px);z-index:90;
+  background:#1f2329;color:#fff;font-size:12.5px;padding:9px 14px;border-radius:8px;
+  box-shadow:0 8px 24px rgba(20,24,31,.28);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;
+  display:flex;align-items:center;gap:7px;
+}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* 未登录形态：隐藏外壳，认证页独占整屏 */
+.app[data-mode="auth"] .sidebar,
+.app[data-mode="auth"] .topbar,
+.app[data-mode="auth"] .tabbar{display:none}
+.app[data-mode="auth"] .page-area{display:flex;flex-direction:column}
+.app[data-mode="auth"] .page.active{flex:1;display:flex;flex-direction:column}
+.app[data-mode="auth"] .auth-grid{flex:1}
+.page.active.invite-page{display:flex}
+
+/* 移动端底部导航（默认隐藏） */
+.tabbar{display:none}
+
+/* ==========================================================================
+   响应式（容器查询：桌面窗口与「移动端预览」共用同一套规则）
+   ========================================================================== */
+@container app (max-width:1000px){
+  .grid-profile{grid-template-columns:1fr}
+  .grid-usage-top{grid-template-columns:1fr 1fr}
+  .quota-card{grid-column:1 / -1}
+  .grid-usage-mid{grid-template-columns:1fr}
+  .auth-grid{grid-template-columns:1fr}
+  .auth-side{display:none}
+  .auth-mobile-brand{display:flex}
+  .auth-main{padding:28px 20px 40px;align-items:flex-start;padding-top:40px}
+}
+@container app (max-width:860px){
+  .sidebar{display:none}
+  .topbar{height:52px;padding:0 14px}
+  .crumb,.tb-left>.ico{display:none}
+  .tb-quota span{display:none}
+  .page-inner{padding:0 16px 84px}
+  .page-header{flex-direction:column;align-items:stretch;gap:12px;padding:16px 0 14px}
+  .page-header h1{font-size:19px}
+  .ph-actions{width:100%}
+  .ph-actions .btn{flex:1}
+  .tabbar{
+    display:flex;position:absolute;left:0;right:0;bottom:0;height:56px;z-index:30;
+    background:rgba(252,252,253,.94);backdrop-filter:blur(12px);border-top:1px solid var(--border-muted);
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .tabbar button{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    font-size:10px;color:#8a9099;
+  }
+  .tabbar button.on{color:var(--accent)}
+  .tabbar button .ico{width:19px;height:19px}
+  .grid-usage-top{grid-template-columns:1fr}
+  .grid-works{grid-template-columns:1fr 1fr;gap:12px}
+  .toolbar{gap:8px}
+  .toolbar .seg{order:1;width:100%;overflow-x:auto;scrollbar-width:none}
+  .toolbar .seg button{flex:none}
+  .toolbar .grow{display:none}
+  .input-wrap.search{order:2;width:100%}
+  .toolbar .btn-ghost{order:3}
+  .view-toggle{order:4;margin-left:auto}
+  .legend{display:none}
+  .cover{aspect-ratio:4/3}
+  .as-list .cover{width:96px}
+  .rec-row{grid-template-columns:1fr 1fr;gap:6px 10px;padding:12px 14px}
+  .rec-row .tm{grid-column:1 / -1}
+  .rec-row .obj{display:none}
+  .rec-row .amt{text-align:left}
+  .rec-head{display:none}
+  .as-list .work-card{gap:10px}
+  .as-list .wc-foot .owner-line{display:none}
+}
+@container app (max-width:560px){
+  .grid-works{grid-template-columns:1fr}
+  .cover{aspect-ratio:16/9}
+  .auth-card-head h2{font-size:18px}
+  .invite-card{padding:18px;border-radius:16px}
+  .invite-banner{flex-wrap:wrap}
+  .invite-card .seg-block button{font-size:12px}
+  .page-header h1{font-size:18px}
+  .pc-head{gap:10px}
+  .avatar.xl{width:56px;height:56px;font-size:20px;border-radius:16px}
+  .row-item{flex-wrap:wrap}
+  .row-item .btn{margin-left:44px}
+  .ps-thumbs{overflow-x:auto;padding-bottom:4px}
+  .quota-num .int{font-size:32px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important;animation-duration:.01ms!important}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-k" viewBox="0 0 24 24"><path d="M8.5 6v12M8.5 12l6.2-6M8.5 12l6.2 6"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 10.6 12 3.5l8.5 7.1V20a1 1 0 0 1-1 1h-4.6v-6.4H9.1V21H4.5a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M11.5 3.5 13.3 9l5.7 1.8-5.7 1.8-1.8 5.6-1.8-5.6L4 10.8 9.7 9z"/><path d="M18.4 15.2l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/></symbol>
+  <symbol id="i-tasks" viewBox="0 0 24 24"><path d="M9.5 6.5h10M9.5 12h10M9.5 17.5h10"/><path d="M4 6.5 5.4 8 7.6 5.5M4 12l1.4 1.5L7.6 11M4 17.5 5.4 19l2.2-2.5"/></symbol>
+  <symbol id="i-images" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.2"/><path d="M3.5 15.5 8 11.7l3.6 2.8 3-2.2 5.9 4.1"/><circle cx="8.8" cy="9.2" r="1.3"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.2a2 2 0 0 1 2-2h3.6l2 2h6.4a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.4"/><path d="M3 9.5h13.5a1.6 1.6 0 0 1 0 3.2H16a1.6 1.6 0 0 0 0 3.2h4.5"/><circle cx="16.6" cy="11.1" r=".7" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.7"/><path d="M4.6 20.2a7.6 7.6 0 0 1 14.8 0"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9.2" cy="8.2" r="3.2"/><path d="M2.8 20a6.6 6.6 0 0 1 12.8 0"/><path d="M16.2 5.6a3.1 3.1 0 0 1 0 5.9M17.6 14.6a6.4 6.4 0 0 1 3.6 5.4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.6"/><path d="M15.9 15.9 20.5 20.5"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 9.4a6 6 0 1 0-12 0c0 4.6-2 5.8-2 5.8h16s-2-1.2-2-5.8"/><path d="M10.3 18.6a2 2 0 0 0 3.4 0"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h11"/></symbol>
+  <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="M6.5 9.5 12 15l5.5-5.5"/></symbol>
+  <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="M9.5 6 15.5 12l-6 6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5 9.6 17 19 7"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.8v4.9M12 16.2h.01"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.2 18.8 6v5.8c0 4.4-2.9 7.3-6.8 8.8-3.9-1.5-6.8-4.4-6.8-8.8V6z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10" width="15" height="10.5" rx="2.2"/><path d="M8 10V7.2a4 4 0 0 1 8 0V10"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5.2" width="18" height="13.6" rx="2.2"/><path d="m3.6 7.2 8.4 5.6 8.4-5.6"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.4" y="2.6" width="11.2" height="18.8" rx="2.4"/><path d="M10.4 5.4h3.2M10.2 18.4h3.6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.2v13.6M5.2 12h13.6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.6" y="8.6" width="11" height="11" rx="2"/><path d="M15.4 8.6V6.4a2 2 0 0 0-2-2H6.4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2.2"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M15.6 4.6 19.4 8.4 9 18.8l-4.4.8.8-4.4z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.6" y="3.6" width="7.4" height="7.4" rx="1.6"/><rect x="13" y="3.6" width="7.4" height="7.4" rx="1.6"/><rect x="3.6" y="13" width="7.4" height="7.4" rx="1.6"/><rect x="13" y="13" width="7.4" height="7.4" rx="1.6"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h16M4 17.5h16"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.5 5.8 18 12l-9.5 6.2z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2M12 8h.01"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20.5 4.2v4.4h-4.4"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.4 6.4 17.6 17.6M17.6 6.4 6.4 17.6"/></symbol>
+  <symbol id="i-ticket" viewBox="0 0 24 24"><path d="M3.2 9.4V6.6a1.6 1.6 0 0 1 1.6-1.6h14.4a1.6 1.6 0 0 1 1.6 1.6v2.8a2.6 2.6 0 0 0 0 5.2v2.8a1.6 1.6 0 0 1-1.6 1.6H4.8a1.6 1.6 0 0 1-1.6-1.6v-2.8a2.6 2.6 0 0 0 0-5.2"/><path d="M13 5v14" stroke-dasharray="2 2.6"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2.8" y="4.4" width="18.4" height="12" rx="2"/><path d="M8.6 20h6.8M12 16.4V20"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.6 12S6 6.2 12 6.2 21.4 12 21.4 12 18 17.8 12 17.8 2.6 12 2.6 12"/><circle cx="12" cy="12" r="2.8"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v10.6M7.8 10.8 12 15l4.2-4.2"/><path d="M4.6 17.8v1.6a1 1 0 0 0 1 1h12.8a1 1 0 0 0 1-1v-1.6"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4.4M7.8 8.6 12 4.4l4.2 4.2"/><path d="M4.6 17.8v1.6a1 1 0 0 0 1 1h12.8a1 1 0 0 0 1-1v-1.6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.4V12l3.2 2"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.8 7h14.4M9.4 7V4.8h5.2V7M6.6 7l.9 12.1a1.4 1.4 0 0 0 1.4 1.3h6.2a1.4 1.4 0 0 0 1.4-1.3L17.4 7"/></symbol>
+</svg>
+
+<header class="proto">
+  <div class="proto-brand">
+    <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><use href="#i-k"/></svg></span>
+    <strong>Kantoku</strong>
+    <em>账号与工作台 · 界面原型</em>
+  </div>
+  <nav class="proto-tabs" id="protoTabs">
+    <button data-goto="login" class="on">登录</button>
+    <button data-goto="invite">邀请注册</button>
+    <button data-goto="profile">个人中心</button>
+    <button data-goto="works">我的作品</button>
+    <button data-goto="usage">额度与用量</button>
+  </nav>
+  <div class="proto-tools">
+    <div class="proto-states" id="statePicker">
+      <button data-state="default" class="on">默认</button>
+      <button data-state="loading">加载中</button>
+      <button data-state="empty">空状态</button>
+      <button data-state="error">错误</button>
+    </div>
+    <button class="proto-mobile" id="mobileToggle">移动端预览</button>
+  </div>
+</header>
+
+<div class="app" id="app" data-mode="auth">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><use href="#i-k"/></svg></span>
+      <span>Kantoku</span>
+    </div>
+    <nav class="nav">
+      <div class="nav-group">工作台</div>
+      <a class="nav-item" data-goto="works"><svg class="ico"><use href="#i-home"/></svg>首页</a>
+      <a class="nav-item"><svg class="ico"><use href="#i-spark"/></svg>创作工作台</a>
+      <a class="nav-item"><svg class="ico"><use href="#i-tasks"/></svg>任务中心<span class="tail">2</span></a>
+      <a class="nav-item"><svg class="ico"><use href="#i-images"/></svg>资产库</a>
+      <div class="nav-group">我的</div>
+      <a class="nav-item" data-goto="works"><svg class="ico"><use href="#i-folder"/></svg>我的作品</a>
+      <a class="nav-item" data-goto="usage"><svg class="ico"><use href="#i-wallet"/></svg>额度与用量</a>
+      <a class="nav-item" data-goto="profile"><svg class="ico"><use href="#i-user"/></svg>个人中心</a>
+    </nav>
+    <div class="sidebar-foot">
+      <button class="user-block" data-goto="profile">
+        <span class="avatar sm">林</span>
+        <span class="meta">
+          <strong>林岸</strong>
+          <small>专业版 · 剩余 ¥128.40</small>
+        </span>
+        <svg class="ico sm" style="color:#9aa1ab"><use href="#i-chev-down"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="tb-left">
+        <button class="icon-btn" title="折叠导航"><svg class="ico"><use href="#i-menu"/></svg></button>
+        <span class="crumb">账号</span>
+        <svg class="ico sm" style="color:#b6bcc6"><use href="#i-chev-right"/></svg>
+        <span class="tb-title" id="tbTitle">登录</span>
+      </div>
+      <div class="tb-right">
+        <button class="tb-quota" data-goto="usage">
+          <svg class="ico sm"><use href="#i-wallet"/></svg>
+          <span>剩余额度</span><b class="num">¥128.40</b>
+        </button>
+        <button class="icon-btn" title="搜索"><svg class="ico"><use href="#i-search"/></svg></button>
+        <button class="icon-btn" title="通知"><svg class="ico"><use href="#i-bell"/></svg><i class="dot"></i></button>
+        <button class="avatar sm" data-goto="profile" style="margin-left:2px">林</button>
+      </div>
+    </header>
+
+    <div class="page-area" id="pageArea">
+      <!-- ================================================================
+           一、登录
+           ================================================================ -->
+      <section class="page active auth-page" data-page="login" data-title="登录" data-state="default">
+        <div class="auth-grid">
+          <div class="auth-side">
+            <div class="auth-side-top">
+              <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><use href="#i-k"/></svg></span>
+              Kantoku
+            </div>
+            <div class="auth-side-body">
+              <p class="kicker">AI 创作工作台</p>
+              <h1>把一句话，<br>变成一部成片。</h1>
+              <p class="lede">剧本、分镜、生成、审核——Kantoku 把创作拆成可追溯的节点。每一步都能回退，每一笔都能对账。</p>
+              <ul class="feat">
+                <li>
+                  <span class="fi"><svg class="ico sm"><use href="#i-spark"/></svg></span>
+                  节点化生产流程<small>16 个可审核环节</small>
+                </li>
+                <li>
+                  <span class="fi"><svg class="ico sm"><use href="#i-shield"/></svg></span>
+                  审核与版本留痕<small>每次改动可回溯</small>
+                </li>
+                <li>
+                  <span class="fi"><svg class="ico sm"><use href="#i-wallet"/></svg></span>
+                  额度按次结算<small>失败自动释放</small>
+                </li>
+              </ul>
+            </div>
+            <div class="auth-side-foot">
+              <span>© 2026 Kantoku Studio</span>
+              <a>服务条款</a>
+              <a>隐私政策</a>
+            </div>
+          </div>
+
+          <div class="auth-main">
+            <div class="auth-card">
+              <div class="auth-mobile-brand">
+                <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" style="width:15px;height:15px"><use href="#i-k"/></svg></span>
+                Kantoku
+              </div>
+              <div class="card" style="padding:28px">
+                <div class="auth-card-head">
+                  <h2>登录</h2>
+                  <p>使用手机号验证码或邮箱密码进入工作台</p>
+                </div>
+
+                <div class="seg seg-block" data-auth-tabs style="margin-bottom:18px">
+                  <button class="on" data-auth-tab="phone">手机号验证码</button>
+                  <button data-auth-tab="email">邮箱密码</button>
+                </div>
+
+                <div class="alert alert-danger form-alert">
+                  <svg class="ico sm"><use href="#i-alert"/></svg>
+                  <span>验证码错误或已过期，请重新获取（错误码 <b>AUTH_4021</b>）</span>
+                </div>
+
+                <form class="auth-form" data-form="phone" onsubmit="return false">
+                  <label class="field">
+                    <span class="label">手机号</span>
+                    <span class="input-wrap">
+                      <span class="prefix">+86</span>
+                      <input type="tel" value="138 0013 6021" autocomplete="tel">
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span class="label">验证码</span>
+                    <span class="input-wrap js-invalid">
+                      <input type="text" placeholder="6 位数字" value="204815" maxlength="6" inputmode="numeric">
+                      <button type="button" class="suffix-btn" id="codeBtn">获取验证码</button>
+                    </span>
+                    <span class="hint js-err-hint danger">验证码错误，请重新获取</span>
+                    <span class="hint">未注册的手机号验证后将自动创建账号</span>
+                  </label>
+                  <button class="btn btn-primary btn-lg btn-block" type="submit">
+                    <span class="only-idle">登录 / 注册</span>
+                    <span class="only-loading"><i class="spinner"></i>正在验证…</span>
+                  </button>
+                </form>
+
+                <form class="auth-form" data-form="email" hidden onsubmit="return false">
+                  <label class="field">
+                    <span class="label">邮箱</span>
+                    <span class="input-wrap">
+                      <input type="email" value="linan@studio.cn" autocomplete="email">
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span class="label">密码 <a class="forgot" href="#">忘记密码？</a></span>
+                    <span class="input-wrap js-invalid">
+                      <input type="password" value="kantoku-2026" autocomplete="current-password">
+                      <button type="button" class="suffix-btn" data-pw-toggle>显示</button>
+                    </span>
+                    <span class="hint js-err-hint danger">邮箱或密码不正确</span>
+                  </label>
+                  <button class="btn btn-primary btn-lg btn-block" type="submit">
+                    <span class="only-idle">登录</span>
+                    <span class="only-loading"><i class="spinner"></i>正在登录…</span>
+                  </button>
+                </form>
+
+                <div class="auth-or"><span>或</span></div>
+                <button class="btn btn-ghost btn-block" data-goto="invite">
+                  <svg class="ico sm"><use href="#i-ticket"/></svg>使用邀请码注册
+                </button>
+                <p class="auth-legal">登录即表示同意 <a>服务条款</a> 与 <a>隐私政策</a></p>
+              </div>
+              <p class="auth-alt">还没有账号？<a data-goto="invite">创建账号</a></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           二、邀请注册
+           ================================================================ -->
+      <section class="page invite-page" data-page="invite" data-title="邀请注册" data-state="default">
+        <div class="invite-brand">
+          <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" style="width:15px;height:15px"><use href="#i-k"/></svg></span>
+          Kantoku
+        </div>
+
+        <div class="invite-card">
+          <div class="invite-banner">
+            <span class="avatar">林</span>
+            <div class="ib-body">
+              <strong>林岸 邀请你加入 Kantoku</strong>
+              <small>接受邀请后，双方各得 200 元创作额度</small>
+            </div>
+            <span class="chip chip-success"><svg class="ico"><use href="#i-check"/></svg>邀请有效</span>
+          </div>
+
+          <div class="alert alert-danger form-alert" style="margin-bottom:14px">
+            <svg class="ico sm"><use href="#i-alert"/></svg>
+            <span>邀请码不存在或已过期，请向邀请人确认后重试</span>
+          </div>
+
+          <h2>创建账号</h2>
+          <p class="sub">填写以下信息完成注册，邀请权益将在注册成功后立即到账</p>
+
+          <label class="field">
+            <span class="label">邀请码 <a class="forgot">没有邀请码？</a></span>
+            <span class="input-wrap js-invalid">
+              <svg class="ico sm" style="color:#8a9099"><use href="#i-ticket"/></svg>
+              <input value="KANT-8F2K" spellcheck="false" style="letter-spacing:.06em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px">
+              <span class="hint ok" style="margin:0;font-size:11px"><svg class="ico sm"><use href="#i-check"/></svg>已校验</span>
+            </span>
+            <span class="hint js-err-hint danger">邀请码不存在或已过期</span>
+          </label>
+
+          <div class="seg seg-block" data-auth-tabs style="margin:2px 0 16px">
+            <button class="on" data-auth-tab="phone">手机号注册</button>
+            <button data-auth-tab="email">邮箱注册</button>
+          </div>
+
+          <form class="auth-form" data-form="phone" onsubmit="return false">
+            <label class="field">
+              <span class="label">手机号</span>
+              <span class="input-wrap">
+                <span class="prefix">+86</span>
+                <input type="tel" placeholder="请输入手机号" value="138 0013 6021">
+              </span>
+            </label>
+            <label class="field">
+              <span class="label">验证码</span>
+              <span class="input-wrap js-invalid">
+                <input type="text" placeholder="6 位数字" maxlength="6" value="880412" inputmode="numeric">
+                <button type="button" class="suffix-btn" id="codeBtn2">获取验证码</button>
+              </span>
+              <span class="hint js-err-hint danger">验证码已失效，请重新获取</span>
+            </label>
+            <label class="field">
+              <span class="label">昵称</span>
+              <span class="input-wrap">
+                <input type="text" placeholder="2–16 个字符" value="林岸">
+              </span>
+              <span class="hint">昵称会展示在作品协作记录与成员列表中</span>
+            </label>
+          </form>
+
+          <form class="auth-form" data-form="email" hidden onsubmit="return false">
+            <label class="field">
+              <span class="label">邮箱</span>
+              <span class="input-wrap">
+                <input type="email" placeholder="用于登录与接收通知" value="linan@studio.cn">
+              </span>
+            </label>
+            <label class="field">
+              <span class="label">设置密码</span>
+              <span class="input-wrap">
+                <input type="password" value="kantoku-2026" data-pw>
+                <button type="button" class="suffix-btn" data-pw-toggle>显示</button>
+              </span>
+              <span class="strength"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span>
+              <span class="pw-row"><span>强度：中等</span><span>建议加入符号或数字组合</span></span>
+            </label>
+            <label class="field">
+              <span class="label">昵称</span>
+              <span class="input-wrap"><input type="text" placeholder="2–16 个字符" value="林岸"></span>
+            </label>
+          </form>
+
+          <label class="check">
+            <input type="checkbox">
+            <span>我已阅读并同意 <a>《服务条款》</a>、<a>《隐私政策》</a> 与 <a>《创作者公约》</a>，并确认所填信息真实有效。</span>
+          </label>
+
+          <button class="btn btn-primary btn-lg btn-block" disabled>
+            <span class="only-idle">接受邀请并注册</span>
+            <span class="only-loading"><i class="spinner"></i>正在创建账号…</span>
+          </button>
+          <p class="auth-legal">勾选协议后方可继续</p>
+          <p class="auth-alt">已有账号？<a data-goto="login">直接登录</a></p>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           三、个人中心
+           ================================================================ -->
+      <section class="page" data-page="profile" data-title="个人中心" data-state="default">
+        <div class="page-inner">
+          <header class="page-header">
+            <div>
+              <h1>个人中心</h1>
+              <p>管理账号资料、联系方式与安全设置。敏感操作会记录在账号日志中，可随时导出。</p>
+            </div>
+            <div class="ph-actions">
+              <button class="btn btn-ghost"><svg class="ico sm"><use href="#i-download"/></svg>导出数据</button>
+              <button class="btn btn-primary"><svg class="ico sm"><use href="#i-pencil"/></svg>编辑资料</button>
+            </div>
+          </header>
+
+          <div class="s-default grid-profile">
+            <aside class="card profile-card">
+              <div class="pc-head">
+                <span class="avatar xl">林</span>
+                <div class="pc-name">
+                  <h2>林岸 <button class="icon-btn" style="width:22px;height:22px" title="修改昵称"><svg class="ico sm" style="color:#8a9099"><use href="#i-pencil"/></svg></button></h2>
+                  <span class="chip chip-accent">专业版 · 年付</span>
+                </div>
+              </div>
+              <p class="pc-bio">短剧导演 · 团队「雾港工作室」</p>
+
+              <dl class="kv">
+                <div>
+                  <dt>手机号</dt>
+                  <dd>138 0013 6021 <span class="chip chip-xs chip-success">已绑定</span></dd>
+                </div>
+                <div>
+                  <dt>邮箱</dt>
+                  <dd>linan@studio.cn <span class="chip chip-xs chip-success">已绑定</span></dd>
+                </div>
+                <div>
+                  <dt>注册时间</dt>
+                  <dd>2026-03-12</dd>
+                </div>
+                <div>
+                  <dt>我的邀请码</dt>
+                  <dd><span class="mono">KANT-8F2K</span> <button class="copy-btn" data-copy="KANT-8F2K">复制</button></dd>
+                </div>
+              </dl>
+
+              <div class="pc-stats">
+                <div><strong class="num">14</strong><small>作品</small></div>
+                <div><strong class="num">3</strong><small>协作</small></div>
+                <div><strong class="num">342</strong><small>本月生成</small></div>
+              </div>
+            </aside>
+
+            <div class="stack">
+              <section class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>账户安全</h3>
+                    <p>密码与绑定信息用于登录验证，修改后其他设备将需要重新登录</p>
+                  </div>
+                  <span class="chip chip-warn"><svg class="ico"><use href="#i-shield"/></svg>1 项待处理</span>
+                </div>
+
+                <div class="row-item">
+                  <span class="row-ico"><svg class="ico"><use href="#i-lock"/></svg></span>
+                  <div class="row-body">
+                    <strong>登录密码</strong>
+                    <small>上次修改于 92 天前 · 建议每 90 天更换一次</small>
+                  </div>
+                  <span class="chip chip-warn">建议更新</span>
+                  <button class="btn btn-ghost btn-sm" data-modal="pwd">修改</button>
+                </div>
+
+                <div class="row-item">
+                  <span class="row-ico"><svg class="ico"><use href="#i-phone"/></svg></span>
+                  <div class="row-body">
+                    <strong>手机号</strong>
+                    <small>138 0013 6021 · 用于验证码登录与安全通知</small>
+                  </div>
+                  <span class="chip chip-success"><svg class="ico"><use href="#i-check"/></svg>已绑定</span>
+                  <button class="btn btn-ghost btn-sm">更换</button>
+                </div>
+
+                <div class="row-item">
+                  <span class="row-ico"><svg class="ico"><use href="#i-mail"/></svg></span>
+                  <div class="row-body">
+                    <strong>邮箱</strong>
+                    <small>linan@studio.cn · 用于密码找回与账单</small>
+                  </div>
+                  <span class="chip chip-success"><svg class="ico"><use href="#i-check"/></svg>已绑定</span>
+                  <button class="btn btn-ghost btn-sm">更换</button>
+                </div>
+
+                <div class="row-item">
+                  <span class="row-ico"><svg class="ico"><use href="#i-shield"/></svg></span>
+                  <div class="row-body">
+                    <strong>两步验证</strong>
+                    <small>登录时额外校验一次动态口令，可显著降低异地登录风险</small>
+                  </div>
+                  <span class="chip chip-muted">未开启</span>
+                  <button class="btn btn-ghost btn-sm">开启</button>
+                </div>
+
+                <div class="row-item">
+                  <span class="row-ico"><svg class="ico"><use href="#i-ticket"/></svg></span>
+                  <div class="row-body">
+                    <strong>邀请码</strong>
+                    <small class="mono">KANT-8F2K · 已邀请 6 人，累计获得 1,200 元额度</small>
+                  </div>
+                  <button class="btn btn-ghost btn-sm" data-copy="KANT-8F2K">复制链接</button>
+                </div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>登录设备</h3>
+                    <p>共 3 台设备处于登录状态</p>
+                  </div>
+                  <button class="btn btn-quiet btn-sm">全部退出</button>
+                </div>
+
+                <div class="row-item">
+                  <span class="row-ico"><svg class="ico"><use href="#i-monitor"/></svg></span>
+                  <div class="row-body">
+                    <strong class="device-name">Windows · Chrome <span class="tag-cur">当前设备</span></strong>
+                    <small>杭州 · 浙江 · 10 分钟前活跃</small>
+                  </div>
+                  <span class="chip chip-info">本机</span>
+                </div>
+                <div class="row-item">
+                  <span class="row-ico"><svg class="ico"><use href="#i-phone"/></svg></span>
+                  <div class="row-body">
+                    <strong>iPhone 16 Pro · Safari</strong>
+                    <small>杭州 · 浙江 · 2 天前</small>
+                  </div>
+                  <button class="btn btn-ghost btn-sm">退出</button>
+                </div>
+                <div class="row-item">
+                  <span class="row-ico"><svg class="ico"><use href="#i-monitor"/></svg></span>
+                  <div class="row-body">
+                    <strong>MacBook Air · Chrome</strong>
+                    <small>上海 · 14 天前</small>
+                  </div>
+                  <button class="btn btn-ghost btn-sm">退出</button>
+                </div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>账号与数据</h3>
+                    <p>注销后账号内的作品与额度将无法恢复，请谨慎操作</p>
+                  </div>
+                </div>
+                <div class="row-item">
+                  <span class="row-ico"><svg class="ico"><use href="#i-download"/></svg></span>
+                  <div class="row-body">
+                    <strong>导出账号数据</strong>
+                    <small>包含作品清单、生成记录与账单明细（JSON / CSV）</small>
+                  </div>
+                  <button class="btn btn-ghost btn-sm">申请导出</button>
+                </div>
+                <div class="row-item">
+                  <span class="row-ico" style="color:var(--danger)"><svg class="ico"><use href="#i-trash"/></svg></span>
+                  <div class="row-body">
+                    <strong>注销账号</strong>
+                    <small>需二次验证手机号，注销后 30 天内可申请恢复</small>
+                  </div>
+                  <button class="btn btn-danger btn-sm">注销</button>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <div class="s-loading">
+            <div class="grid-profile">
+              <div class="card" style="padding:20px">
+                <div style="display:flex;gap:12px;align-items:center">
+                  <div class="skel" style="width:72px;height:72px;border-radius:20px"></div>
+                  <div style="flex:1">
+                    <div class="skel" style="height:15px;width:45%"></div>
+                    <div class="skel" style="height:12px;width:70%;margin-top:9px"></div>
+                  </div>
+                </div>
+                <div class="skel" style="height:12px;margin-top:22px"></div>
+                <div class="skel" style="height:12px;margin-top:10px;width:80%"></div>
+                <div class="skel" style="height:12px;margin-top:10px;width:64%"></div>
+                <div class="skel" style="height:46px;margin-top:22px;border-radius:8px"></div>
+              </div>
+              <div class="stack">
+                <div class="card" style="padding:18px">
+                  <div class="skel" style="height:14px;width:130px"></div>
+                  <div class="skel" style="height:44px;margin-top:18px;border-radius:8px"></div>
+                  <div class="skel" style="height:44px;margin-top:10px;border-radius:8px"></div>
+                  <div class="skel" style="height:44px;margin-top:10px;border-radius:8px"></div>
+                </div>
+                <div class="card" style="padding:18px">
+                  <div class="skel" style="height:14px;width:110px"></div>
+                  <div class="skel" style="height:40px;margin-top:16px;border-radius:8px"></div>
+                  <div class="skel" style="height:40px;margin-top:10px;border-radius:8px"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="s-error">
+            <div class="state-panel err">
+              <svg class="art" viewBox="0 0 96 96" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="16" y="24" width="64" height="48" rx="8"/>
+                <circle cx="48" cy="46" r="12"/>
+                <path d="M48 40v7M48 52h.01"/>
+                <path d="M32 80h32" stroke-dasharray="3 4"/>
+              </svg>
+              <h3>账号信息加载失败</h3>
+              <p>安全设置未能读取，可能是会话已过期或服务暂时不可用。为保护账号，页面已停止提交操作。</p>
+              <div class="code-tag">ACCOUNT_FETCH_FAILED · 2026-10-28 12:31</div>
+              <div class="acts">
+                <button class="btn btn-primary"><svg class="ico sm"><use href="#i-refresh"/></svg>重新加载</button>
+                <button class="btn btn-ghost" data-goto="login">重新登录</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           四、我的作品
+           ================================================================ -->
+      <section class="page" data-page="works" data-title="我的作品" data-state="default">
+        <div class="page-inner">
+          <header class="page-header">
+            <div>
+              <h1>我的作品</h1>
+              <p>你创建的、受邀协作的，以及只属于自己的私人空间——归属关系决定谁能看见、谁能修改。</p>
+            </div>
+            <div class="ph-actions">
+              <button class="btn btn-ghost"><svg class="ico sm"><use href="#i-upload"/></svg>导入作品</button>
+              <button class="btn btn-primary"><svg class="ico sm"><use href="#i-plus"/></svg>新建作品</button>
+            </div>
+          </header>
+
+          <div class="toolbar">
+            <div class="seg">
+              <button class="on">全部 14</button>
+              <button>我创建的 9</button>
+              <button>协作加入 5</button>
+              <button><svg class="ico sm"><use href="#i-lock"/></svg>私人空间 3</button>
+            </div>
+            <div class="grow"></div>
+            <span class="input-wrap search">
+              <svg class="ico sm"><use href="#i-search"/></svg>
+              <input type="search" placeholder="搜索作品、集数或成员">
+            </span>
+            <button class="btn btn-ghost btn-sm">最近更新<svg class="ico sm"><use href="#i-chev-down"/></svg></button>
+            <div class="view-toggle" id="viewToggle">
+              <button class="on" data-view="grid" title="网格视图"><svg class="ico sm"><use href="#i-grid"/></svg></button>
+              <button data-view="list" title="列表视图"><svg class="ico sm"><use href="#i-list"/></svg></button>
+            </div>
+          </div>
+
+          <p class="legend">
+            <svg class="ico sm"><use href="#i-info"/></svg>
+            创建者可移交、归档与删除；协作者可编辑并提交审核；私人空间仅自己可见，不进入团队列表与共享资产。
+          </p>
+
+          <div class="s-default">
+            <div class="grid-works" id="workGrid">
+              <article class="work-card">
+                <div class="cover" style="--c1:#2b3a56;--c2:#5f7fa6">
+                  <div class="cover-top">
+                    <span class="chip chip-dark chip-xs">我创建的</span>
+                    <span class="chip chip-dark chip-xs">进行中</span>
+                  </div>
+                  <div class="cover-foot"><span class="ep">EP.03 · 12 镜头</span><span class="chip chip-dark chip-xs">v7</span></div>
+                  <span class="play"><span><svg class="ico" style="width:15px;height:15px;margin-left:2px"><use href="#i-play"/></svg></span></span>
+                </div>
+                <div class="wc-body">
+                  <h3>雾港来信 · 第 3 集</h3>
+                  <p>悬疑 · 竖屏 9:16 · 2 小时前更新</p>
+                  <div class="wc-foot">
+                    <span class="stack-avatars">
+                      <span class="avatar xs">林</span><span class="avatar xs">周</span><span class="avatar xs more">+2</span>
+                    </span>
+                    <span class="owner-line"><svg class="ico"><use href="#i-user"/></svg>所有者 · 我</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="work-card">
+                <div class="cover" style="--c1:#3a2f4b;--c2:#7c6193">
+                  <div class="cover-top">
+                    <span class="chip chip-dark chip-xs">我创建的</span>
+                    <span class="chip chip-dark chip-xs">待审核</span>
+                  </div>
+                  <div class="cover-foot"><span class="ep">EP.01 · 18 镜头</span><span class="chip chip-dark chip-xs">v3</span></div>
+                  <span class="play"><span><svg class="ico" style="width:15px;height:15px;margin-left:2px"><use href="#i-play"/></svg></span></span>
+                </div>
+                <div class="wc-body">
+                  <h3>长夜将尽</h3>
+                  <p>年代 · 横屏 16:9 · 昨天更新</p>
+                  <div class="wc-foot">
+                    <span class="stack-avatars">
+                      <span class="avatar xs">林</span><span class="avatar xs">陈</span>
+                    </span>
+                    <span class="owner-line"><svg class="ico"><use href="#i-user"/></svg>所有者 · 我</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="work-card">
+                <div class="cover" style="--c1:#2f4b46;--c2:#6f9c8f">
+                  <div class="cover-top">
+                    <span class="chip chip-dark chip-xs">协作加入</span>
+                    <span class="chip chip-dark chip-xs">进行中</span>
+                  </div>
+                  <div class="cover-foot"><span class="ep">EP.02 · 9 镜头</span><span class="chip chip-dark chip-xs">v5</span></div>
+                  <span class="play"><span><svg class="ico" style="width:15px;height:15px;margin-left:2px"><use href="#i-play"/></svg></span></span>
+                </div>
+                <div class="wc-body">
+                  <h3>春潮</h3>
+                  <p>文艺 · 竖屏 9:16 · 3 天前更新</p>
+                  <div class="wc-foot">
+                    <span class="stack-avatars">
+                      <span class="avatar xs">周</span><span class="avatar xs">林</span><span class="avatar xs more">+3</span>
+                    </span>
+                    <span class="owner-line"><svg class="ico"><use href="#i-users"/></svg>协作者 · 周夏邀请</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="work-card">
+                <div class="cover" style="--c1:#4a3527;--c2:#a3835a">
+                  <div class="cover-top">
+                    <span class="chip chip-dark chip-xs">协作加入</span>
+                    <span class="chip chip-dark chip-xs">进行中</span>
+                  </div>
+                  <div class="cover-foot"><span class="ep">EP.01 · 14 镜头</span><span class="chip chip-dark chip-xs">v2</span></div>
+                  <span class="play"><span><svg class="ico" style="width:15px;height:15px;margin-left:2px"><use href="#i-play"/></svg></span></span>
+                </div>
+                <div class="wc-body">
+                  <h3>逆光</h3>
+                  <p>都市 · 竖屏 9:16 · 5 天前更新</p>
+                  <div class="wc-foot">
+                    <span class="stack-avatars">
+                      <span class="avatar xs">陈</span><span class="avatar xs">林</span>
+                    </span>
+                    <span class="owner-line"><svg class="ico"><use href="#i-users"/></svg>协作者 · 陈默邀请</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="work-card">
+                <div class="cover" style="--c1:#26333d;--c2:#5e7f8e">
+                  <div class="cover-top">
+                    <span class="chip chip-dark chip-xs">我创建的</span>
+                    <span class="chip chip-dark chip-xs">已完成</span>
+                  </div>
+                  <div class="cover-foot"><span class="ep">EP.06 · 成片 04:12</span><span class="chip chip-dark chip-xs">v11</span></div>
+                  <span class="play"><span><svg class="ico" style="width:15px;height:15px;margin-left:2px"><use href="#i-play"/></svg></span></span>
+                </div>
+                <div class="wc-body">
+                  <h3>第七次呼吸</h3>
+                  <p>科幻 · 横屏 16:9 · 上周归档</p>
+                  <div class="wc-foot">
+                    <span class="stack-avatars">
+                      <span class="avatar xs">林</span><span class="avatar xs more">+4</span>
+                    </span>
+                    <span class="owner-line"><svg class="ico"><use href="#i-user"/></svg>所有者 · 我</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="work-card">
+                <div class="cover" style="--c1:#3d3a2e;--c2:#948c68">
+                  <div class="cover-top">
+                    <span class="chip chip-dark chip-xs">我创建的</span>
+                    <span class="chip chip-dark chip-xs">草稿</span>
+                  </div>
+                  <div class="cover-foot"><span class="ep">未分集 · 3 镜头</span><span class="chip chip-dark chip-xs">v1</span></div>
+                  <span class="play"><span><svg class="ico" style="width:15px;height:15px;margin-left:2px"><use href="#i-play"/></svg></span></span>
+                </div>
+                <div class="wc-body">
+                  <h3>白露</h3>
+                  <p>剧情 · 尚未选择画幅 · 今天创建</p>
+                  <div class="wc-foot">
+                    <span class="stack-avatars"><span class="avatar xs">林</span></span>
+                    <span class="owner-line"><svg class="ico"><use href="#i-user"/></svg>所有者 · 我</span>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <section class="private-space">
+              <div class="ps-head">
+                <span class="ps-ico"><svg class="ico"><use href="#i-lock"/></svg></span>
+                <div class="ps-body">
+                  <strong>私人空间</strong>
+                  <small>仅你可见 · 3 个作品 · 不进入团队作品列表，也不能被分享或协作</small>
+                </div>
+                <button class="btn btn-ghost btn-sm">进入私人空间<svg class="ico sm"><use href="#i-chev-right"/></svg></button>
+              </div>
+              <div class="ps-thumbs">
+                <div class="ps-thumb" style="--c1:#2b3a56;--c2:#6d8bb0"></div>
+                <div class="ps-thumb" style="--c1:#40333f;--c2:#8b6f80"></div>
+                <div class="ps-thumb" style="--c1:#2c4038;--c2:#648a78"></div>
+                <button class="ps-add" title="在私人空间新建作品"><svg class="ico"><use href="#i-plus"/></svg></button>
+              </div>
+            </section>
+          </div>
+
+          <div class="s-loading">
+            <div class="grid-works">
+              <div class="work-card" style="cursor:default">
+                <div class="skel" style="aspect-ratio:16/10;border-radius:11px"></div>
+                <div class="wc-body">
+                  <div class="skel" style="height:13px;width:70%"></div>
+                  <div class="skel" style="height:11px;width:50%;margin-top:8px"></div>
+                  <div class="skel" style="height:20px;margin-top:14px"></div>
+                </div>
+              </div>
+              <div class="work-card" style="cursor:default">
+                <div class="skel" style="aspect-ratio:16/10;border-radius:11px"></div>
+                <div class="wc-body">
+                  <div class="skel" style="height:13px;width:58%"></div>
+                  <div class="skel" style="height:11px;width:64%;margin-top:8px"></div>
+                  <div class="skel" style="height:20px;margin-top:14px"></div>
+                </div>
+              </div>
+              <div class="work-card" style="cursor:default">
+                <div class="skel" style="aspect-ratio:16/10;border-radius:11px"></div>
+                <div class="wc-body">
+                  <div class="skel" style="height:13px;width:76%"></div>
+                  <div class="skel" style="height:11px;width:44%;margin-top:8px"></div>
+                  <div class="skel" style="height:20px;margin-top:14px"></div>
+                </div>
+              </div>
+              <div class="work-card" style="cursor:default">
+                <div class="skel" style="aspect-ratio:16/10;border-radius:11px"></div>
+                <div class="wc-body">
+                  <div class="skel" style="height:13px;width:62%"></div>
+                  <div class="skel" style="height:11px;width:56%;margin-top:8px"></div>
+                  <div class="skel" style="height:20px;margin-top:14px"></div>
+                </div>
+              </div>
+              <div class="work-card" style="cursor:default">
+                <div class="skel" style="aspect-ratio:16/10;border-radius:11px"></div>
+                <div class="wc-body">
+                  <div class="skel" style="height:13px;width:52%"></div>
+                  <div class="skel" style="height:11px;width:70%;margin-top:8px"></div>
+                  <div class="skel" style="height:20px;margin-top:14px"></div>
+                </div>
+              </div>
+              <div class="work-card" style="cursor:default">
+                <div class="skel" style="aspect-ratio:16/10;border-radius:11px"></div>
+                <div class="wc-body">
+                  <div class="skel" style="height:13px;width:68%"></div>
+                  <div class="skel" style="height:11px;width:48%;margin-top:8px"></div>
+                  <div class="skel" style="height:20px;margin-top:14px"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="s-empty">
+            <div class="state-panel">
+              <svg class="art" viewBox="0 0 96 96" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="14" y="26" width="68" height="46" rx="7" stroke-dasharray="5 5"/>
+                <path d="M24 62l14-13 10 9 8-6 16 14"/>
+                <circle cx="62" cy="40" r="4"/>
+                <path d="M34 18h28M40 12h16"/>
+              </svg>
+              <h3>还没有作品</h3>
+              <p>从一句想法开始，第一个作品大约需要 5 分钟。也可以先看看示例，了解节点化生产是怎么走的。</p>
+              <div class="acts">
+                <button class="btn btn-primary"><svg class="ico sm"><use href="#i-plus"/></svg>新建作品</button>
+                <button class="btn btn-ghost">查看示例作品</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="s-error">
+            <div class="state-panel err">
+              <svg class="art" viewBox="0 0 96 96" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M20 34a8 8 0 0 1 8-8h12l5 5h15a8 8 0 0 1 8 8v25a8 8 0 0 1-8 8H28a8 8 0 0 1-8-8z"/>
+                <path d="M48 46v9M48 62h.01"/>
+                <path d="M78 20 20 78" stroke-dasharray="4 5"/>
+              </svg>
+              <h3>作品列表加载失败</h3>
+              <p>请求超时，未获取到你的作品数据。已保留上一次的筛选条件，重试不会影响正在进行的生成任务。</p>
+              <div class="code-tag">WORKS_LIST_TIMEOUT · 2026-10-28 12:31</div>
+              <div class="acts">
+                <button class="btn btn-primary"><svg class="ico sm"><use href="#i-refresh"/></svg>重试</button>
+                <button class="btn btn-ghost" data-goto="usage">查看额度状态</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           五、额度与用量
+           ================================================================ -->
+      <section class="page" data-page="usage" data-title="额度与用量" data-state="default">
+        <div class="page-inner">
+          <header class="page-header">
+            <div>
+              <h1>额度与用量</h1>
+              <p>按实际生成结算：失败的调用自动释放，账单未知时先占用额度，待供应商回执后核对。</p>
+            </div>
+            <div class="ph-actions">
+              <button class="btn btn-ghost"><svg class="ico sm"><use href="#i-download"/></svg>导出账单</button>
+              <button class="btn btn-primary">充值</button>
+            </div>
+          </header>
+
+          <div class="s-default">
+            <div class="grid-usage-top">
+              <article class="card quota-card">
+                <header>
+                  <span>剩余额度</span>
+                  <span class="chip chip-success"><svg class="ico"><use href="#i-check"/></svg>正常</span>
+                </header>
+                <div class="quota-num"><span class="cny">¥</span><span class="int">128</span><span class="dec">.40</span></div>
+                <div class="bar"><i style="width:36%"></i></div>
+                <div class="quota-foot"><span>本月已用 ¥71.60</span><span>本期额度 ¥200.00</span></div>
+                <p class="quota-note">
+                  <svg class="ico"><use href="#i-info"/></svg>
+                  另有 ¥6.20 处于预占状态，任务结算后自动释放或扣除，不计入可用余额。
+                </p>
+                <div class="quota-actions">
+                  <button class="btn btn-primary btn-sm">充值</button>
+                  <button class="btn btn-ghost btn-sm">自动续费：已关闭</button>
+                  <button class="btn btn-quiet btn-sm" data-goto="profile">账单设置</button>
+                </div>
+              </article>
+
+              <article class="card stat-card">
+                <header><span>本月生成</span><span class="chip chip-muted">10-01 至 10-28</span></header>
+                <div class="stat-big num">342<small>次</small></div>
+                <p class="stat-sub">成功 331 · 失败 11 · 平均每次 ¥0.21</p>
+                <div class="ring-wrap">
+                  <svg class="ring" viewBox="0 0 64 64">
+                    <circle class="ring-bg" cx="32" cy="32" r="27"/>
+                    <circle class="ring-fg" cx="32" cy="32" r="27" stroke-dasharray="164 170" transform="rotate(-90 32 32)"/>
+                  </svg>
+                  <div class="ring-txt"><b class="num">96.8%</b>成功率<br>较上月 +2.1%</div>
+                </div>
+              </article>
+
+              <article class="card stat-card">
+                <header><span>预计可用</span><span class="chip chip-info">按当前均价</span></header>
+                <div class="stat-big num">1,240<small>张图片</small></div>
+                <p class="stat-sub">或约 52 分钟视频生成</p>
+                <div class="mini-bars">
+                  <i style="height:34%"></i><i style="height:52%"></i><i style="height:41%"></i>
+                  <i style="height:66%"></i><i style="height:48%"></i><i class="hi" style="height:82%"></i>
+                  <i style="height:58%"></i>
+                </div>
+              </article>
+            </div>
+
+            <div class="grid-usage-mid">
+              <article class="card chart-card">
+                <div class="card-head" style="padding:0 0 4px">
+                  <div>
+                    <h3>近 14 天消耗</h3>
+                    <p>按已结算金额，单位：元</p>
+                  </div>
+                  <div class="seg sm">
+                    <button class="on">14 天</button>
+                    <button>30 天</button>
+                  </div>
+                </div>
+                <div class="chart">
+                  <div class="bar-col" title="10-15 · ¥2.10"><i style="height:18%"></i></div>
+                  <div class="bar-col" title="10-16 · ¥3.40"><i style="height:27%"></i></div>
+                  <div class="bar-col" title="10-17 · ¥1.80"><i style="height:15%"></i></div>
+                  <div class="bar-col" title="10-18 · ¥5.60"><i style="height:42%"></i></div>
+                  <div class="bar-col" title="10-19 · ¥4.20"><i style="height:33%"></i></div>
+                  <div class="bar-col" title="10-20 · ¥6.80"><i style="height:50%"></i></div>
+                  <div class="bar-col" title="10-21 · ¥3.90"><i style="height:30%"></i></div>
+                  <div class="bar-col" title="10-22 · ¥7.40"><i style="height:55%"></i></div>
+                  <div class="bar-col" title="10-23 · ¥5.10"><i style="height:38%"></i></div>
+                  <div class="bar-col" title="10-24 · ¥8.60"><i style="height:63%"></i></div>
+                  <div class="bar-col" title="10-25 · ¥6.20"><i style="height:46%"></i></div>
+                  <div class="bar-col" title="10-26 · ¥9.80"><i style="height:72%"></i></div>
+                  <div class="bar-col peak" title="10-27 · ¥12.40"><i style="height:92%"></i></div>
+                  <div class="bar-col" title="10-28 · ¥3.60（未结束）"><i style="height:26%"></i></div>
+                </div>
+                <div class="x-axis">
+                  <span>10-15</span><span>10-17</span><span>10-19</span><span>10-21</span><span>10-23</span><span>10-25</span><span>10-28</span>
+                </div>
+              </article>
+
+              <article class="card split-card">
+                <div class="card-head" style="padding:0 0 4px">
+                  <div>
+                    <h3>按能力拆分</h3>
+                    <p>本月已结算 ¥71.60</p>
+                  </div>
+                </div>
+                <div class="split-row">
+                  <div class="sr-top"><b>图片生成</b><span>¥48.20 · 67%</span></div>
+                  <div class="sr-bar"><i style="width:67%;background:#5f78d6"></i></div>
+                  <small>286 次 · 均价 ¥0.17</small>
+                </div>
+                <div class="split-row">
+                  <div class="sr-top"><b>视频生成</b><span>¥19.80 · 28%</span></div>
+                  <div class="sr-bar"><i style="width:28%;background:#a86c18"></i></div>
+                  <small>9 条 · 均价 ¥2.20</small>
+                </div>
+                <div class="split-row">
+                  <div class="sr-top"><b>文本生成</b><span>¥3.60 · 5%</span></div>
+                  <div class="sr-bar"><i style="width:5%;background:#27845c"></i></div>
+                  <small>47 次 · 均价 ¥0.08</small>
+                </div>
+                <div class="split-row" style="padding-bottom:0">
+                  <div class="sr-top" style="color:var(--ink-3);font-size:11.5px"><span>预占中</span><span>¥6.20</span></div>
+                </div>
+              </article>
+            </div>
+
+            <article class="card rec-card">
+              <div class="card-head">
+                <div>
+                  <h3>生成记录</h3>
+                  <p>每条记录与账单明细一一对应，可追溯到作品、镜头与版本</p>
+                </div>
+                <button class="btn btn-ghost btn-sm">查看全部记录<svg class="ico sm"><use href="#i-chev-right"/></svg></button>
+              </div>
+              <div class="rec-list">
+                <div class="rec-head"><span>时间</span><span>类型</span><span>模型</span><span>对象</span><span>状态</span><span>消耗</span></div>
+                <div class="rec-row">
+                  <span class="tm">10-28 14:32</span>
+                  <span class="mdl"><i class="type-dot t-img"></i><span>图片生成</span></span>
+                  <span>Seedream 4.0</span>
+                  <span class="obj">雾港来信 · EP.03 · 镜头 12</span>
+                  <span><span class="chip chip-success">已结算</span></span>
+                  <span class="amt">-¥0.32</span>
+                </div>
+                <div class="rec-row">
+                  <span class="tm">10-28 14:28</span>
+                  <span class="mdl"><i class="type-dot t-vid"></i><span>视频生成</span></span>
+                  <span>即梦 3.0 Pro</span>
+                  <span class="obj">雾港来信 · EP.03 · 镜头 11</span>
+                  <span><span class="chip chip-info">占用中</span></span>
+                  <span class="amt">-¥2.40</span>
+                </div>
+                <div class="rec-row">
+                  <span class="tm">10-28 13:05</span>
+                  <span class="mdl"><i class="type-dot t-img"></i><span>图片生成</span></span>
+                  <span>Seedream 4.0</span>
+                  <span class="obj">春潮 · EP.02 · 封面 A</span>
+                  <span><span class="chip chip-success">已结算</span></span>
+                  <span class="amt">-¥0.32</span>
+                </div>
+                <div class="rec-row">
+                  <span class="tm">10-28 11:47</span>
+                  <span class="mdl"><i class="type-dot t-txt"></i><span>文本生成</span></span>
+                  <span>DeepSeek V3.2</span>
+                  <span class="obj">长夜将尽 · 分镜脚本</span>
+                  <span><span class="chip chip-success">已结算</span></span>
+                  <span class="amt">-¥0.06</span>
+                </div>
+                <div class="rec-row">
+                  <span class="tm">10-28 10:12</span>
+                  <span class="mdl"><i class="type-dot t-vid"></i><span>视频生成</span></span>
+                  <span>即梦 3.0 Pro</span>
+                  <span class="obj">逆光 · EP.01 · 镜头 3</span>
+                  <span><span class="chip chip-warn">待确认</span></span>
+                  <span class="amt">-¥2.40</span>
+                </div>
+                <div class="rec-row">
+                  <span class="tm">10-27 22:31</span>
+                  <span class="mdl"><i class="type-dot t-img"></i><span>图片生成</span></span>
+                  <span>Seedream 4.0</span>
+                  <span class="obj">私人空间 · 概念图</span>
+                  <span><span class="chip chip-muted">失败已释放</span></span>
+                  <span class="amt" style="color:var(--ink-3)">¥0.00</span>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="s-loading">
+            <div class="grid-usage-top">
+              <div class="card" style="padding:18px">
+                <div class="skel" style="height:12px;width:80px"></div>
+                <div class="skel" style="height:34px;width:150px;margin-top:14px"></div>
+                <div class="skel" style="height:6px;margin-top:16px;border-radius:3px"></div>
+                <div class="skel" style="height:11px;margin-top:10px;width:70%"></div>
+                <div class="skel" style="height:28px;width:180px;margin-top:18px;border-radius:6px"></div>
+              </div>
+              <div class="card" style="padding:18px">
+                <div class="skel" style="height:12px;width:70px"></div>
+                <div class="skel" style="height:28px;width:90px;margin-top:14px"></div>
+                <div class="skel" style="height:54px;margin-top:22px;border-radius:8px"></div>
+              </div>
+              <div class="card" style="padding:18px">
+                <div class="skel" style="height:12px;width:70px"></div>
+                <div class="skel" style="height:28px;width:120px;margin-top:14px"></div>
+                <div class="skel" style="height:54px;margin-top:22px;border-radius:8px"></div>
+              </div>
+            </div>
+            <div class="grid-usage-mid">
+              <div class="card" style="padding:16px">
+                <div class="skel" style="height:14px;width:120px"></div>
+                <div class="skel" style="height:150px;margin-top:16px;border-radius:8px"></div>
+              </div>
+              <div class="card" style="padding:16px">
+                <div class="skel" style="height:14px;width:90px"></div>
+                <div class="skel" style="height:52px;margin-top:14px;border-radius:6px"></div>
+                <div class="skel" style="height:52px;margin-top:12px;border-radius:6px"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="s-empty">
+            <div class="state-panel">
+              <svg class="art" viewBox="0 0 96 96" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="20" y="26" width="56" height="44" rx="7"/>
+                <path d="M20 40h56"/><path d="M34 26v-6M62 26v-6"/>
+                <path d="M36 54h24" stroke-dasharray="4 5"/>
+              </svg>
+              <h3>本期还没有生成记录</h3>
+              <p>额度尚未使用。开始第一个作品后，每一次生成的模型、耗时与金额都会记录在这里。</p>
+              <div class="acts">
+                <button class="btn btn-primary" data-goto="works">去创作</button>
+                <button class="btn btn-ghost">查看计费说明</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="s-error">
+            <div class="state-panel err">
+              <svg class="art" viewBox="0 0 96 96" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="20" y="28" width="56" height="40" rx="7"/>
+                <path d="M30 58l10-9 8 6 6-5 12 10"/>
+                <path d="M48 14v10M48 14l-6 6M48 14l6 6"/>
+              </svg>
+              <h3>账单服务暂时不可用</h3>
+              <p>当前无法读取最新额度。为避免重复扣费，页面已暂停发起新的付费生成，已有任务不受影响。</p>
+              <div class="code-tag">BILLING_UNAVAILABLE · 2026-10-28 12:31</div>
+              <div class="acts">
+                <button class="btn btn-primary"><svg class="ico sm"><use href="#i-refresh"/></svg>重试</button>
+                <button class="btn btn-ghost">联系支持</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <nav class="tabbar" id="tabbar">
+    <button data-goto="works"><svg class="ico"><use href="#i-home"/></svg>首页</button>
+    <button data-goto="works"><svg class="ico"><use href="#i-spark"/></svg>创作</button>
+    <button data-goto="works"><svg class="ico"><use href="#i-folder"/></svg>作品</button>
+    <button data-goto="usage"><svg class="ico"><use href="#i-wallet"/></svg>额度</button>
+    <button data-goto="profile"><svg class="ico"><use href="#i-user"/></svg>我的</button>
+  </nav>
+</div>
+
+<div class="toast" id="toast"><svg class="ico sm"><use href="#i-check"/></svg><span id="toastText">已复制</span></div>
+
+<!-- 修改密码 -->
+<div class="modal" id="modal-pwd" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-label="修改登录密码">
+    <header>
+      <div>
+        <h3>修改登录密码</h3>
+        <p>修改成功后，除本机外的其他设备需重新登录</p>
+      </div>
+      <button class="icon-btn" data-close title="关闭"><svg class="ico"><use href="#i-x"/></svg></button>
+    </header>
+
+    <label class="field">
+      <span class="label">当前密码</span>
+      <span class="input-wrap">
+        <input type="password" value="kantoku-2026">
+        <button type="button" class="suffix-btn" data-pw-toggle>显示</button>
+      </span>
+    </label>
+
+    <label class="field" style="margin-bottom:8px">
+      <span class="label">新密码</span>
+      <span class="input-wrap">
+        <input type="password" value="Kantoku@2026x">
+        <button type="button" class="suffix-btn" data-pw-toggle>显示</button>
+      </span>
+      <span class="strength"><i class="ok"></i><i class="ok"></i><i class="ok"></i><i class="ok"></i></span>
+      <span class="pw-row"><span>强度：强</span><span>8–32 位，含大小写字母、数字与符号</span></span>
+    </label>
+
+    <label class="field">
+      <span class="label">确认新密码</span>
+      <span class="input-wrap">
+        <input type="password" value="Kantoku@2026x">
+      </span>
+    </label>
+
+    <div class="alert alert-info">
+      <svg class="ico sm"><use href="#i-info"/></svg>
+      <span>建议不要在多个平台复用同一密码。修改记录可在「登录设备」中查看。</span>
+    </div>
+
+    <footer>
+      <button class="btn btn-ghost" data-close>取消</button>
+      <button class="btn btn-primary" data-close>保存修改</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var app = document.getElementById('app');
+  var pageArea = document.getElementById('pageArea');
+  var tbTitle = document.getElementById('tbTitle');
+  var sections = Array.prototype.slice.call(document.querySelectorAll('.page'));
+  var protoTabs = Array.prototype.slice.call(document.querySelectorAll('#protoTabs button'));
+  var stateBtns = Array.prototype.slice.call(document.querySelectorAll('#statePicker button'));
+  var navItems = Array.prototype.slice.call(document.querySelectorAll('.sidebar .nav-item'));
+  var tabItems = Array.prototype.slice.call(document.querySelectorAll('#tabbar button'));
+
+  var AUTH_PAGES = { login: 1, invite: 1 };
+  var STATE_MAP = {
+    login: ['default', 'loading', 'error'],
+    invite: ['default', 'loading', 'error'],
+    profile: ['default', 'loading', 'error'],
+    works: ['default', 'loading', 'empty', 'error'],
+    usage: ['default', 'loading', 'empty', 'error']
+  };
+  var current = 'login';
+
+  function currentSection() {
+    return document.querySelector('.page[data-page="' + current + '"]');
+  }
+
+  function setState(state) {
+    var section = currentSection();
+    if (!section) return;
+    var allowed = STATE_MAP[current] || ['default'];
+    section.dataset.state = allowed.indexOf(state) >= 0 ? state : 'default';
+    stateBtns.forEach(function (btn) {
+      btn.classList.toggle('on', btn.dataset.state === section.dataset.state);
+      btn.hidden = allowed.indexOf(btn.dataset.state) < 0;
+    });
+  }
+
+  function goto(page) {
+    var target = document.querySelector('.page[data-page="' + page + '"]');
+    if (!target) return;
+    current = page;
+
+    sections.forEach(function (s) { s.classList.toggle('active', s === target); });
+    app.dataset.mode = AUTH_PAGES[page] ? 'auth' : 'work';
+    tbTitle.textContent = target.dataset.title || '';
+
+    protoTabs.forEach(function (b) { b.classList.toggle('on', b.dataset.goto === page); });
+
+    navItems.forEach(function (item) {
+      var label = (item.textContent || '').trim();
+      item.classList.toggle('on', item.dataset.goto === page && label !== '首页' && label !== '创作工作台');
+    });
+
+    var tabIndex = { works: 2, usage: 3, profile: 4 }[page];
+    tabItems.forEach(function (b, i) { b.classList.toggle('on', i === tabIndex); });
+
+    setState('default');
+    pageArea.scrollTop = 0;
+  }
+
+  /* 所有带 data-goto 的元素都可跳转原型页 */
+  document.addEventListener('click', function (e) {
+    var trigger = e.target.closest('[data-goto]');
+    if (trigger) {
+      e.preventDefault();
+      goto(trigger.dataset.goto);
+      return;
+    }
+  });
+
+  /* 顶部状态切换（演示空 / 加载 / 错误） */
+  stateBtns.forEach(function (btn) {
+    btn.addEventListener('click', function () { setState(btn.dataset.state); });
+  });
+
+  /* 登录 / 注册方式切换 */
+  Array.prototype.forEach.call(document.querySelectorAll('[data-auth-tabs]'), function (group) {
+    var buttons = Array.prototype.slice.call(group.querySelectorAll('button'));
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        buttons.forEach(function (b) { b.classList.toggle('on', b === btn); });
+        var page = group.closest('.page');
+        Array.prototype.forEach.call(page.querySelectorAll('.auth-form'), function (form) {
+          form.hidden = form.dataset.form !== btn.dataset.authTab;
+        });
+      });
+    });
+  });
+
+  /* 验证码倒计时 */
+  function bindCode(btn) {
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (btn.disabled) return;
+      var left = 60;
+      btn.disabled = true;
+      btn.textContent = left + 's 后重发';
+      var timer = setInterval(function () {
+        left -= 1;
+        if (left <= 0) {
+          clearInterval(timer);
+          btn.disabled = false;
+          btn.textContent = '重新获取';
+        } else {
+          btn.textContent = left + 's 后重发';
+        }
+      }, 1000);
+    });
+  }
+  bindCode(document.getElementById('codeBtn'));
+  bindCode(document.getElementById('codeBtn2'));
+
+  /* 密码可见性 */
+  Array.prototype.forEach.call(document.querySelectorAll('[data-pw-toggle]'), function (btn) {
+    btn.addEventListener('click', function () {
+      var input = btn.parentElement.querySelector('input');
+      if (!input) return;
+      var show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.textContent = show ? '隐藏' : '显示';
+    });
+  });
+
+  /* 邀请页：勾选协议才可提交 */
+  Array.prototype.forEach.call(document.querySelectorAll('.invite-card .check input'), function (cb) {
+    cb.addEventListener('change', function () {
+      var submit = cb.closest('.invite-card').querySelector('.btn-primary');
+      if (submit) submit.disabled = !cb.checked;
+    });
+  });
+
+  /* 模态 */
+  function openModal(id) {
+    var modal = document.getElementById('modal-' + id);
+    if (modal) modal.hidden = false;
+  }
+  function closeModals() {
+    Array.prototype.forEach.call(document.querySelectorAll('.modal'), function (m) { m.hidden = true; });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-modal]'), function (btn) {
+    btn.addEventListener('click', function () { openModal(btn.dataset.modal); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-close]'), function (btn) {
+    btn.addEventListener('click', closeModals);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeModals();
+  });
+
+  /* 网格 / 列表视图 */
+  var viewToggle = document.getElementById('viewToggle');
+  var workGrid = document.getElementById('workGrid');
+  if (viewToggle && workGrid) {
+    Array.prototype.forEach.call(viewToggle.querySelectorAll('button'), function (btn) {
+      btn.addEventListener('click', function () {
+        Array.prototype.forEach.call(viewToggle.querySelectorAll('button'), function (b) {
+          b.classList.toggle('on', b === btn);
+        });
+        workGrid.classList.toggle('as-list', btn.dataset.view === 'list');
+      });
+    });
+  }
+
+  /* 移动端预览：靠容器查询触发与真机一致的断点 */
+  var mobileToggle = document.getElementById('mobileToggle');
+  mobileToggle.addEventListener('click', function () {
+    document.body.classList.toggle('preview');
+    mobileToggle.classList.toggle('on', document.body.classList.contains('preview'));
+    mobileToggle.textContent = document.body.classList.contains('preview') ? '桌面端预览' : '移动端预览';
+  });
+
+  /* 轻提示 */
+  var toastEl = document.getElementById('toast');
+  var toastText = document.getElementById('toastText');
+  var toastTimer;
+  function toast(msg) {
+    toastText.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 1800);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-copy]'), function (btn) {
+    btn.addEventListener('click', function () {
+      var text = btn.dataset.copy;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(function () {});
+      }
+      toast('已复制 ' + text);
+    });
+  });
+
+  /* 键盘快捷键：1–5 切换页面，方便逐页截图 */
+  document.addEventListener('keydown', function (e) {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    var map = { '1': 'login', '2': 'invite', '3': 'profile', '4': 'works', '5': 'usage' };
+    if (map[e.key]) goto(map[e.key]);
+  });
+
+  /* 直接用链接定位到某一页：?p=works&mobile=1 */
+  var params = new URLSearchParams(location.search);
+  var startPage = params.get('p');
+  if (startPage && document.querySelector('.page[data-page="' + startPage + '"]')) {
+    goto(startPage);
+  } else {
+    goto('login');
+  }
+  if (params.get('mobile') === '1') mobileToggle.click();
+  if (params.get('s')) setState(params.get('s'));
+})();
+</script>
+
+</body>
+</html>

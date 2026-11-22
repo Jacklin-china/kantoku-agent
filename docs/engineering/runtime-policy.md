@@ -4,7 +4,7 @@
 
 ## 唯一入口与目录
 
-`config/runtime_paths.py::RuntimeManager` 统一校验、建目录、登记文件、原子写入和临时目录。`core/database.py::DatabaseManager` 是应用唯一 SQLite 连接工厂。`core/runtime/storage.py::FileCatalog` 是既有数据库里的通用文件目录，不能另建业务 Runtime 或 Artifact 系统。
+`backend/src/kantoku/config/runtime_paths.py::RuntimeManager` 统一校验、建目录、登记文件、原子写入和临时目录。`backend/src/kantoku/core/database.py::DatabaseManager` 是应用唯一 SQLite 连接工厂。`backend/src/kantoku/core/runtime/storage.py::FileCatalog` 是既有数据库里的通用文件目录，不能另建业务 Runtime 或 Artifact 系统。
 
 | 目录 | 内容 | 生命周期 |
 | --- | --- | --- |
@@ -14,7 +14,7 @@
 | artifacts/ | 最终用户交付 | 不自动删除；写入预留 64 MiB 空间 |
 | tmp/ | 临时计算、测试会话、原子写入暂存 | 使用结束清理；测试会话在下次测试启动时回收 |
 
-默认 Runtime root 为项目根目录。可优先用 `KANTOKU_RUNTIME_ROOT` 指定绝对路径，或在 `config/settings.yaml` 的 `storage.runtime_root` 写同一路径（环境变量优先）。两者都留空即项目根。把 root 指到项目外可让运行数据完全不落在仓库里，但属于搬迁：`data/kantoku.db`、`data/images` 中已记录绝对路径的引用不会自动改写，切换前须评估。已有明确配置的非系统 Temp 数据路径兼容保留，不偷偷搬迁数据库、图片或历史引用。原子替换需要在目标卷暂存，唯一例外由 RuntimeManager 创建 `.kantoku-*` 同目录暂存文件并立即清理；显式导出目录不参与后台自动删除。
+默认 Runtime root 为项目根目录。可优先用 `KANTOKU_RUNTIME_ROOT` 指定绝对路径，或在 `backend/config/settings.yaml` 的 `storage.runtime_root` 写同一路径（环境变量优先）。两者都留空即项目根。把 root 指到项目外可让运行数据完全不落在仓库里，但属于搬迁：`data/kantoku.db`、`data/images` 中已记录绝对路径的引用不会自动改写，切换前须评估。已有明确配置的非系统 Temp 数据路径兼容保留，不偷偷搬迁数据库、图片或历史引用。原子替换需要在目标卷暂存，唯一例外由 RuntimeManager 创建 `.kantoku-*` 同目录暂存文件并立即清理；显式导出目录不参与后台自动删除。
 
 递归删除由 `runtime_paths.py::_remove_tree` 完成，**不使用 `shutil.rmtree`**。原因：`shutil.rmtree` 只在顶层判断符号链接，递归时不拒绝目录联接，一旦跟随就会删掉链接指向的真实数据。仓库里确实存在这类联接（`data/qa/*` 快照与 `tmp/staged-check` 下有 15 个 `frontend/node_modules` 联接指向真实依赖）。`_remove_tree` 对每个条目先判断链接，遇到符号链接或目录联接只删除链接本身，绝不进入目标；`remove_owned_directory` 仍额外拒绝顶层为重定向目录。
 
@@ -58,4 +58,4 @@ Vite 缓存使用 cache/vite，ruff 使用 cache/ruff；pytest 自带缓存隔�
 
 禁止在根目录创建临时文件，随手增加 temp/output/cache/data 子树，创建没有生命周期的生成文件或重复数据库，长期保存大测试图片/视频。业务模块禁止直接 mkdir、write_bytes、write_text 或 tempfile；使用 RuntimeManager。结构检查的 AST 规则拦截直接 SQLite 和常见写文件入口，但不替代代码审查。
 
-不新增依赖；不修改业务、费用或审批逻辑。交付压缩包排除 data/logs/cache/artifacts/tmp、数据库、虚拟环境、node_modules 和 QA 文件；保留后端必需的 src/kantoku/shells/web 构建页面。
+不新增依赖；不修改业务、费用或审批逻辑。交付压缩包排除 data/logs/cache/artifacts/tmp、数据库、虚拟环境、node_modules 和 QA 文件；保留后端必需的 backend/src/kantoku/shells/web 构建页面。

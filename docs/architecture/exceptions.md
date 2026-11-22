@@ -25,7 +25,7 @@
 | EX-04 | `src/kantoku/core/runtime/models.py::ArtifactType.LISTING` | 已有 Commerce Artifact 读取与渲染依赖 | 不继续为每个业务追加 Core 枚举；领域信息使用既有 metadata/renderer | 通用扩展契约和旧记录兼容验收后迁移；Module 1/4 |
 | EX-05 | `src/kantoku/domains/comic/services.py::StudioComicServices.provider_for` 与 workflow 对具体 Provider/服务的识别 | 旧 `comic.production.v1`、Studio/首页生产契约保留 | 不接入新 Comic 外部 Prompt 默认路径，不新增 Domain 直接 Provider 调用 | 沿用共享能力并在组装入口注入；旧 Run/请求/未知账单恢复兼容；Module 1 |
 | EX-06 | `src/kantoku/tools/image_gen.py` 共享生图执行、`openai_image.py`/`jimeng.py` 具体协议仍在 tools | 多入口已复用同一 gen_image、预算认领和查询 | 不复制新 ImageService，不重写 Qwen，不为目录整齐移动文件 | 契约和调用者先确认，原接口/供应商请求幂等保持；单独批准能力边界治理 |
-| EX-07 | `src/kantoku/adapters/commerce/product_image.py` 将 Commerce 输入映射到 legacy 镜头预算身份，并依赖 tools.gen_image | Domain Port + Adapter 本身合法；兼容原图能力及账本身份 | 不把整个 adapters 目录判为违规；不借此直接从 Domain 调供应商 | 随 EX-03/06 调整适配，不更改 Commerce 工作流和真实/Mock 标记；Module 1 |
+| EX-07 | `src/kantoku/providers/commerce/product_image.py` 将 Commerce 输入映射到 legacy 镜头预算身份，并依赖 tools.gen_image | Domain Port + Adapter 本身合法；兼容原图能力及账本身份 | 不把整个 adapters 目录判为违规；不借此直接从 Domain 调供应商 | 随 EX-03/06 调整适配，不更改 Commerce 工作流和真实/Mock 标记；Module 1 |
 | EX-08 | `src/kantoku/capabilities/video/service.py` 并发提交认领及未知费用归零风险；当前 provider 仅 Mock | 现有协议和测试需要；尚无真实视频提供方 | 真实 Provider 上线前阻断；不将 Mock 称为真实；本模块不开发 Video | 复用预算原子认领，未知费用不归零，失败/恢复/并发验收；未来独立能力启用模块 |
 | EX-09 | ComicDirectorCoordinator、GraphRuntime、Shell tracked action 分别维护通用 Run 生命周期 | 已有导演恢复、节点业务门禁及轻量操作依赖 | 不新建 Orchestrator/Agent/Runtime；不继续复制取消/事件/恢复实现 | 在既有 Runtime 钩子上收敛，保留导演业务阶段及事件兼容；独立编排治理 |
 | EX-10 | `core/tracing.py` 持久化表缺 trace/run/artifact/request 关联；日志各入口字段不齐 | 旧 trace 表、CLI 和现有日志消费依赖 | 不新建 Trace 系统，不伪造缺失 ID，不把知识 hash 说成因果证明 | 同一表增量迁移及端到端关联证明；Module 2 Trace 统一 |

@@ -2,6 +2,8 @@
 
 本文是当前代码的入口索引，不替代 [AI 开发规则](AI_CODE_RULES.md)、[工程手册](README.md)或[架构例外清单](../architecture/exceptions.md)。修改前仍需核对调用方、实际实现和工作区状态。历史文档中的设计不一定等于当前行为。
 
+> **路径前缀**：后端一律在 `backend/src/kantoku/` 下，下文未写前缀的 `shells/` `domains/` `core/` `tools/` `config/` `skills/` 等都相对该目录；后端测试在 `backend/tests/`，前端源码与测试在 `frontend/`。
+
 ## 从页面进入
 
 | 要找什么 | 从哪里开始 | 往下看 |
@@ -29,7 +31,7 @@
 - 上下文及历史读取：`core/conversation_context.py`；导演的作品、资产和版本在 `domains/comic/projects.py`、`assets.py` 等领域服务中。
 - 图片预算和请求恢复：`core/budget.py`、`tools/image_gen.py`、`capabilities/image.py`。超时不等于外部任务失败；排错时先查原请求和账本状态。
 - 日志和错误：`config/observability.py`、`core/tracing.py`。不同入口的关联字段并不完全一致；Trace 缺失不能证明操作没有执行。
-- 测试入口：后端 `tests/`，前端 `frontend/tests/`；导演工作区可先看 `director-workspace.test.mjs`、`comic-shot-generation.test.mjs`，会话和导演后端可先看 `test_conversation_context.py` 与 `test_comic_director_coordinator.py`。
+- 测试入口：后端 `backend/tests/`，前端 `frontend/tests/`；导演工作区可先看 `director-workspace.test.mjs`、`comic-shot-generation.test.mjs`，会话和导演后端可先看 `test_conversation_context.py` 与 `test_comic_director_coordinator.py`。
 
 ## 后续拆分时的检查顺序
 

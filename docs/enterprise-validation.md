@@ -9,7 +9,7 @@
 新增内容集中在：
 
 - `tools/storyboard.py`：新增 `parse_storyboard_response`，在写库前严格校验 JSON、Pydantic 契约及 20 镜数量；原 `generate_storyboard` 主路径已接入， malformed 输出直接拒绝而非隐式修复。
-- `structured_evaluation.py`：25 条结构化输出有效/故障注入契约，不调用模型、不写业务数据库。
+- `evaluation/structured.py`：25 条结构化输出有效/故障注入契约，不调用模型、不写业务数据库。
 - `scripts/reliability_benchmark.py`：真实 `GraphRuntime` + 独立 SQLite + 子进程 `os._exit(73)`，覆盖 7 类崩溃点。
 - `scripts/offline_quality_gate.py`：将已执行、未运行和待人工验收分开，禁止把离线替身当作真实模型质量。
 - `scripts/context_ab_benchmark.py`：完整历史与“摘要 + 按需读取”的确定性工程 A/B。

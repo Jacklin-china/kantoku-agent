@@ -101,7 +101,7 @@ Comic 完整镜头 Prompt 复用 `domains/comic/prompts.py` 的现有 Compiler�
 
 ## 7. 日志和错误
 
-复用 `config/observability.py`、日志上下文及现有 Runtime Event。错误边界应提供下列结构化信息：
+复用 `backend/src/kantoku/config/observability.py`、日志上下文及现有 Runtime Event。错误边界应提供下列结构化信息：
 
 | 字段 | 要求 |
 | --- | --- |
@@ -130,7 +130,7 @@ Fake/Mock 结果必须保留来源标记，不能被升级为真实 IMAGE / VIDE
 
 不提交密钥、本地配置、数据库、日志、上传/生成媒体、缓存、虚拟环境、node_modules 或验收副本。运行数据不进入 Git，也不进入项目交付压缩包；清理打包清单不等于允许删除本地用户数据。
 
-`src/kantoku/shells/web/` 是后端提供的必要静态构建交付物，不是另一套前端源码。更新时须对应同一份 `frontend/src` 构建，不手工改压缩 bundle，不因“生成文件”而清空它。
+`backend/src/kantoku/shells/web/` 是后端提供的必要静态构建交付物，不是另一套前端源码。更新时须对应同一份 `frontend/src` 构建，不手工改压缩 bundle，不因“生成文件”而清空它。
 
 不得覆盖他人的未提交改动或暂存区。标准启动方式保持 `python -m kantoku serve` 和 `frontend/` 的 `npm run dev`，不依赖隐藏步骤。
 

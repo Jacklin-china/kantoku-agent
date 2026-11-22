@@ -61,7 +61,7 @@
 | 原 `run-49dcb50ba6e849c091f82ab20b4158e7`、导演 v1 | 第一份方案 `comic-project-2c37cabb16124f99ae65a95e25bfa249`，保留背对镜头抬头看樱花 |
 | 原第二条消息 `run-49a4828fe25f41779aa74434ea273723`，及后续 v3–v5 的三个 Run | 第二份方案 `comic-project-2f9d5303234848f39e418aa33780d653`，原 v2–v5 保存为独立 v1–v4 |
 
-恢复请求为 `recover-work-plans-20261016-sakura`，备份位于 `data/backups/kantoku-b086f2983ff2413583a01278f852f178.sqlite`。写入后逐项核对原五个导演版本、五个来源 Run 和四条消息均未变化；重放返回同一恢复结果。原第一版关联的 Storyboard/Shot/Prompt 保持原 ID 和 Artifact，通过明确的历史来源链接查看，不复用其确认或伪装成新编译结果。本次两条用户消息与五个导演版本归属均有确定记录；其余历史内容留在原来源，不按标题或时间猜测合并。
+恢复请求为 `recover-work-plans-20261016-sakura`，备份位于 `data/backups/kantoku-b086f2983ff2413583a01278f852f178.sqlite`（该文件已于 2026-11-22 随 `data/backups/` 整体清理删除，此处保留的是当时的操作记录）。写入后逐项核对原五个导演版本、五个来源 Run 和四条消息均未变化；重放返回同一恢复结果。原第一版关联的 Storyboard/Shot/Prompt 保持原 ID 和 Artifact，通过明确的历史来源链接查看，不复用其确认或伪装成新编译结果。本次两条用户消息与五个导演版本归属均有确定记录；其余历史内容留在原来源，不按标题或时间猜测合并。
 
 ## 前一阶段验证记录
 

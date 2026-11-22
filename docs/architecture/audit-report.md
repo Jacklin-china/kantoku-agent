@@ -100,6 +100,11 @@ flowchart TD
 
 当前不存在 `src/kantoku/providers/`。具体协议分布在 tools、Commerce adapters、video provider 中；不能画一个不存在的统一 Provider 目录，也不能为对齐目录名立即复制实现。
 
+> 2026-11-22 更新：`src/kantoku/adapters/` 已更名为 `src/kantoku/providers/`（纯改名，四个模块原样迁移：
+> `deepseek_balance` `tencent_sms` `volcengine_balance` 与 `commerce/`），`kantoku.providers` 现已是真实存在的统一适配层目录。
+> 上文是审计当时（2026-10-06）的事实，保留不改；`adapters/commerce/` → `domains/commerce/` 的归属问题仍未解决，见
+> [project-layout](../engineering/project-layout.md) §9 的 R2。
+
 ## 4. Module A — Core 污染
 
 | 编号 / 严重程度 | 文件及代码位置 | 问题 / 证据 | 建议 |
@@ -237,7 +242,8 @@ P1：`domains/comic/prompts.py:338–363` 每个 Prompt payload 检索最多 100
 
 - Git 清单未发现已跟踪的 pyc、__pycache__、node_modules、运行数据库等典型垃圾；本地忽略目录存在不等于进入仓库。
 - `data/` 含历史验收产物和源码副本但已忽略；交付压缩包仍需明确排除，不能因此删除业务或审计数据。
-- `assets/reference/` 是未跟踪参考资产，归属未知，不认定为垃圾。
+- `assets/reference/` 曾是未跟踪参考资产（environments/personas/styles，5.4 M），代码零引用；
+  2026-11-22 经用户确认已删除，本条目仅保留当时的审计结论。
 - 未发现生产源码导入 pytest/unittest；未找到目标范围内明显 TODO/FIXME/HACK/NotImplemented 遗留。无法据此证明所有无用代码已识别。
 - 没有发现上述规模的完全相同 Python 函数体；未证明不存在同义函数或大段注释废代码，删除须另行做可达性核验。
 - `shells/web_studio.py` 4393 行，`RuntimeStore` 1238 行，ComicCoordinator 1157 行；stream_conversation 约 574 行、make_server 约 554 行。体量与多职责说明维护风险，不能单凭行数定为 P0 或自动拆文件。

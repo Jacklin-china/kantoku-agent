@@ -4,6 +4,8 @@
 
 查找当前页面、导演流程与核心服务的代码入口，可先看 [代码导航](code-navigation.md)。
 
+> **路径前缀约定（2026-11-22 起）**：后端已整体收进 `backend/`。本文件下文的历史章节里，凡写 `src/kantoku/...`、`tests/...`、`config/...`、`skills/...`、`evals/...`、`db/schema.sql` 的，一律读作对应的 `backend/` 下路径；`perception/...` 读作 `capabilities/vision/...`（R4 已落地）。写历史记录时的原样路径不再逐个改写。现行顶层布局见 [project-layout.md](project-layout.md) §1。
+
 ## 后续 AI 修改的必读入口（治理 Module 0，2026-10-05）
 
 每次修改前依次阅读：根目录 [AGENTS.md](../../AGENTS.md) → [AI_CODE_RULES.md](AI_CODE_RULES.md) → [product-principles.md](../product/product-principles.md) → 本手册；核对[架构例外清单](../architecture/exceptions.md)及当前实现，并阅读[运行存储规范](runtime-policy.md)。旧章节是阶段记录，不得据此复制旧架构例外或改动用户冻结的流程。
@@ -840,7 +842,7 @@ Shot 续写在聊天中显示未完成原因，不冒充新方案，重新发送
 
 验证：`tests/test_conversation_context.py`、`test_dynamic_director_context.py`、`test_comic_workspace.py`、`test_web_studio.py` 合组 **183 项通过**；包括截图原话的连续后续请求、不同事实来源、历史摘要重复压缩、纠正失败、越界/重复/遗漏/撤回/虚构及跨会话拒绝，原 120 轮记忆测试也执行通过。前端全组 **226 项通过**，类型检查、构建、ruff、结构与差异检查通过。真实隔离 HTTP/SQLite 浏览器以延迟失败验证发送中离开、返回恢复原错误并结束等待、继续第二轮，两次输入只有两次提交，错误编号均保留。标准后端入口在 RuntimeManager 隔离会话启动，首页载入本轮 bundle，作品 API 均 HTTP 200，退出 0，无 WAL/SHM；自有测试会话已清理。没有付费模型和外部 Codex 生图质量实测，源码未提交，运行中的旧后端需重启。
 
-用户另外明确授权备份后补记截图中的一条历史失败请求。已通过 DatabaseManager 的 SQLite backup 保存 `data/backups/kantoku-0115a7199f64468b8b2f3d3eb950abaa.sqlite`，核验同一作品、会话、消息事件及日志 Trace 后，通过原 RuntimeStore 仅追加内部结果 `artifact-ac509c59a75149f3b3adab5c5133747f`，关联请求 `b09b1d51-7940-4f26-8de9-77cad5c83a37` 和原错误编号。没有改写用户消息、Run、方案、图片或账单，也没有模型调用；前后消息完整对比一致。历史请求的原完整信封不可还原，恢复记录如实标注缺失，不伪造版本和输入。需要恢复时使用备份副本核对，不能覆盖活跃数据库；本次未执行删除或回滚。这项一次性旧数据补记没有进入运行逻辑。
+用户另外明确授权备份后补记截图中的一条历史失败请求。已通过 DatabaseManager 的 SQLite backup 保存 `data/backups/kantoku-0115a7199f64468b8b2f3d3eb950abaa.sqlite`（该备份文件已于 2026-11-22 随 `data/backups/` 整体清理删除，此处保留的是当时的操作记录），核验同一作品、会话、消息事件及日志 Trace 后，通过原 RuntimeStore 仅追加内部结果 `artifact-ac509c59a75149f3b3adab5c5133747f`，关联请求 `b09b1d51-7940-4f26-8de9-77cad5c83a37` 和原错误编号。没有改写用户消息、Run、方案、图片或账单，也没有模型调用；前后消息完整对比一致。历史请求的原完整信封不可还原，恢复记录如实标注缺失，不伪造版本和输入。需要恢复时使用备份副本核对，不能覆盖活跃数据库；本次未执行删除或回滚。这项一次性旧数据补记没有进入运行逻辑。
 
 ### 已采用图片后的连续创作结构纠正（2026-10-21）
 
