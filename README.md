@@ -72,13 +72,15 @@ backend/                 后端全部内容（源码 + 测试 + 配置 + 建库 
   src/kantoku/
     shells/              接口层：FastAPI 路由、请求校验、错误映射
     domains/             业务：comic（漫剧全流程）、commerce（电商旧域）
-    capabilities/        通用 AI 能力：image / video / text / vision（视觉质检）
-    providers/           外部协议适配：deepseek / tencent_sms / volcengine / commerce
+    capabilities/        通用 AI 能力：image / video / text / vision（视觉质检）/
+                         生图编排（image_gen, image_batch）、Prompt 组装、归档、分镜、创作任务
+    providers/           外部协议适配：contracts（ImageProvider 协议）/ jimeng / openai_image /
+                         deepseek / tencent_sms / volcengine
     core/                领域无关骨架：Run / Workflow / Node / Approval / Artifact /
                          Memory / Runtime Event / Checkpoint / 数据库与文件生命周期
-    tools/               具体工具实现
     config/              配置与运行时路径
-    schemas/ memory/ agent/              数据模型、记忆、统一 Agent 循环
+    agent/               统一 Agent 循环（loop / context / tools_registry）
+    schemas/ memory/     数据模型与记忆人格
   tests/ config/ db/ skills/ evals/       测试、配置、建库、Skill、评测
 
 frontend/                Vue 3 单页应用（只经 HTTP 调后端）

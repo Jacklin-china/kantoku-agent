@@ -51,12 +51,13 @@ frontend/  Vue 3（只通过 HTTP 调后端，不复制后端业务规则）
 backend/src/kantoku/
 shells/    接口层：FastAPI 路由、请求校验、错误映射（web_studio / fastapi_studio）
     │
-    ├── domains/       业务：comic（漫剧全流程）、commerce（电商旧域）
-    ├── capabilities/  通用 AI 能力：image / video / text / vision（视觉质检）
-    ├── providers/     外部协议适配：deepseek / tencent_sms / volcengine / commerce
+    ├── domains/       业务：comic（漫剧全流程）；commerce 仅存历史记录的 domain 字符串
+    ├── capabilities/  通用 AI 能力：image / video / text / vision（视觉质检）/
+    │                  生图编排（image_gen, image_batch）与 Prompt 组装、归档、分镜、创作任务
+    ├── providers/     外部协议适配：contracts（ImageProvider 协议）/ jimeng / openai_image /
+    │                  deepseek / tencent_sms / volcengine
     ├── core/          领域无关骨架：Run / Workflow / Node / Approval / Artifact / Memory /
     │                  Runtime Event / Checkpoint / 数据库与文件生命周期
-    ├── tools/         具体工具实现（含少量供应商 SDK，见 §4 遗留项）
     ├── agent/         统一 Agent 循环：loop / context / tools_registry（唯一执行体）
     ├── config/        配置与运行时路径（runtime_paths）
     └── schemas/ / memory/  数据模型与记忆人格
@@ -85,8 +86,9 @@ shells/    接口层：FastAPI 路由、请求校验、错误映射（web_studio
 - 文档：`kebab-case.md`，不加 `01-` 这类序号前缀；长篇设计进 `docs/architecture/`，长期约束进 `docs/engineering/`，一次性记录进 `docs/evals/`，过时材料进 `docs/archive/`。
 - **禁止平行实现**：`*_new` `*_old` `*_backup` `*_final` `*_v2` 一律不允许存在；历史交给 Git。
 - **禁止用 `.gitignore` 掩盖放错位置的文件**。先判断"它该不该在这里"，再决定是否忽略。
-- 遗留项（已登记，`docs/engineering/project-layout.md` §9，不要顺手一起改）：
-  R2 `providers/commerce/` 应归 `domains/commerce/`；R3 `tools/` 混了供应商与能力；R7 `backup` 类型无容量上限。
+- 后端分层固定为 `core` / `domains` / `capabilities` / `providers`（+ `agent` / `shells` / `schemas` / `memory` / `config` / `evaluation`）。**不再存在 `tools/` `perception/` `adapters/`**：供应商实现进 `providers/`，通用能力进 `capabilities/`。
+- 前端 `components/` 根目录不放 `.vue`，一律按域归组（`comic` `chat` `layout` `ui` `workspace` `artifacts` `approval` `conversation` `brand`）。
+- 历史整改已全部完成（`docs/engineering/project-layout.md` §9 的 R1–R8）：不要再照旧路径新建文件，也不要重新引入被移除的目录。
 
 ---
 

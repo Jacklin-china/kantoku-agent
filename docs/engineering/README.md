@@ -4,7 +4,7 @@
 
 查找当前页面、导演流程与核心服务的代码入口，可先看 [代码导航](code-navigation.md)。
 
-> **路径前缀约定（2026-11-22 起）**：后端已整体收进 `backend/`。本文件下文的历史章节里，凡写 `src/kantoku/...`、`tests/...`、`config/...`、`skills/...`、`evals/...`、`db/schema.sql` 的，一律读作对应的 `backend/` 下路径；`perception/...` 读作 `capabilities/vision/...`（R4 已落地）。写历史记录时的原样路径不再逐个改写。现行顶层布局见 [project-layout.md](project-layout.md) §1。
+> **路径前缀约定（2026-11-22 起）**：后端已整体收进 `backend/`。本文件下文的历史章节里，凡写 `src/kantoku/...`、`tests/...`、`config/...`、`skills/...`、`evals/...`、`db/schema.sql` 的，一律读作对应的 `backend/` 下路径；`perception/...` 读作 `capabilities/vision/...`（R4）；`tools/<模块>.py` 读作 `capabilities/<模块>.py`，其中 `jimeng` / `openai_image` 读作 `providers/` 下同名模块（R3）。写历史记录时的原样路径不再逐个改写。现行顶层布局见 [project-layout.md](project-layout.md) §1。
 
 ## 后续 AI 修改的必读入口（治理 Module 0，2026-10-05）
 

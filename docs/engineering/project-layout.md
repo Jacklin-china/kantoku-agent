@@ -48,14 +48,15 @@ AGENTS.md 规定后端分四层：`core` / `domains` / `capabilities` / `provide
 | 实际目录 | 内容 | 与规范的差距 |
 |---|---|---|
 | `core/` | `approval` `artifacts` `runtime` `skills` `state` `budget.py` `database.py` `llm.py` 等 | 一致。域无关的运行、工作流、产物、审批、状态抽象都在这里 |
-| `domains/` | `comic` `commerce` | 一致 |
-| `capabilities/` | `image.py` `creative.py` `web_search.py` `video/` `vision/` | 已收进视觉质检；`tools/` 里的通用能力仍待迁入（见 R3） |
-| `providers/` | `deepseek_balance.py` `volcengine_balance.py` `tencent_sms.py` `commerce/` | 命名已对齐（R1）；`commerce/` 是业务代码，不该在这一层（见 R2） |
+| `domains/` | `comic` | 一致。`commerce` 已无代码模块，仅作为历史记录的 domain 字符串保留 |
+| `capabilities/` | `image.py` `image_gen.py` `image_batch.py` `prompt_factory.py` `archive.py` `storyboard.py` `studio.py` `creative.py` `web_search.py` `video/` `vision/` | 一致（R3 已落地：原 `tools/` 的通用能力全部归入） |
+| `providers/` | `contracts.py` `jimeng.py` `openai_image.py` `deepseek_balance.py` `volcengine_balance.py` `tencent_sms.py` | 一致（R1 改名、R2 移除空壳、R3 收进两个供应商 SDK） |
 | `agent/` | `loop.py` `context.py` `tools_registry.py` | 一致（R6 已登记为「统一 Agent 循环」层） |
-| `tools/` | `image_gen.py` `jimeng.py` `openai_image.py` `storyboard.py` `prompt_factory.py` `archive.py` `image_batch.py` `studio.py` | **职责混杂**：`jimeng` / `openai_image` 是具体供应商，应属 `providers`；其余是能力，应属 `capabilities`（见 R3） |
 | `shells/` | `fastapi_studio.py` `studio.py` `cli.py` `conversation_router.py` `qc_cli.py` `image_cli.py` `web/` | 一致。表现层与传输层入口都在这 |
 | `schemas/` | `media.py` `qc.py` `storyboard.py` | 与 `core/state` 存在模型定义重叠风险，新增类型前先查两处 |
 | `memory/` `config/` `evaluation/` | 记忆人格、配置与运行时路径、结构化评测 | 一致 |
+
+`tools/` **已不存在**。它的 8 个模块按职责拆进三层：`jimeng` / `openai_image` 是供应商协议实现 → `providers/`；`image_gen` / `image_batch` / `prompt_factory` / `archive` / `storyboard` / `studio` 是通用能力 → `capabilities/`。`providers/contracts.py` 承载 `ImageProvider` 协议与 `ProviderAccessResult`，让能力层与 Provider 都只向下依赖它，避免 Provider 反向依赖能力层。
 
 ### 命名约定（后端）
 
@@ -71,14 +72,24 @@ AGENTS.md 规定后端分四层：`core` / `domains` / `capabilities` / `provide
 ```
 frontend/
   src/
-    components/{approval,artifacts,brand,chat,comic,conversation,layout,ui,workspace}
-    domains/{comic,commerce}
+    components/
+      approval/  artifacts/  brand/  chat/  comic/  conversation/
+      layout/    ui/         workspace/
+    domains/{comic,commerce}   前端领域逻辑（presentation / workbench）
     services/     接口调用
     views/        页面级组件
     styles/  assets/
   tests/          node:test 用例
   public/
 ```
+
+`components/` **根目录不允许直接放 `.vue`**：一律按功能域或通用性归组。
+
+- `comic/`：漫剧业务组件（`DirectorWorkspace` `DirectorNodeView` `ComicShotGeneration` `ComicFlowStage` `ImageOptimizeStage` `VideoStage` `WorkSettings` `ComicImageImport` `LegacyWorkImport`）
+- `layout/`：外壳与路由级构件（`AuthGate` `AppConsole` `AppHud` `SidebarNav` `PixelSky` `CommandPalette` `HistoryDrawer`）
+- `ui/`：无业务语义的通用件（`EmptyState` `StatusBadge` `UiDropdown` `ImageViewport`）
+- `workspace/`：通用工作台骨架（`WorkspaceShell` `WorkspacePage` `WorkspaceStageNav` `WorkspaceInspectorDrawer`）与 `stageTypes.ts`
+- `chat/` `artifacts/` `approval/` `conversation/` `brand/`：按消息流、产物渲染、审批卡片、会话时间线、品牌标识划分
 
 约定：
 
@@ -130,7 +141,7 @@ frontend/
 - `logs/` 必须走 `FileCatalog.remove_file(path, "log")`，**不能 `rm`**，否则台账留下幽灵行、配额统计失真。
 - `tmp/` 是正式运行时目录，只清其子目录（如 `tmp/wb` 的浏览器 profile），不可整目录删除。
 - `data/` 属用户数据，禁止删除、禁止清空（AGENTS.md 第九条）。
-- `data/backups/` 例外且危险：`backup` 类型**不在** `EPHEMERAL` 里（`runtime/storage.py:25`），`cleanup()` 第 201 行的 `if kind not in EPHEMERAL: continue` 会永久跳过它。而每次作品导入、方案恢复、认证迁移都会整库拷贝一份（当前库约 96 M），**没有任何上限**。2026-11-22 实测该目录累积 39 个快照、3.5 G。清理只能手动做，且删前必须确认没有文档把它当回滚证据引用。
+- `data/backups/` 已有上限（R7，2026-11-22）：`backup` 类型仍**不在** `EPHEMERAL` 里，不能按 TTL 清（过期时刻可能正好是唯一需要它的时刻）；改为 `cleanup()` 按份数保留最近的 `BACKUP_RETAIN`（默认 **3**）份，超出的旧快照直接删并计入 `released_bytes`。每次作品导入、方案恢复、认证迁移仍会整库拷贝（当前库约 96 M），但**不再无限累积**。需要长期留存的快照必须自己复制到 `data/` 之外，因为它迟早会被新快照挤掉。
 - 手工删 `data/` 下任何已登记文件后，必须同步台账：把对应行 `status` 置为 `deleted`（`FileCatalog.mark_deleted(file_id)`），否则 `active` 但磁盘缺失的幽灵行会让体积核算与配额判断失真。
 
 ---
@@ -185,22 +196,22 @@ frontend/
 
 ---
 
-## 9. 待整改项（本文件登记，暂不动代码）
+## 9. 整改项登记（全部已落地）
 
-以下差距已经确认存在，但都属于会动导入路径的改动，需单独立项、单独回归，不在本次整理中执行。
+以下差距曾确认存在，均属会动导入路径的改动，按单项执行并单独回归。**截至 2026-11-22 全部完成**，保留记录以便追溯原因与影响面。
 
 | # | 事项 | 影响面 | 风险 |
 |---|---|---|---|
 | ~~R1~~ | ~~`adapters/` 更名为 `providers/`~~ **已于 2026-11-22 完成** | 全仓 import、测试、脚本 | 已执行：`git mv` + 全局替换 + `check_structure.py` 的分层禁令同步改为 `providers` |
-| R2 | `adapters/commerce/` 移出到 `domains/commerce/` | 后端 | 中。跨层移动，需检查是否被 `domains` 反向依赖 |
-| R3 | `tools/` 拆分：`jimeng.py` `openai_image.py` 归 `providers/`，其余归 `capabilities/` | 后端 | 高。`tools_registry` 按路径注册工具，需同步改注册表 |
+| ~~R2~~ | ~~`providers/commerce/` 移出到 `domains/commerce/`~~ **已于 2026-11-22 完成** | 后端 | 已执行：核查发现 `providers/commerce/{marketplace,source}` 与 `domains/commerce/ports` **均为空目录、零代码、零导入**，直接移除；`commerce` 仅作为历史 Run/Artifact 的 domain 字符串保留 |
+| ~~R3~~ | ~~`tools/` 拆分~~ **已于 2026-11-22 完成** | 后端 | 已执行：`jimeng` `openai_image` → `providers/`；`image_gen` `image_batch` `prompt_factory` `archive` `storyboard` `studio` → `capabilities/`；`ImageProvider` 协议与 `ProviderAccessResult` 抽到 `providers/contracts.py` 以避免 Provider 反向依赖能力层；`tools_registry` 按字符串名注册，未受影响 |
 | ~~R4~~ | ~~`perception/` 归入 `capabilities/vision/`~~ **已于 2026-11-22 完成** | 后端 + 前端接口 | 已执行：5 个模块整体迁入 `capabilities/vision/`，13 处 `kantoku.perception` 改 `kantoku.capabilities.vision`，对外 HTTP 路径未变 |
 | ~~R5~~ | ~~两个 evaluation 模块合成包~~ **已于 2026-11-22 完成** | 后端 | 已执行：`evaluation/__init__.py` + `evaluation/structured.py`，导入改为 `kantoku.evaluation.structured` |
 | ~~R6~~ | ~~把 `agent/` 补进 AGENTS.md 第三节~~ **已于 2026-11-22 完成** | 文档 | 已执行：列为独立层并写明职责边界 |
-| R7 | `backup` 类型纳入容量上限（现在每次导入/恢复/迁移都整库拷贝 96 M，`cleanup()` 永久跳过） | 后端 + 数据 | 中。需先定策略：按数量保留 N 份，还是按 TTL 过期；改动会碰 `comic/workspace.py` 与 `core/authentication.py` 的备份调用点 |
-| R8 | `frontend/src/components/` 根目录还散着 6 个被引用组件（`AuthGate` `ComicShotGeneration` `DirectorNodeView` `DirectorWorkspace` `EmptyState` `StatusBadge`），应归入已有子目录；另有 `ApprovalPanel.vue` `QcPanel.vue` `WorkflowProgress.vue` **零引用**（疑似死代码，CSS 仍留在 `style.css`） | 前端 | 中。前端测试用 `readFileSync('../src/components/X.vue')` 按源码路径读取，`DirectorWorkspace.vue` 一个文件就有 20+ 处断言，移动必须同步改测试；死组件删除前先确认不是计划内预留 |
+| ~~R7~~ | ~~`backup` 类型纳入容量上限~~ **已于 2026-11-22 完成** | 后端 + 数据 | 已执行：`storage.BACKUP_RETAIN = 3`，`cleanup()` 按份数保留最近 3 份，超额旧快照删除并计入 `released_bytes`；新增回归 `test_backup_retention_keeps_only_newest_snapshots` |
+| ~~R8~~ | ~~`frontend/src/components/` 根目录散落组件~~ **已于 2026-11-22 完成** | 前端 | 已执行：6 个组件按域归组（`comic/` 4 个、`layout/` 1 个、`ui/` 2 个），相对导入用解析器统一重算；删除零引用的 `ApprovalPanel` `QcPanel` `WorkflowProgress` 及其在 `style.css` 的 29 条失效规则（−3.2 KB）；测试按源码路径的断言同步改到新路径 |
 
-R1、R4、R5、R6 已落地（2026-11-22）。**R2/R3/R7/R8 未动**：新增代码按现有目录放，不要一半按新规范一半按旧结构。
+R1–R8 **全部落地（2026-11-22）**。后续新增代码直接按新结构放，不要再出现 `tools/`、`perception/`、`adapters/` 这类历史目录。
 
 ---
 

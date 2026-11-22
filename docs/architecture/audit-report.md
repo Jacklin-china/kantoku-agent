@@ -102,8 +102,12 @@ flowchart TD
 
 > 2026-11-22 更新：`src/kantoku/adapters/` 已更名为 `src/kantoku/providers/`（纯改名，四个模块原样迁移：
 > `deepseek_balance` `tencent_sms` `volcengine_balance` 与 `commerce/`），`kantoku.providers` 现已是真实存在的统一适配层目录。
-> 上文是审计当时（2026-10-06）的事实，保留不改；`adapters/commerce/` → `domains/commerce/` 的归属问题仍未解决，见
-> [project-layout](../engineering/project-layout.md) §9 的 R2。
+> 上文是审计当时（2026-10-06）的事实，保留不改。
+
+> 2026-11-22 同日后续（R2–R8 全部落地）：`tools/` 已拆分不存在——`jimeng` `openai_image` 进 `providers/`，
+> `image_gen` `image_batch` `prompt_factory` `archive` `storyboard` `studio` 进 `capabilities/`，`ImageProvider` 协议抽到
+> `providers/contracts.py`；`perception/` 并入 `capabilities/vision/`；`providers/commerce/` 与 `domains/commerce/` 经核查
+> 只剩空目录，已移除。**下文所有 `tools/...`、`perception/...` 路径均按上述映射阅读**，审计结论本身未变。
 
 ## 4. Module A — Core 污染
 
