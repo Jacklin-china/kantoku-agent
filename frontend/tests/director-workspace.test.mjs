@@ -120,7 +120,7 @@ test('reviewing a plan repeatedly never appends a duplicate creative reply, incl
   assert.equal(chronologicalDirectorExecutions(tasks, records).length, 6)
 })
 test('workspace reuses chat and existing APIs without a second workflow or asset Drawer', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const parent = readFileSync(new URL('../src/views/ProductionWorkspace.vue', import.meta.url), 'utf8')
   assert.match(view, /conversation_id: conversation/)
   assert.match(view, /UserMessageBubble/)
@@ -158,7 +158,7 @@ test('workspace reuses chat and existing APIs without a second workflow or asset
 })
 
 test('new workspace prepares external Prompt through existing API without starting production', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   assert.match(view, /const imageMode = 'external'/)
   assert.match(view, /const manualDirectorApproval = ref\(true\)/)
   assert.match(view, /compileComicPrompt\(shot.shot_id, project.value.project.current_version, shot.version, activeConversationId.value, true\)/)
@@ -182,7 +182,7 @@ test('Chat gives a concise entry to the real draft, never another technical dire
 })
 
 test('an internally incomplete candidate never marks the plan step saved or done', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('const productionSteps = computed'), view.indexOf('const activeRun = computed'))
   const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   for (const version of [undefined, 1]) {
@@ -225,7 +225,7 @@ test('Fast photography hides technical fields, while Professional preserves the 
 })
 
 test('fixed shared input is outside node switching; returning from Chat preserves the selected node', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const { descriptor, errors } = parse(view)
   assert.deepEqual(errors, [])
   assert.match(descriptor.template.content, /<WorkspaceShell/)
@@ -241,10 +241,10 @@ test('fixed shared input is outside node switching; returning from Chat preserve
 })
 
 // Render the actual shared node component, not a test-only copy of its layout.
-const nodeSource = readFileSync(new URL('../src/components/DirectorNodeView.vue', import.meta.url), 'utf8')
+const nodeSource = readFileSync(new URL('../src/components/comic/DirectorNodeView.vue', import.meta.url), 'utf8')
 const nodeScript = compileScript(parse(nodeSource).descriptor, { id: 'workspace-node-contract', inlineTemplate: true }).content
 const nodeModule = ts.transpileModule(nodeScript, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
-  .replaceAll("'../domains/comic/directorPresentation'", JSON.stringify(presentationUrl))
+  .replaceAll("'../../domains/comic/directorPresentation'", JSON.stringify(presentationUrl))
   .replace(/from (["'])vue\1/g, `from ${JSON.stringify(import.meta.resolve('vue'))}`)
   .replace(/from (["'])lucide-vue-next\1/g, `from ${JSON.stringify(import.meta.resolve('lucide-vue-next'))}`)
 const { default: NodeView } = await import(`data:text/javascript;base64,${Buffer.from(nodeModule).toString('base64')}`)
@@ -317,7 +317,7 @@ test('locating a field reveals, focuses and highlights its editor without applyi
 })
 
 test('actual workspace suggestion navigation preserves draft fields and respects busy and stale guards', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('function beginEdit('), view.indexOf('function editFinal('))
     + view.slice(view.indexOf('async function locateSuggestion('), view.indexOf('function reviseByInstruction('))
   const js = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
@@ -416,7 +416,7 @@ test('actual Critic view presents warning as optional and preserves final confir
 })
 
 test('actual followup handler requests an independent plan and selects its owning project', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const start = view.indexOf('async function execute(')
   const body = view.slice(start, view.indexOf('\nfunction sendInput(', start))
   const js = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
@@ -462,7 +462,7 @@ test('actual followup handler requests an independent plan and selects its ownin
 })
 
 test('saving or confirming a plan never switches the active source to the latest generated plan', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('const active = computed('), view.indexOf('const summary = computed('))
   const js = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const state = { computed, selectDirectorExecution, executions: ref([{ run_id: 'old' }, { run_id: 'latest' }]),
@@ -488,7 +488,7 @@ test('legacy blocked Shot continuation is a visible turn, while its review stays
 })
 
 test('actual plan selection restores each project independently and rejects another conversation', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('async function selectPlan('), view.indexOf('\nfunction failureText('))
   const js = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const ref = value => ({ value })
@@ -522,7 +522,7 @@ test('actual plan selection restores each project independently and rejects anot
 })
 
 test('a legacy image work cannot display the director of another Brief in the same project', () => {
-  const source = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = source.slice(source.indexOf('const workExecutions = computed('), source.indexOf('const active = computed('))
   const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const state = { computed, executions: ref([
@@ -539,7 +539,7 @@ test('a legacy image work cannot display the director of another Brief in the sa
 })
 
 test('work selection clears scoped media and late selection cannot replace the newer work', async () => {
-  const source = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = source.slice(source.indexOf('async function selectWork('), source.indexOf('\nfunction failureText('))
   const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   let release, delayNext = false
@@ -574,7 +574,7 @@ test('work selection clears scoped media and late selection cannot replace the n
 })
 
 function revisionWorkspace(save = async () => ({ project_id: 'plan-a', version: 2 })) {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('function reviseByInstruction('), view.indexOf('async function reviewFinal('))
     + view.slice(view.indexOf('function sendInput('), view.indexOf('/* Title belongs', view.indexOf('function sendInput(')))
     + view.slice(view.indexOf('function invalidate('), view.indexOf('function beginEdit('))
@@ -697,7 +697,7 @@ test('current unavailable review cannot be replaced by an older Run finding', as
 })
 
 test('Director navigation can reopen saved plan after a followup fails without hiding its history', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const start = view.indexOf('function visitStage(')
   const js = ts.transpileModule(view.slice(start, view.indexOf('\nfunction scrollState(', start)),
     { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
@@ -756,7 +756,7 @@ test('queued supplements never start while a Run is busy or outcome is unknown',
   const ready = { busy: false, running: false, loading: false, error: false, cancelling: false }
   assert.equal(canDispatchDirectorInput(ready), true)
   for (const key of Object.keys(ready)) assert.equal(canDispatchDirectorInput({ ...ready, [key]: true }), false)
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   assert.match(view, /:disabled="loading \|\| legacyOnly" @send="sendInput"/)
   assert.match(view, /queuedInputs\.value\.push\(\{ id: \+\+nextInputId, text, mode: mode\.value \}\)/)
   assert.match(view, /await execute\(next.text, \{\}, next.mode\)/)
@@ -776,8 +776,8 @@ test('Fast pages expose only approachable fields; Professional keeps all public 
 })
 
 test('independent node pages share one version-bound editor and one persistent conversation', () => {
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
-  const page = readFileSync(new URL('../src/components/DirectorNodeView.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const page = readFileSync(new URL('../src/components/comic/DirectorNodeView.vue', import.meta.url), 'utf8')
   const app = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
   assert.match(workspace, /navigate\(\{ \.\.\.route.value, workspacePage, directorStage, directorRunId, workId, taskId,/)
   assert.doesNotMatch(workspace, /scrollIntoView|location.hash/)
@@ -804,7 +804,7 @@ test('discarding one node preserves other edits; saving uses the same immutable 
 })
 
 test('new workspace submits a director draft and preserves mandatory user consent', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('async function execute('), view.indexOf('\nfunction sendInput('))
   const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const ref = value => ({ value })
@@ -835,7 +835,7 @@ test('new workspace submits a director draft and preserves mandatory user consen
 
 
 test('professional confirmation enables a persistent transition to storyboard, never image controls in director', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const director = view.slice(view.indexOf(`<template v-if="section === 'director'`), view.indexOf(`<template v-else-if="section === 'assets'`))
   assert.doesNotMatch(director, /生成当前画面|@click="generateImage"|openSection\('prompt'\)/)
   assert.match(director, /@click="enterStoryboard"/)
@@ -867,7 +867,7 @@ test('professional confirmation enables a persistent transition to storyboard, n
 })
 
 test('external workspace preserves manual director consent regardless of director depth', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   assert.match(view, /manualDirectorApproval = ref\(true\)/)
   assert.doesNotMatch(view, /manualDirectorApproval.value = false|v-model="manualDirectorApproval"/)
   assert.match(view, /导演方案需人工确认 · 外部图片/)
@@ -877,7 +877,7 @@ test('external workspace preserves manual director consent regardless of directo
 
 
 test('regenerate is explicit new generation; unknown recovery only resumes the same run', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const source = view.slice(view.indexOf('async function recoverImage'), view.indexOf('function editImagePrompt'))
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const ref = value => ({ value })
@@ -899,7 +899,7 @@ test('regenerate is explicit new generation; unknown recovery only resumes the s
 
 
 test('persisted user messages retain both derived replies, ordered after each input', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const { buildDirectorChatTurns } = await import(presentationUrl)
   const environment = {
     conversationMessages: { value: [1, 2].map(i => ({ id: `user${i}`, run_id: `run${i}`, role: 'user', content: `question${i}`, created_at: `2026-10-07T10:0${i}:00.900Z` })) },
@@ -963,7 +963,7 @@ const attachModule = ts.transpileModule(attachScript, { compilerOptions: { modul
 const { default: ChatImageAttachment } = await import(`data:text/javascript;base64,${Buffer.from(attachModule).toString('base64')}`)
 
 test('delivery page leads with the current shot image and exposes a direct download', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   // 交付区必须排在资产分组之前，空分组不得占据页面开头。
   const heroAt = view.indexOf('class="delivery-hero"')
   const groupAt = view.indexOf('class="asset-group collapsible"')
@@ -988,7 +988,7 @@ test('delivery page leads with the current shot image and exposes a direct downl
 /* 提示词历史恢复（UX-007）：与导演层同范式——二次确认 + 历史保留 + 确认态清除 +
    来源过期前置阻塞原因。 */
 test('prompt history exposes restore-as-new-version with a guarded confirmation', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   // 只有非当前版本才能恢复；当前版本提供的是"编辑为新版本"。
   assert.match(view, /v-else class="ui-button sm" :disabled="busy \|\| hasRunning" @click="promptRestoreChoice = Number\(prompt\.version\)">恢复为新版本/)
   // 确认区文案必须说明：历史保留 + 确认状态清除 + 需重新确认。
@@ -1003,7 +1003,7 @@ test('prompt history exposes restore-as-new-version with a guarded confirmation'
 
 /* 刷新后可编辑（UX-010）：以作品当前稿为权威来源，并可一键从历史切回当前。 */
 test('restored director plan stays editable after refresh through the saved current version', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   assert.match(view, /async function syncCurrentDirector/)
   assert.match(view, /await getCurrentDirector\(projectId\)/)
   // 恢复动作后立即同步权威稿 —— 这是刷新后仍可编辑的关键。
@@ -1020,7 +1020,7 @@ test('restored director plan stays editable after refresh through the saved curr
 
 /* 刷新不回退（UX-006）：恢复现场时不得覆盖 URL 的 workspacePage。 */
 test('opening an existing conversation during restore never rewrites the requested page', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   assert.match(view, /async function openConversation\(id: string, initialDirectorRun = '', options: \{ restore\?: boolean \} = \{\}\)/)
   assert.match(view, /const restoring = !!requestedPage && requestedPage !== 'conversation'/)
   assert.match(view, /openConversation\(id, requestedRunId, \{ restore: restoring \}\)/)
@@ -1033,7 +1033,7 @@ test('opening an existing conversation during restore never rewrites the request
 
 
 test('late Prompt results and failures cannot replace a different work in the same chat', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('async function compilePrompt('), view.indexOf('async function viewImagePrompt('))
   const code = ts.transpileModule(body.replace(/\bworkSelectionEpoch\b/g, 'state.workEpoch'), { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   for (const fails of [false, true]) {
@@ -1069,7 +1069,7 @@ test('late Prompt results and failures cannot replace a different work in the sa
 
 
 test('a late director result keeps its original request owner and cannot switch the selected work', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('async function execute('), view.indexOf('function sendInput('))
   const code = ts.transpileModule(body.replace(/\bworkSelectionEpoch\b/g, 'state.workEpoch'), { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   let finish
@@ -1103,7 +1103,7 @@ test('a late director result keeps its original request owner and cannot switch 
 })
 
 test('work dialogue submission pins source identity and late results cannot replace another task', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('async function executeTaskTurn('), view.indexOf('\nfunction sendInput('))
   const code = ts.transpileModule(body.replace(/\bconversationEpoch\b/g, 'state.epoch').replace(/\bworkSelectionEpoch\b/g, 'state.workEpoch'), { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   let release
@@ -1140,7 +1140,7 @@ test('work dialogue submission pins source identity and late results cannot repl
 })
 
 test('opening legacy history clears modern ownership and preserves explicit source links', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('async function openConversation('), view.indexOf('\nasync function finishConversationRename('))
   const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const state = { workspaceWorks: ref([]), activeWork: ref({ work_id: 'modern-work' }), activeTask: ref({ task_id: 'modern-task' }),
@@ -1166,7 +1166,7 @@ test('opening legacy history clears modern ownership and preserves explicit sour
 })
 
 test('an exact legacy source Run wins over the latest version in its Brief group', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('async function openConversation('), view.indexOf('\nasync function finishConversationRename('))
   const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const records = ['first', 'latest'].map(id => ({ id, workflow: 'comic.director', status: 'completed',
@@ -1195,7 +1195,7 @@ test('an exact legacy source Run wins over the latest version in its Brief group
 })
 
 function workspaceFunction(name, next, state, locals = '') {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf(`async function ${name}(`), view.indexOf(next, view.indexOf(`async function ${name}(`)))
     .replace(/\bconversationEpoch\b/g, 'state.epoch').replace(/\bworkSelectionEpoch\b/g, 'state.workEpoch')
   const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText
@@ -1216,7 +1216,7 @@ test('returning before the first task exists restores the pending request and po
     error: ref(''), refreshConnectionError: ref(''), project: ref(null), failureText: String,
     sessionStorage: { getItem(key) { return key.endsWith(':work') ? 'original-request' : null } },
     resetConversationView() {}, toInternalSection: value => value, navigate() {}, async loadConversationMessages() {} }
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const restoreCode = ts.transpileModule(view.slice(view.indexOf('function restoreTaskRequest('),
     view.indexOf('\nasync function recoverTaskRequest(')), { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   state.restoreTaskRequest = new Function('pendingTaskRequest', 'sessionStorage', `${restoreCode}; return restoreTaskRequest`)(state.pendingTaskRequest, state.sessionStorage)
@@ -1288,7 +1288,7 @@ test('request reads cannot reopen another selection in the same work and query e
 })
 
 test('late completion can clear only its own request marker, preserving the next turn', () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = ts.transpileModule(view.slice(view.indexOf('function rememberTaskRequest('),
     view.indexOf('\nfunction restoreTaskRequest(')), { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const saved = new Map([['kantoku-comic-task-request:work', 'new-request']])
@@ -1322,7 +1322,7 @@ test('a failed pre-run request ends synchronization and restores the original er
   const errorCode = ts.transpileModule(core.slice(core.indexOf('export class CoreApiError'),
     core.indexOf('\nasync function apiFailure')), { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText.replace(/^export /gm, '')
   const CoreApiError = new Function(`${errorCode}; return CoreApiError`)()
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const textCode = ts.transpileModule(view.slice(view.indexOf('function failureText('),
     view.indexOf('\nasync function confirm(')), { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const failureText = new Function('CoreApiError', `${textCode}; return failureText`)(CoreApiError)
@@ -1572,7 +1572,7 @@ test('a first creative reply selects the new task from refreshed work data, neve
 })
 
 test('initial known work or conversation opens while the recent-history request is still pending', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = view.slice(view.indexOf('onMounted(async () => {'), view.indexOf('\nonBeforeUnmount('))
   const code = ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText
   for (const modern of [false, true]) {
@@ -1597,7 +1597,7 @@ test('initial known work or conversation opens while the recent-history request 
 })
 
 test('returning through the bare workspace entry never creates another work', async () => {
-  const view = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const view = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const code = ts.transpileModule(view.slice(view.indexOf('onMounted(async () => {'),
     view.indexOf('\nonBeforeUnmount(')), { compilerOptions: { module: ts.ModuleKind.ES2022 } }).outputText
   const existing = { work_id: 'existing-work', tasks: [] }

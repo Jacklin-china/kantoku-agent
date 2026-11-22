@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ArrowRight, Check, Copy, LocateFixed, Pencil } from 'lucide-vue-next'
-import { directorFeedbackTarget, directorPageFields, directorPageFieldLabel, directorStageSections, fastDirectorNodeLabels, directorNodeLabels, publicDirectorSections } from '../domains/comic/directorPresentation'
-import type { CriticFeedback, DirectorNodeSummary } from '../services/core'
+import { directorFeedbackTarget, directorPageFields, directorPageFieldLabel, directorStageSections, fastDirectorNodeLabels, directorNodeLabels, publicDirectorSections } from '../../domains/comic/directorPresentation'
+import type { CriticFeedback, DirectorNodeSummary } from '../../services/core'
 const props = defineProps<{
   stage: string; node?: DirectorNodeSummary; spec: Record<string, unknown> | null; editing: boolean
   fields: Record<string, string>; editable: boolean; rerunnable: boolean; busy: boolean

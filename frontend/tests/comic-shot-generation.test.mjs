@@ -11,7 +11,7 @@ const compile = code => ts.transpileModule(code, { compilerOptions: { module: ts
 const moduleUrl = code => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 const { shotGeneration, externalShotPrompt, finalImagePrompt, promptVersionDiff, imagePromptReferences, readPromptReference, copyPromptDelivery } = await import(moduleUrl(compile(readFileSync(new URL('../src/domains/comic/shotGeneration.ts', import.meta.url), 'utf8'))))
 const { directorProductionSteps } = await import(moduleUrl(compile(readFileSync(new URL('../src/domains/comic/directorPresentation.ts', import.meta.url), 'utf8'))))
-const component = readFileSync(new URL('../src/components/ComicShotGeneration.vue', import.meta.url), 'utf8')
+const component = readFileSync(new URL('../src/components/comic/ComicShotGeneration.vue', import.meta.url), 'utf8')
 const importerCode = compile(compileScript(parse(readFileSync(new URL('../src/components/comic/ComicImageImport.vue', import.meta.url), 'utf8')).descriptor,
   { id: 'image-import', inlineTemplate: true }).content)
   .replace(/from (["'])vue\1/g, `from ${JSON.stringify(import.meta.resolve('vue'))}`)
@@ -20,7 +20,7 @@ const compiled = compile(compileScript(parse(component).descriptor, { id: 'shot-
   .replace(/from (["'])vue\1/g, `from ${JSON.stringify(import.meta.resolve('vue'))}`)
   .replace(/import ImageGenerationPlaceholder from [^;]+;/, `const ImageGenerationPlaceholder = { props: ['label'], template: '<div data-image-loader>{{label}}</div>' };`)
   .replace(/import ChatImageAttachment from [^;]+;/, `const ChatImageAttachment = { props: ['media'], template: '<img :src="media.url" />' };`)
-  .replace(/from (["'])\.\/comic\/ComicImageImport.vue\1/, `from ${JSON.stringify(moduleUrl(importerCode))}`)
+  .replace(/from (["'])\.\/ComicImageImport\.vue\1/, `from ${JSON.stringify(moduleUrl(importerCode))}`)
 const { default: ShotView } = await import(moduleUrl(compiled))
 const run = (id, shotId, status = 'running', projectId = 'project') => ({
   id, workflow: 'comic.production.v1', status, started_at: `2026-10-05T00:00:0${id.slice(-1)}Z`,
@@ -41,7 +41,7 @@ test('current execution text wins over audit text and local delivery remains unv
     imageMode: 'external', externalPrompt: prompt }))
   assert.match(html, /复制 Codex 工作任务/)
   assert.match(html, /待实际出图验收/)
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   assert.doesNotMatch(workspace, /粘贴到同机 Codex 即可，无需逐张附图/)
 })
 
@@ -56,7 +56,7 @@ test('only the generating Shot renders a loader; every navigation page remains f
   assert.match(image, /data-shot-id="shot1"[^]*data-generation-id="attempt-run1"/)
   const otherShot = image.slice(image.indexOf('data-shot-id="shot2"'))
   assert.doesNotMatch(otherShot, /data-image-loader|attempt-run1/)
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const { descriptor } = parse(workspace)
   assert.doesNotMatch(descriptor.template.content, /<ImageGenerationPlaceholder/)
   const shotSection = descriptor.template.content.slice(descriptor.template.content.indexOf('<template v-if="section === \'storyboard\'">'), descriptor.template.content.indexOf('<template v-else><label v-if="shots.length">'))
@@ -110,7 +110,7 @@ test('ready requires the current source and a real complete prompt; a valid scen
 })
 
 test('the workflow does not report a stale project prompt ready for the current shot', () => {
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const selector = workspace.slice(workspace.indexOf('function externalPromptForShot('), workspace.indexOf('const comparison = computed'))
   const steps = workspace.slice(workspace.indexOf('const productionSteps = computed'), workspace.indexOf('const activeRun = computed'))
   const state = { computed, externalShotPrompt, directorProductionSteps, spec: ref({ version: 3 }), workExecutions: ref([]),
@@ -132,7 +132,7 @@ test('the workflow does not report a stale project prompt ready for the current 
 })
 
 test('actual Shot preparation invokes only external Prompt compile and retains the selected Shot loader', async () => {
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const code = compile(workspace.slice(workspace.indexOf('async function compilePrompt('), workspace.indexOf('async function recoverImage(')))
   const ref = value => ({ value })
   const calls = []
@@ -181,7 +181,7 @@ test('external upload displays only the attached shot image and leaves old provi
 })
 
 test('actual workspace copy handler submits the complete saved text and reports clipboard failure', async () => {
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const source = compile(workspace.slice(workspace.indexOf('async function copyImagePrompt('), workspace.indexOf('function exportImagePrompt(')))
   const copiedPrompt = { value: '' }, error = { value: '' }
   const writes = []
@@ -212,7 +212,7 @@ const referencePrompt = (mime = 'image/png') => ({ ...completePrompt(), final_pr
     sha256: createHash('sha256').update(referenceBytes).digest('hex'), image: { image_id: 'image', version: 2 } }] })
 
 test('prompt reference previews verify their own fingerprint and never reuse an unchecked artifact preview', async () => {
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const source = compile(workspace.slice(workspace.indexOf('function promptReferenceKey('), workspace.indexOf('async function refresh(')))
   const state = { referenceUrls: ref({ 'adopted-original': 'blob:unchecked' }), referenceErrors: ref({}), referenceLoading: new Set(),
     readPromptReference, getArtifactContentBlob: async () => new Blob([referenceBytes], { type: 'image/png' }) }
@@ -229,7 +229,7 @@ test('prompt reference previews verify their own fingerprint and never reuse an 
 })
 
 test('late reference download failures cannot overwrite a newly selected work', async () => {
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const source = compile(workspace.slice(workspace.indexOf('async function copyImagePrompt('), workspace.indexOf('function exportImagePrompt(')))
   let rejectRead
   const read = new Promise((_resolve, reject) => { rejectRead = reject })
@@ -325,7 +325,7 @@ test('reference UI offers explicit image and text delivery instead of only a fil
   const html = await renderToString(createSSRApp(ShotView, { run: null, imageMode: 'external', disabled: false, externalPrompt: referencePrompt(),
     copyFeedback: '图文已复制，粘贴后请核对图片与正文' }))
   for (const label of ['复制图文', '仅复制文字', '查看参考图', '粘贴后请核对']) assert.ok(html.includes(label))
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   assert.match(workspace, /aria-label="本次生成需要的参考图"/)
   assert.match(workspace, /复制这张参考图/)
   assert.match(workspace, /下载原图/)
@@ -345,7 +345,7 @@ function compileState(overrides = {}) {
   }
 }
 function workspaceHandler(name, nextName, state) {
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const body = compile(workspace.slice(workspace.indexOf(`async function ${name}(`), workspace.indexOf(`async function ${nextName}(`)))
   return new Function('state', `const {${Object.keys(state).filter(key => key !== name).join(',')}}=state; const conversationEpoch=1, workSelectionEpoch=1; let disposed=false; ${body}; return ${name}`)(state)
 }
@@ -510,7 +510,7 @@ test('one failed shot history does not block another prompt and cancelled histor
 })
 
 async function renderWorkspaceShotError(state, shotId = 'shot1') {
-  const workspace = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const workspace = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const binding = workspace.match(/:prompt-error="([^"]+)"/)?.[1]
   assert.ok(binding, 'the shot error must be bound to the actual shot component')
   const promptError = new Function('shot', 'shotErrors', 'promptReadErrors', `return ${binding}`)(

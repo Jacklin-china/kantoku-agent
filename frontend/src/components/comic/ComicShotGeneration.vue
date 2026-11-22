@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { CoreRun } from '../types'
-import ImageGenerationPlaceholder from './chat/ImageGenerationPlaceholder.vue'
-import ChatImageAttachment from './chat/ChatImageAttachment.vue'
-import ComicImageImport from './comic/ComicImageImport.vue'
+import type { CoreRun } from '../../types'
+import ImageGenerationPlaceholder from '../chat/ImageGenerationPlaceholder.vue'
+import ChatImageAttachment from '../chat/ChatImageAttachment.vue'
+import ComicImageImport from './ComicImageImport.vue'
 
 defineProps<{
   run: CoreRun | null

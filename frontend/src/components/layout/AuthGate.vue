@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import App from '../App.vue'
-import PixelSky from './layout/PixelSky.vue'
-import { startTimeOfDay, stopTimeOfDay } from './layout/timeOfDay'
-import { logout } from '../services/core'
-import LoginView from '../views/LoginView.vue'
+import App from '../../App.vue'
+import PixelSky from './PixelSky.vue'
+import { startTimeOfDay, stopTimeOfDay } from './timeOfDay'
+import { logout } from '../../services/core'
+import LoginView from '../../views/LoginView.vue'
 
 const devHost = typeof window !== 'undefined' && window.location?.hostname === 'localhost'
   ? 'localhost' : '127.0.0.1'

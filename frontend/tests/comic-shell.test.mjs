@@ -7,7 +7,7 @@ import { createSSRApp, h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 
 // Test the shell actually imported by the workspace, including directory refactors.
-const workspaceUrl = new URL('../src/components/DirectorWorkspace.vue', import.meta.url)
+const workspaceUrl = new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url)
 const shellImport = readFileSync(workspaceUrl, 'utf8').match(/import WorkspaceShell from ['"]([^'"]+)['"]/)?.[1]
 assert.ok(shellImport, 'DirectorWorkspace must reuse the shared WorkspaceShell')
 const source = readFileSync(new URL(shellImport, workspaceUrl), 'utf8')

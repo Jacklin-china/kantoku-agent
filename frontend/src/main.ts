@@ -1,6 +1,6 @@
 import { createApp } from 'vue'
 
-import AuthGate from './components/AuthGate.vue'
+import AuthGate from './components/layout/AuthGate.vue'
 import { startTimeOfDay } from './components/layout/timeOfDay'
 import './styles/tokens.css'
 import './styles/globals.css'

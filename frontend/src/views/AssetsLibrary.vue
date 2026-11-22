@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FileText, Image as ImageIcon, Images } from 'lucide-vue-next'
-import EmptyState from '../components/EmptyState.vue'
+import EmptyState from '../components/ui/EmptyState.vue'
 import WorkspacePage from '../components/workspace/WorkspacePage.vue'
 import ArtifactCard from '../components/artifacts/ArtifactCard.vue'
 import { changeArtifactLifecycle, getArtifacts, getRuns } from '../services/core'

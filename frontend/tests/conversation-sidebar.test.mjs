@@ -28,7 +28,7 @@ test('only exact Conversation ID bindings restore runs, even for shared projects
 
 test('homepage and Comic reuse the same shell, history list and conversation-keyed composer', () => {
   const home = readFileSync(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')
-  const comic = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const comic = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   for (const view of [home, comic]) {
     assert.match(view, /WorkspaceShell/)
     assert.match(view, /<ConversationHistory list-only/)
@@ -48,7 +48,7 @@ test('homepage and Comic reuse the same shell, history list and conversation-key
 })
 
 test('switching conversation during submission keeps the original owner and ignores its late response', async () => {
-  const comic = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const comic = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const start = comic.indexOf('async function execute(')
   const end = comic.indexOf('\nfunction sendInput(', start)
   const body = comic.slice(start, end).replace(/\bconversationEpoch\b/g, 'environment.epoch').replace(/\bdisposed\b/g, 'environment.disposed')
@@ -88,7 +88,7 @@ test('switching conversation during submission keeps the original owner and igno
 })
 
 test('external workspace late director response cannot bind its project to the new conversation', async () => {
-  const comic = readFileSync(new URL('../src/components/DirectorWorkspace.vue', import.meta.url), 'utf8')
+  const comic = readFileSync(new URL('../src/components/comic/DirectorWorkspace.vue', import.meta.url), 'utf8')
   const start = comic.indexOf('async function execute(')
   const body = comic.slice(start, comic.indexOf('\nfunction sendInput(', start))
     .replace(/\bconversationEpoch\b/g, 'environment.epoch').replace(/\bdisposed\b/g, 'environment.disposed')
