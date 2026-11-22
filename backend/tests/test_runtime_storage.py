@@ -337,6 +337,28 @@ def test_ttl_and_capacity_preserve_active_and_user_files(managed, monkeypatch):
     assert catalog.cleanup()["deleted"] == 1
 
 
+def test_backup_retention_keeps_only_newest_snapshots(managed):
+    """备份按份数保留：超出 BACKUP_RETAIN 的旧快照被清理，最新的若干份永不按 TTL 删。"""
+    manager, catalog = managed
+    backups = []
+    for index in range(storage.BACKUP_RETAIN + 2):
+        path = manager.data / "backups" / f"kantoku.pre-{index}.sqlite"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"b" * 10)
+        backups.append((catalog.register(path, "backup", "test", None), path))
+    with catalog.connection() as connection:
+        for index, (file_id, _path) in enumerate(backups):
+            connection.execute("UPDATE runtime_files SET touched_at=? WHERE file_id=?",
+                               (1000.0 + index, file_id))
+    result = catalog.cleanup()
+    assert result == {"deleted": 2, "released_bytes": 20, "failures": 0}
+    kept = [path.exists() for _file_id, path in backups]
+    assert kept == [False, False] + [True] * storage.BACKUP_RETAIN
+    # 再跑一次不重复删除，也不继续缩减
+    assert catalog.cleanup()["deleted"] == 0
+    assert [path.exists() for _file_id, path in backups] == kept
+
+
 def test_failed_unlink_is_not_success_and_is_retriable(managed, monkeypatch):
     manager, catalog = managed
     path = manager.tmp / "occupied.bin"

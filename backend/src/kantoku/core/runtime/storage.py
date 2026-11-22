@@ -24,6 +24,10 @@ from kantoku.core.database import DatabaseManager
 
 EPHEMERAL = {"temp", "temp_directory", "test_session", "cache", "log", "qa"}
 CAPACITY = {"cache": 1024**3, "log": 256 * 1024**2, "qa": 256 * 1024**2}
+# 备份是回滚证据，不能按 TTL 清——过期时刻可能正好是唯一需要它的时刻。
+# 改为按份数保留最近的若干份：超出部分参与清理，最新的 BACKUP_RETAIN 份永不删除。
+BACKUP_RETAIN = 3
+SIZED_KINDS = EPHEMERAL | {"backup"}
 _catalogs: dict[Path, FileCatalog] = {}
 _lock = RLock()
 
@@ -188,21 +192,37 @@ class FileCatalog:
         sizes = {}
         for row in rows:
             path = Path(row[1])
-            if row[2] in EPHEMERAL and path.is_file() and not path.is_symlink():
+            if row[2] in SIZED_KINDS and path.is_file() and not path.is_symlink():
                 sizes[row[0]] = path.stat().st_size
             elif row[2] in {"temp_directory", "test_session"} and path.is_dir():
                 sizes[row[0]] = sum(item.stat().st_size
                                     for item in get_runtime_paths().iter_files(path))
         totals = {kind: sum(sizes.get(row[0], 0) for row in rows if row[2] == kind)
                   for kind in CAPACITY}
+        newest_backups = {
+            row[0] for row in sorted(
+                (row for row in rows
+                 if row[2] == "backup" and Path(row[1]).is_file()
+                 and not Path(row[1]).is_symlink()),
+                key=lambda row: row[4],
+                reverse=True,
+            )[:BACKUP_RETAIN]
+        }
         for file_id, raw, kind, expiry, _touched, version, status in sorted(
             rows, key=lambda row: row[4]
         ):
-            if kind not in EPHEMERAL:
+            if kind == "backup":
+                if file_id in newest_backups:
+                    continue
+                # 超额的旧快照没有 TTL 也没有容量配额，由保留份数直接判定删除。
+                stale = True
+            elif kind not in EPHEMERAL:
                 continue
+            else:
+                stale = False
             due = expiry is not None and expiry <= now
             over = kind in CAPACITY and totals[kind] > CAPACITY[kind]
-            if not due and not over and status != "deleting":
+            if not stale and not due and not over and status != "deleting":
                 continue
             path = Path(raw)
             try:
